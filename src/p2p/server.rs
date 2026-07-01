@@ -7,8 +7,9 @@ use std::collections::HashMap;
 use rand::Rng;
 
 use crate::core::mempool::Mempool;
-use crate::core::chain::ChainState;
+use crate::core::chain::{ChainState, ApplyResult};
 use crate::core::block::Block;
+use crate::core::storage::Storage;
 use super::dandelion::{DandelionRouter, TxState, compute_tx_id};
 use super::message::P2pMessage;
 
@@ -100,15 +101,17 @@ pub struct P2pServer {
     router: Arc<DandelionRouter>,
     mempool: Arc<Mutex<Mempool>>,
     chain: Arc<Mutex<ChainState>>,
+    storage: Arc<Storage>,
     pub peer_manager: Arc<PeerManager>,
 }
 
 impl P2pServer {
-    pub fn new(mempool: Arc<Mutex<Mempool>>, chain: Arc<Mutex<ChainState>>) -> Self {
+    pub fn new(mempool: Arc<Mutex<Mempool>>, chain: Arc<Mutex<ChainState>>, storage: Arc<Storage>) -> Self {
         Self {
             router: Arc::new(DandelionRouter::new(0.20)), // 20% fluff probability
             mempool,
             chain,
+            storage,
             peer_manager: Arc::new(PeerManager::new()),
         }
     }
@@ -128,6 +131,7 @@ impl P2pServer {
             let pm = Arc::clone(&self.peer_manager);
             let mp = Arc::clone(&self.mempool);
             let c = Arc::clone(&self.chain);
+            let st = Arc::clone(&self.storage);
             let r = Arc::clone(&self.router);
             let local_listen_addr = addr.to_string();
 
@@ -148,7 +152,7 @@ impl P2pServer {
 
                             let (read_half, write_half) = stream.into_split();
                             let write_handle = pm.add_peer(peer_addr.clone(), write_half);
-                            handle_peer_connection(read_half, write_handle, peer_addr, pm, mp, c, r).await;
+                            handle_peer_connection(read_half, write_handle, peer_addr, pm, mp, c, st, r).await;
                         }
                     }
                     Err(e) => {
@@ -162,6 +166,7 @@ impl P2pServer {
         let pm = Arc::clone(&self.peer_manager);
         let mp = Arc::clone(&self.mempool);
         let c = Arc::clone(&self.chain);
+        let st = Arc::clone(&self.storage);
         let r = Arc::clone(&self.router);
 
         loop {
@@ -171,15 +176,40 @@ impl P2pServer {
             let pm_clone = Arc::clone(&pm);
             let mp_clone = Arc::clone(&mp);
             let c_clone = Arc::clone(&c);
+            let st_clone = Arc::clone(&st);
             let r_clone = Arc::clone(&r);
             let peer_str = peer_addr.to_string();
 
             tokio::spawn(async move {
                 let (read_half, write_half) = stream.into_split();
                 let write_handle = pm_clone.add_peer(peer_str.clone(), write_half);
-                handle_peer_connection(read_half, write_handle, peer_str, pm_clone, mp_clone, c_clone, r_clone).await;
+                handle_peer_connection(read_half, write_handle, peer_str, pm_clone, mp_clone, c_clone, st_clone, r_clone).await;
             });
         }
+    }
+}
+
+/// Persists an ApplyResult's deltas to storage, logging (but not failing on) any error.
+fn persist_apply_result(storage: &Storage, result: &ApplyResult) {
+    match result {
+        ApplyResult::Linear(delta) => {
+            if let Err(e) = storage.persist_applied(delta) {
+                println!("Warning: Failed to persist applied block: {}", e);
+            }
+        }
+        ApplyResult::Reorg { rollbacks, applies } => {
+            for rollback in rollbacks {
+                if let Err(e) = storage.persist_rollback(rollback) {
+                    println!("Warning: Failed to persist rollback: {}", e);
+                }
+            }
+            for delta in applies {
+                if let Err(e) = storage.persist_applied(delta) {
+                    println!("Warning: Failed to persist applied block: {}", e);
+                }
+            }
+        }
+        ApplyResult::Rejected => {}
     }
 }
 
@@ -199,6 +229,7 @@ async fn handle_peer_connection(
     pm: Arc<PeerManager>,
     mempool: Arc<Mutex<Mempool>>,
     chain: Arc<Mutex<ChainState>>,
+    storage: Arc<Storage>,
     router: Arc<DandelionRouter>,
 ) {
     let mut len_bytes = [0u8; 4];
@@ -299,13 +330,14 @@ async fn handle_peer_connection(
                         }
                         P2pMessage::NewBlock(block) => {
                             println!("P2P: Received NewBlock #{} from {}", block.header.height, peer_addr);
-                            let applied = {
+                            let result = {
                                 let mut c = chain.lock().unwrap();
                                 c.apply_block(&block)
                             };
 
-                            if applied {
+                            if result.is_applied() {
                                 println!("P2P: Applied block #{} successfully to chain state!", block.header.height);
+                                persist_apply_result(&storage, &result);
                                 // Clear spent mempool transactions
                                 {
                                     let mut mp = mempool.lock().unwrap();
@@ -319,7 +351,13 @@ async fn handle_peer_connection(
                             println!("P2P: Received RegisterValidator for commitment {:?}", commitment);
                             let registered = {
                                 let mut c = chain.lock().unwrap();
-                                c.register_validator(commitment, value, blinding)
+                                let ok = c.register_validator(commitment, value, blinding);
+                                if ok {
+                                    if let Err(e) = storage.persist_active_validators(&c.active_validators) {
+                                        println!("Warning: Failed to persist validator registration: {}", e);
+                                    }
+                                }
+                                ok
                             };
                             if registered {
                                 println!("P2P: Validator registered and propagated to peers.");
@@ -348,12 +386,13 @@ async fn handle_peer_connection(
                             let batch_len = blocks.len();
                             let mut applied_count = 0;
                             for block in &blocks {
-                                let applied = {
+                                let result = {
                                     let mut c = chain.lock().unwrap();
                                     c.apply_block(block)
                                 };
-                                if applied {
+                                if result.is_applied() {
                                     applied_count += 1;
+                                    persist_apply_result(&storage, &result);
                                     let mut mp = mempool.lock().unwrap();
                                     mp.clear_spent(&block.body);
                                 } else {

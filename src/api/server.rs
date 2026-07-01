@@ -5,6 +5,7 @@ use serde::{Serialize, Deserialize};
 
 use crate::core::mempool::Mempool;
 use crate::core::chain::ChainState;
+use crate::core::storage::Storage;
 use crate::core::transaction::Transaction;
 use crate::p2p::server::P2pServer;
 
@@ -15,11 +16,13 @@ impl ApiServer {
         mempool: Arc<Mutex<Mempool>>,
         chain: Arc<Mutex<ChainState>>,
         p2p_server: Arc<P2pServer>,
+        storage: Arc<Storage>,
         port: u16,
     ) {
         let mempool_filter = warp::any().map(move || Arc::clone(&mempool));
         let chain_filter = warp::any().map(move || Arc::clone(&chain));
         let p2p_filter = warp::any().map(move || Arc::clone(&p2p_server));
+        let storage_filter = warp::any().map(move || Arc::clone(&storage));
 
         // POST /v1/transactions
         let tx_route = warp::post()
@@ -34,6 +37,7 @@ impl ApiServer {
             .and(warp::body::json())
             .and(chain_filter.clone())
             .and(p2p_filter)
+            .and(storage_filter)
             .and_then(handle_register_validator);
 
         // GET /v1/utxos
@@ -111,10 +115,17 @@ async fn handle_register_validator(
     req: StakeRequest,
     chain: Arc<Mutex<ChainState>>,
     p2p_server: Arc<P2pServer>,
+    storage: Arc<Storage>,
 ) -> Result<impl warp::Reply, Infallible> {
     let registered = {
         let mut c = chain.lock().unwrap();
-        c.register_validator(req.commitment, req.value, req.blinding)
+        let ok = c.register_validator(req.commitment, req.value, req.blinding);
+        if ok {
+            if let Err(e) = storage.persist_active_validators(&c.active_validators) {
+                println!("Warning: Failed to persist validator registration: {}", e);
+            }
+        }
+        ok
     };
 
     if registered {

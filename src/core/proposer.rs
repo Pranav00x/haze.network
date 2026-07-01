@@ -5,8 +5,9 @@ use curve25519_dalek_ng::scalar::Scalar;
 use bulletproofs::PedersenGens;
 
 use super::mempool::Mempool;
-use super::chain::ChainState;
+use super::chain::{ChainState, ApplyResult};
 use super::block::{Block, BlockHeader};
+use super::storage::Storage;
 use crate::crypto::pedersen::Commitment;
 use crate::crypto::schnorr::Signature;
 use crate::p2p::server::P2pServer;
@@ -15,6 +16,7 @@ use crate::core::transaction::Transaction;
 pub struct Proposer {
     mempool: Arc<Mutex<Mempool>>,
     chain: Arc<Mutex<ChainState>>,
+    storage: Arc<Storage>,
     stake_key: Option<Scalar>,
     p2p_server: Mutex<Option<Arc<P2pServer>>>,
 }
@@ -23,11 +25,13 @@ impl Proposer {
     pub fn new(
         mempool: Arc<Mutex<Mempool>>,
         chain: Arc<Mutex<ChainState>>,
+        storage: Arc<Storage>,
         stake_key: Option<Scalar>,
     ) -> Self {
         Self {
             mempool,
             chain,
+            storage,
             stake_key,
             p2p_server: Mutex::new(None),
         }
@@ -157,29 +161,36 @@ impl Proposer {
                     };
 
                     // Apply locally
-                    let mut c = self.chain.lock().unwrap();
-                    if c.apply_block(&block) {
-                        println!("Block #{} successfully proposed and added to chain locally!", block.header.height);
+                    let apply_result = {
+                        let mut c = self.chain.lock().unwrap();
+                        c.apply_block(&block)
+                    };
 
-                        // Save to disk
-                        if let Err(e) = crate::core::storage::Storage::save_state(&c) {
-                            println!("Warning: Failed to save chain state to disk: {}", e);
-                        }
+                    match apply_result {
+                        ApplyResult::Linear(delta) => {
+                            println!("Block #{} successfully proposed and added to chain locally!", block.header.height);
 
-                        // Broadcast block
-                        let server_opt = {
-                            let s = self.p2p_server.lock().unwrap();
-                            s.clone()
-                        };
-                        if let Some(p2p) = server_opt {
-                            let p2p_clone = Arc::clone(&p2p);
-                            let block_clone = block.clone();
-                            tokio::spawn(async move {
-                                p2p_clone.broadcast_block(block_clone).await;
-                            });
+                            // Save to disk
+                            if let Err(e) = self.storage.persist_applied(&delta) {
+                                println!("Warning: Failed to persist chain state to disk: {}", e);
+                            }
+
+                            // Broadcast block
+                            let server_opt = {
+                                let s = self.p2p_server.lock().unwrap();
+                                s.clone()
+                            };
+                            if let Some(p2p) = server_opt {
+                                let p2p_clone = Arc::clone(&p2p);
+                                let block_clone = block.clone();
+                                tokio::spawn(async move {
+                                    p2p_clone.broadcast_block(block_clone).await;
+                                });
+                            }
                         }
-                    } else {
-                        println!("Warning: Locally proposed block was rejected by local validation!");
+                        _ => {
+                            println!("Warning: Locally proposed block was rejected by local validation!");
+                        }
                     }
                 }
             }

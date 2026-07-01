@@ -21,6 +21,15 @@ impl Commitment {
     pub fn as_point(&self) -> RistrettoPoint {
         self.0
     }
+
+    /// Reconstructs a Commitment from raw compressed Ristretto point bytes (32 bytes).
+    pub fn from_compressed_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() != 32 {
+            return None;
+        }
+        let compressed = curve25519_dalek_ng::ristretto::CompressedRistretto::from_slice(bytes);
+        compressed.decompress().map(Commitment)
+    }
 }
 
 use std::hash::{Hash, Hasher};
@@ -47,12 +56,7 @@ impl<'de> Deserialize<'de> for Commitment {
         D: Deserializer<'de>,
     {
         let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
-        if bytes.len() != 32 {
-            return Err(serde::de::Error::custom("Invalid commitment length"));
-        }
-        let compressed = curve25519_dalek_ng::ristretto::CompressedRistretto::from_slice(&bytes);
-        let point = compressed.decompress().ok_or_else(|| serde::de::Error::custom("Failed to decompress commitment"))?;
-        Ok(Commitment(point))
+        Commitment::from_compressed_bytes(&bytes).ok_or_else(|| serde::de::Error::custom("Invalid or undecompressable commitment bytes"))
     }
 }
 

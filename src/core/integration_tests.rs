@@ -192,7 +192,7 @@ mod tests {
         };
 
         // Apply the block to the chain state
-        let applied = chain_state.apply_block(&block);
+        let applied = chain_state.apply_block(&block).is_applied();
         assert!(applied, "Applying aggregated block to ChainState failed!");
 
         // Verify the unspent UTXO set in the chain state matches the expected outputs (Out2, Out3, and Coinbase Output)
@@ -329,7 +329,9 @@ mod tests {
         }
 
         // 2. Start the P2pServer
-        let p2p_server = Arc::new(crate::p2p::server::P2pServer::new(Arc::clone(&mempool), Arc::clone(&chain_state)));
+        let test_db_path = format!("{}/haze_test_db_{}", std::env::temp_dir().display(), std::process::id());
+        let storage = Arc::new(crate::core::storage::Storage::open_at(&test_db_path));
+        let p2p_server = Arc::new(crate::p2p::server::P2pServer::new(Arc::clone(&mempool), Arc::clone(&chain_state), storage));
         let server_clone = Arc::clone(&p2p_server);
         
         // Find a random free port and bind
@@ -420,20 +422,20 @@ mod tests {
         // 1. Apply Genesis Block (height 0)
         let genesis_block = crate::core::genesis::genesis_block();
         let genesis_hash = genesis_block.header.hash();
-        assert!(chain_state.apply_block(&genesis_block));
+        assert!(chain_state.apply_block(&genesis_block).is_applied());
         assert_eq!(chain_state.current_height, 0);
 
         // 2. Build and apply Block A1
         let a1 = create_empty_block(1, genesis_hash);
         let a1_hash = a1.header.hash();
-        assert!(chain_state.apply_block(&a1));
+        assert!(chain_state.apply_block(&a1).is_applied());
         assert_eq!(chain_state.current_height, 1);
         assert_eq!(chain_state.last_block_hash, a1_hash);
 
         // 3. Build and apply Block A2 (Main chaintip is now at height 2)
         let a2 = create_empty_block(2, a1_hash);
         let a2_hash = a2.header.hash();
-        assert!(chain_state.apply_block(&a2));
+        assert!(chain_state.apply_block(&a2).is_applied());
         assert_eq!(chain_state.current_height, 2);
         assert_eq!(chain_state.last_block_hash, a2_hash);
 
@@ -441,9 +443,9 @@ mod tests {
         // Block B2 (height 2, prev_hash = A1)
         let b2 = create_empty_block(2, a1_hash);
         let b2_hash = b2.header.hash();
-        
+
         // Applying B2 should NOT change active tip (height 2 fork is same length as A2)
-        assert!(!chain_state.apply_block(&b2)); // Returns false because tip didn't switch
+        assert!(!chain_state.apply_block(&b2).is_applied()); // Rejected because tip didn't switch
         assert_eq!(chain_state.current_height, 2);
         assert_eq!(chain_state.last_block_hash, a2_hash);
 
@@ -452,7 +454,7 @@ mod tests {
         let b3_hash = b3.header.hash();
 
         // Applying B3 should trigger reorganization (height 3 > height 2)
-        assert!(chain_state.apply_block(&b3)); // Returns true because tip switched
+        assert!(chain_state.apply_block(&b3).is_applied()); // Reorg applied because tip switched
         assert_eq!(chain_state.current_height, 3);
         assert_eq!(chain_state.last_block_hash, b3_hash);
 

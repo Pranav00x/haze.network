@@ -17,8 +17,6 @@ pub struct Validator {
 pub struct ChainState {
     /// The Unspent Transaction Output (UTXO) set.
     pub utxos: HashSet<Commitment>,
-    /// We also store unspent outputs (commitments + range proofs) to serve to syncing nodes
-    pub unspent_outputs: Vec<Output>,
     /// All transaction kernels ever recorded on the chain
     pub kernels: Vec<TxKernel>,
     pub current_height: u64,
@@ -29,6 +27,48 @@ pub struct ChainState {
     pub blocks: HashMap<[u8; 32], Block>,
     /// Snapshots of active validators at each block height
     pub validator_snapshots: HashMap<u64, Vec<Validator>>,
+}
+
+/// Describes exactly what changed when a block was successfully applied, so storage can
+/// persist just the delta instead of rewriting the whole chain state.
+#[derive(Debug, Clone)]
+pub struct AppliedDelta {
+    pub block: Block,
+    pub spent_commitments: Vec<Commitment>,
+    pub new_outputs: Vec<Output>,
+    pub new_kernels: Vec<TxKernel>,
+    /// Height -> validator set snapshotted immediately before this block was applied.
+    pub validator_snapshot: (u64, Vec<Validator>),
+    /// Active validator set immediately after this block was applied.
+    pub active_validators_after: Vec<Validator>,
+    pub height: u64,
+    pub tip_hash: [u8; 32],
+}
+
+/// Describes exactly what changed when the chaintip block was rolled back.
+#[derive(Debug, Clone)]
+pub struct RollbackDelta {
+    pub un_consumed_outputs: Vec<Commitment>,
+    pub restored_inputs: Vec<Commitment>,
+    pub removed_kernel_excesses: Vec<Commitment>,
+    /// Active validator set immediately after this rollback.
+    pub active_validators_after: Vec<Validator>,
+    pub new_height: u64,
+    pub new_tip: [u8; 32],
+}
+
+/// Outcome of attempting to apply a new block to the chain state.
+#[derive(Debug, Clone)]
+pub enum ApplyResult {
+    Rejected,
+    Linear(AppliedDelta),
+    Reorg { rollbacks: Vec<RollbackDelta>, applies: Vec<AppliedDelta> },
+}
+
+impl ApplyResult {
+    pub fn is_applied(&self) -> bool {
+        !matches!(self, ApplyResult::Rejected)
+    }
 }
 
 impl ChainState {
@@ -90,18 +130,21 @@ impl ChainState {
 
     /// Attempts to apply a new block to the chain state.
     /// Triggers a reorganization if the block is on a heavier/taller fork.
-    pub fn apply_block(&mut self, block: &Block) -> bool {
+    pub fn apply_block(&mut self, block: &Block) -> ApplyResult {
         let block_hash = block.header.hash();
-        
+
         // Store block in block database first
         self.blocks.insert(block_hash, block.clone());
 
         // Case 1: Simple linear application on top of current chaintip (or genesis block on fresh tip)
         let is_linear = (block.header.height == self.current_height + 1 && block.header.prev_hash == self.last_block_hash)
             || (block.header.height == 0 && self.current_height == 0 && self.last_block_hash == [0u8; 32]);
-            
+
         if is_linear {
-            return self.apply_linear_block(block);
+            return match self.apply_linear_block(block) {
+                Some(delta) => ApplyResult::Linear(delta),
+                None => ApplyResult::Rejected,
+            };
         }
 
         // Case 2: Block is on a fork
@@ -110,47 +153,51 @@ impl ChainState {
             if let Some((rollback_hashes, fork_blocks)) = self.find_reorg_path(block) {
                 println!("ChainState: Reorganization triggered! Rolling back {} blocks, applying {} fork blocks", rollback_hashes.len(), fork_blocks.len());
                 let mut sandbox = self.clone();
-                
+
                 // Roll back current tip to common ancestor
+                let mut rollback_deltas = Vec::new();
                 for _hash in &rollback_hashes {
-                    if !sandbox.rollback_block() {
-                        return false;
+                    match sandbox.rollback_block() {
+                        Some(delta) => rollback_deltas.push(delta),
+                        None => return ApplyResult::Rejected,
                     }
                 }
-                
+
                 // Apply the new fork blocks
+                let mut applied_deltas = Vec::new();
                 for fb in &fork_blocks {
-                    if !sandbox.apply_linear_block(fb) {
-                        return false;
+                    match sandbox.apply_linear_block(fb) {
+                        Some(delta) => applied_deltas.push(delta),
+                        None => return ApplyResult::Rejected,
                     }
                 }
-                
+
                 // Reorg successful, commit changes
                 *self = sandbox;
-                return true;
+                return ApplyResult::Reorg { rollbacks: rollback_deltas, applies: applied_deltas };
             }
         }
 
-        // Otherwise, we just store it in self.blocks (done above) and return false
-        false
+        // Otherwise, we just store it in self.blocks (done above) and reject
+        ApplyResult::Rejected
     }
 
     /// Directly applies a block on top of the current tip.
-    pub fn apply_linear_block(&mut self, block: &Block) -> bool {
+    pub fn apply_linear_block(&mut self, block: &Block) -> Option<AppliedDelta> {
         // 1. Verify height and prev_hash connectivity
         if block.header.height != self.current_height + 1 {
             // Special case for Genesis Block (height 0) on fresh state
             if !(block.header.height == 0 && self.current_height == 0 && self.last_block_hash == [0u8; 32]) {
-                return false;
+                return None;
             }
         } else if block.header.prev_hash != self.last_block_hash {
-            return false;
+            return None;
         }
 
         // 2. Verify Proof of Stake block proposer signature
         let expected_proposer = self.select_proposer(block.header.height, block.header.prev_hash);
         if block.header.validator_commitment != expected_proposer {
-            return false;
+            return None;
         }
 
         let stake_value = if expected_proposer == Commitment::new(1_000_000, Scalar::from(42u64)) {
@@ -171,7 +218,7 @@ impl ChainState {
         let msg = header_copy.hash();
 
         if block.header.height > 0 && !block.header.validator_signature.verify(&msg, &p_sig_commitment) {
-            return false;
+            return None;
         }
 
         // 3. Verify the block's internal cryptography
@@ -182,7 +229,7 @@ impl ChainState {
         };
 
         if !block.body.validate_with_reward(block_reward) {
-            return false;
+            return None;
         }
 
         // 4. Ensure all inputs exist in our UTXO set (no double spends, no fake inputs)
@@ -190,26 +237,28 @@ impl ChainState {
         if block.header.height > 0 {
             for input in &block.body.inputs {
                 if !self.utxos.contains(&input.commitment) {
-                    return false;
+                    return None;
                 }
             }
         }
 
         // 5. Save the snapshot of active validators BEFORE applying state transitions
-        self.validator_snapshots.insert(block.header.height, self.active_validators.clone());
+        let validator_snapshot = (block.header.height, self.active_validators.clone());
+        self.validator_snapshots.insert(validator_snapshot.0, validator_snapshot.1.clone());
 
         // 6. Remove spent inputs from the UTXO set and validators
+        let mut spent_commitments = Vec::new();
         if block.header.height > 0 {
             for input in &block.body.inputs {
                 self.utxos.remove(&input.commitment);
                 self.active_validators.retain(|val| val.commitment != input.commitment);
+                spent_commitments.push(input.commitment);
             }
         }
 
         // 7. Add new outputs to the UTXO set
         for output in &block.body.outputs {
             self.utxos.insert(output.commitment);
-            self.unspent_outputs.push(output.clone());
         }
 
         // 8. Save the kernels forever
@@ -220,36 +269,51 @@ impl ChainState {
         self.current_height = block.header.height;
         self.last_block_hash = block.header.hash();
         self.blocks.insert(self.last_block_hash, block.clone());
-        true
+
+        Some(AppliedDelta {
+            block: block.clone(),
+            spent_commitments,
+            new_outputs: block.body.outputs.clone(),
+            new_kernels: block.body.kernels.clone(),
+            validator_snapshot,
+            active_validators_after: self.active_validators.clone(),
+            height: self.current_height,
+            tip_hash: self.last_block_hash,
+        })
     }
 
     /// Rolls back the chaintip block by one height.
-    /// Returns true if successful, false if there are no blocks to roll back.
-    pub fn rollback_block(&mut self) -> bool {
+    /// Returns the delta if successful, None if there are no blocks to roll back.
+    pub fn rollback_block(&mut self) -> Option<RollbackDelta> {
         if self.current_height == 0 {
-            return false;
+            return None;
         }
 
         let tip_hash = self.last_block_hash;
         let tip_block = match self.blocks.get(&tip_hash) {
             Some(b) => b.clone(),
-            None => return false,
+            None => return None,
         };
 
         // 1. Remove output commitments from UTXO set
+        let mut un_consumed_outputs = Vec::new();
         for output in &tip_block.body.outputs {
             self.utxos.remove(&output.commitment);
-            self.unspent_outputs.retain(|o| o.commitment != output.commitment);
+            un_consumed_outputs.push(output.commitment);
         }
 
         // 2. Restore spent input commitments back to UTXO set
+        let mut restored_inputs = Vec::new();
         for input in &tip_block.body.inputs {
             self.utxos.insert(input.commitment);
+            restored_inputs.push(input.commitment);
         }
 
         // 3. Remove block kernels
+        let mut removed_kernel_excesses = Vec::new();
         for kernel in &tip_block.body.kernels {
             self.kernels.retain(|k| k.excess != kernel.excess);
+            removed_kernel_excesses.push(kernel.excess);
         }
 
         // 4. Restore active validator registry snapshot from height H-1
@@ -263,7 +327,14 @@ impl ChainState {
         self.current_height = prev_height;
         self.last_block_hash = tip_block.header.prev_hash;
 
-        true
+        Some(RollbackDelta {
+            un_consumed_outputs,
+            restored_inputs,
+            removed_kernel_excesses,
+            active_validators_after: self.active_validators.clone(),
+            new_height: self.current_height,
+            new_tip: self.last_block_hash,
+        })
     }
 
     /// Returns up to `limit` blocks starting at `from_height` from the active chain,

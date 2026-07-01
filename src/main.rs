@@ -8,7 +8,6 @@ use std::sync::{Arc, Mutex};
 use clap::Parser;
 
 use crate::core::mempool::Mempool;
-use crate::core::chain::ChainState;
 use crate::core::proposer::Proposer;
 use crate::core::storage::Storage;
 use crate::p2p::server::P2pServer;
@@ -22,15 +21,20 @@ async fn main() -> std::io::Result<()> {
     match &cli.command {
         Commands::Node { bind, peers, rpc_port, stake_key } => {
             println!("Initializing Haze Node...");
-            Storage::init();
+            let storage = Arc::new(Storage::open());
 
-            let state = Storage::load_state().unwrap_or_else(|| {
+            let mut state = storage.load_state();
+            if state.current_height == 0 && state.last_block_hash == [0u8; 32] && state.blocks.is_empty() {
                 println!("No previous state found. Starting fresh with Genesis Block.");
-                let mut fresh_state = ChainState::new();
                 let genesis = crate::core::genesis::genesis_block();
-                fresh_state.apply_block(&genesis);
-                fresh_state
-            });
+                if let core::chain::ApplyResult::Linear(delta) = state.apply_block(&genesis) {
+                    if let Err(e) = storage.persist_applied(&delta) {
+                        println!("Warning: Failed to persist genesis block: {}", e);
+                    }
+                }
+            } else {
+                println!("Resumed chain state from disk at height {}.", state.current_height);
+            }
 
             let chain = Arc::new(Mutex::new(state));
             let mempool = Arc::new(Mutex::new(Mempool::new()));
@@ -39,8 +43,8 @@ async fn main() -> std::io::Result<()> {
                 curve25519_dalek_ng::scalar::Scalar::from(s.parse::<u64>().expect("Staking key must be a valid decimal number"))
             });
 
-            let server = Arc::new(P2pServer::new(Arc::clone(&mempool), Arc::clone(&chain)));
-            let proposer = Arc::new(Proposer::new(Arc::clone(&mempool), Arc::clone(&chain), key));
+            let server = Arc::new(P2pServer::new(Arc::clone(&mempool), Arc::clone(&chain), Arc::clone(&storage)));
+            let proposer = Arc::new(Proposer::new(Arc::clone(&mempool), Arc::clone(&chain), Arc::clone(&storage), key));
 
             // Link proposer to P2P server for block broadcasting
             proposer.set_p2p_server(Arc::clone(&server));
@@ -54,10 +58,11 @@ async fn main() -> std::io::Result<()> {
             let rpc_mempool = Arc::clone(&mempool);
             let rpc_chain = Arc::clone(&chain);
             let rpc_server = Arc::clone(&server);
+            let rpc_storage = Arc::clone(&storage);
             let port = *rpc_port;
             println!("Starting HTTP JSON-RPC Server on 127.0.0.1:{}...", port);
             tokio::spawn(async move {
-                ApiServer::start(rpc_mempool, rpc_chain, rpc_server, port).await;
+                ApiServer::start(rpc_mempool, rpc_chain, rpc_server, rpc_storage, port).await;
             });
 
             let seed_peers: Vec<String> = peers.as_ref()
