@@ -19,7 +19,19 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Commands {
     /// Starts the Haze blockchain node
-    Node,
+    Node {
+        #[arg(short, long, default_value = "127.0.0.1:8333")]
+        bind: String,
+        
+        #[arg(short, long)]
+        peers: Option<String>,
+        
+        #[arg(short, long, default_value = "8332")]
+        rpc_port: u16,
+        
+        #[arg(short, long)]
+        stake_key: Option<String>,
+    },
     /// Sends a dummy transaction to the local node
     Send {
         #[arg(short, long)]

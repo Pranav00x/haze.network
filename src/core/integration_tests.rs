@@ -10,6 +10,9 @@ mod tests {
     
     use curve25519_dalek_ng::scalar::Scalar;
     use rand::rngs::OsRng;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+    use std::sync::Arc;
 
     #[test]
     fn test_full_transaction_lifecycle() {
@@ -150,14 +153,22 @@ mod tests {
         chain_state.utxos.insert(in1.commitment);
         chain_state.utxos.insert(in2.commitment);
 
+        let private_key = Scalar::from(42u64);
+        let mut header = BlockHeader {
+            height: 1,
+            prev_hash: [0u8; 32],
+            total_kernel_offset: Scalar::zero(),
+            nonce: 0,
+            timestamp: 0,
+            validator_commitment: Commitment::new(1_000_000, private_key),
+            validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+        };
+        let msg = header.hash();
+        header.validator_signature = Signature::sign(&msg, &private_key);
+
         // Construct a block with the aggregated transaction
         let block = Block {
-            header: BlockHeader {
-                height: 1,
-                prev_hash: [0u8; 32],
-                total_kernel_offset: Scalar::zero(),
-                nonce: 0,
-            },
+            header,
             body: aggregated_tx,
         };
 
@@ -201,4 +212,82 @@ mod tests {
 
         println!("All lifecycle integration tests passed successfully!");
     }
+
+    #[test]
+    fn test_pos_selection() {
+        let mut rng = OsRng;
+        let mut chain_state = ChainState::new();
+
+        // 1. Create and add validator inputs to UTXO set first
+        let r_a = Scalar::random(&mut rng);
+        let r_b = Scalar::random(&mut rng);
+        let r_c = Scalar::random(&mut rng);
+
+        let commitment_a = Commitment::new(1000, r_a);
+        let commitment_b = Commitment::new(2000, r_b);
+        let commitment_c = Commitment::new(3000, r_c);
+
+        chain_state.utxos.insert(commitment_a);
+        chain_state.utxos.insert(commitment_b);
+        chain_state.utxos.insert(commitment_c);
+
+        // 2. Register validators
+        assert!(chain_state.register_validator(commitment_a, 1000, r_a));
+        assert!(chain_state.register_validator(commitment_b, 2000, r_b));
+        assert!(chain_state.register_validator(commitment_c, 3000, r_c));
+
+        assert_eq!(chain_state.active_validators.len(), 3);
+
+        // 3. Selection must be deterministic
+        let proposer1 = chain_state.select_proposer(1, [1u8; 32]);
+        let proposer2 = chain_state.select_proposer(1, [1u8; 32]);
+        assert_eq!(proposer1, proposer2);
+
+        // 4. Over multiple slots, proposer distribution should select different validators
+        let mut selected_a = 0;
+        let mut selected_b = 0;
+        let mut selected_c = 0;
+
+        for h in 1u64..=100u64 {
+            let mut prev_hash = [0u8; 32];
+            prev_hash[0..8].copy_from_slice(&h.to_le_bytes());
+            let proposer = chain_state.select_proposer(h, prev_hash);
+            if proposer == commitment_a {
+                selected_a += 1;
+            } else if proposer == commitment_b {
+                selected_b += 1;
+            } else if proposer == commitment_c {
+                selected_c += 1;
+            }
+        }
+
+        println!("Selected counts - A: {}, B: {}, C: {}", selected_a, selected_b, selected_c);
+        // Stakers with more weight should be selected more often
+        assert!(selected_c > 0);
+        assert!(selected_b > 0);
+    }
+
+    #[tokio::test]
+    async fn test_dandelion_fluff_timeout() {
+        use crate::p2p::dandelion::DandelionRouter;
+
+        let router = DandelionRouter::new(0.0); // 0% fluff probability
+        let tx_id = [7u8; 32];
+        let fluffed = Arc::new(AtomicBool::new(false));
+        
+        let fluffed_clone = Arc::clone(&fluffed);
+        router.register_stem_tx(tx_id, 1, move || {
+            fluffed_clone.store(true, Ordering::SeqCst);
+        });
+
+        // Initially should not be fluffed
+        assert!(!fluffed.load(Ordering::SeqCst));
+
+        // Sleep to let timer expire (1s timeout)
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+
+        // Should now be fluffed via fallback trigger
+        assert!(fluffed.load(Ordering::SeqCst));
+    }
 }
+

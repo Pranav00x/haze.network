@@ -31,4 +31,13 @@ impl Mempool {
         let txs = std::mem::take(&mut self.pending_txs);
         Some(aggregate_and_cut_through(txs))
     }
+
+    /// Removes pending transactions that spend any outputs spent in the given block transaction.
+    pub fn clear_spent(&mut self, block_tx: &Transaction) {
+        use std::collections::HashSet;
+        let spent: HashSet<_> = block_tx.inputs.iter().map(|i| i.commitment).collect();
+        self.pending_txs.retain(|tx| {
+            tx.inputs.iter().all(|i| !spent.contains(&i.commitment))
+        });
+    }
 }

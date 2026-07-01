@@ -1,3 +1,5 @@
+use crate::crypto::pedersen::Commitment;
+use crate::crypto::schnorr::Signature;
 use super::transaction::Transaction;
 use serde::{Serialize, Deserialize};
 
@@ -8,6 +10,9 @@ pub struct BlockHeader {
     // Mimblewimble offset for the block
     pub total_kernel_offset: curve25519_dalek_ng::scalar::Scalar,
     pub nonce: u64,
+    pub timestamp: u64,
+    pub validator_commitment: Commitment,
+    pub validator_signature: Signature,
 }
 
 impl BlockHeader {
@@ -18,6 +23,10 @@ impl BlockHeader {
         hasher.update(&self.prev_hash);
         hasher.update(self.total_kernel_offset.as_bytes());
         hasher.update(&self.nonce.to_le_bytes());
+        hasher.update(&self.timestamp.to_le_bytes());
+        hasher.update(self.validator_commitment.as_point().compress().as_bytes());
+        hasher.update(self.validator_signature.s.as_bytes());
+        hasher.update(self.validator_signature.e.as_bytes());
         let result = hasher.finalize();
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&result);
