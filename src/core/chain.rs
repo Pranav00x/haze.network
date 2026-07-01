@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use crate::crypto::pedersen::Commitment;
 use crate::crypto::schnorr::Signature;
 use super::transaction::{TxKernel, Output};
@@ -13,7 +13,6 @@ pub struct Validator {
     pub value: u64,
 }
 
-/// Maintains the global state of the Mimblewimble blockchain.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ChainState {
     /// The Unspent Transaction Output (UTXO) set.
@@ -26,6 +25,10 @@ pub struct ChainState {
     pub last_block_hash: [u8; 32],
     /// Staking validators active on the network
     pub active_validators: Vec<Validator>,
+    /// Block database
+    pub blocks: HashMap<[u8; 32], Block>,
+    /// Snapshots of active validators at each block height
+    pub validator_snapshots: HashMap<u64, Vec<Validator>>,
 }
 
 impl ChainState {
@@ -86,8 +89,54 @@ impl ChainState {
     }
 
     /// Attempts to apply a new block to the chain state.
-    /// Returns true if successful, false if the block is invalid.
+    /// Triggers a reorganization if the block is on a heavier/taller fork.
     pub fn apply_block(&mut self, block: &Block) -> bool {
+        let block_hash = block.header.hash();
+        
+        // Store block in block database first
+        self.blocks.insert(block_hash, block.clone());
+
+        // Case 1: Simple linear application on top of current chaintip (or genesis block on fresh tip)
+        let is_linear = (block.header.height == self.current_height + 1 && block.header.prev_hash == self.last_block_hash)
+            || (block.header.height == 0 && self.current_height == 0 && self.last_block_hash == [0u8; 32]);
+            
+        if is_linear {
+            return self.apply_linear_block(block);
+        }
+
+        // Case 2: Block is on a fork
+        // Trigger reorg only if the fork block is taller/heavier than our current tip
+        if block.header.height > self.current_height {
+            if let Some((rollback_hashes, fork_blocks)) = self.find_reorg_path(block) {
+                println!("ChainState: Reorganization triggered! Rolling back {} blocks, applying {} fork blocks", rollback_hashes.len(), fork_blocks.len());
+                let mut sandbox = self.clone();
+                
+                // Roll back current tip to common ancestor
+                for _hash in &rollback_hashes {
+                    if !sandbox.rollback_block() {
+                        return false;
+                    }
+                }
+                
+                // Apply the new fork blocks
+                for fb in &fork_blocks {
+                    if !sandbox.apply_linear_block(fb) {
+                        return false;
+                    }
+                }
+                
+                // Reorg successful, commit changes
+                *self = sandbox;
+                return true;
+            }
+        }
+
+        // Otherwise, we just store it in self.blocks (done above) and return false
+        false
+    }
+
+    /// Directly applies a block on top of the current tip.
+    pub fn apply_linear_block(&mut self, block: &Block) -> bool {
         // 1. Verify height and prev_hash connectivity
         if block.header.height != self.current_height + 1 {
             // Special case for Genesis Block (height 0) on fresh state
@@ -146,7 +195,10 @@ impl ChainState {
             }
         }
 
-        // 5. Remove spent inputs from the UTXO set and validators
+        // 5. Save the snapshot of active validators BEFORE applying state transitions
+        self.validator_snapshots.insert(block.header.height, self.active_validators.clone());
+
+        // 6. Remove spent inputs from the UTXO set and validators
         if block.header.height > 0 {
             for input in &block.body.inputs {
                 self.utxos.remove(&input.commitment);
@@ -154,19 +206,114 @@ impl ChainState {
             }
         }
 
-        // 6. Add new outputs to the UTXO set
+        // 7. Add new outputs to the UTXO set
         for output in &block.body.outputs {
             self.utxos.insert(output.commitment);
             self.unspent_outputs.push(output.clone());
         }
 
-        // 7. Save the kernels forever
+        // 8. Save the kernels forever
         for kernel in &block.body.kernels {
             self.kernels.push(kernel.clone());
         }
 
         self.current_height = block.header.height;
         self.last_block_hash = block.header.hash();
+        self.blocks.insert(self.last_block_hash, block.clone());
         true
+    }
+
+    /// Rolls back the chaintip block by one height.
+    /// Returns true if successful, false if there are no blocks to roll back.
+    pub fn rollback_block(&mut self) -> bool {
+        if self.current_height == 0 {
+            return false;
+        }
+
+        let tip_hash = self.last_block_hash;
+        let tip_block = match self.blocks.get(&tip_hash) {
+            Some(b) => b.clone(),
+            None => return false,
+        };
+
+        // 1. Remove output commitments from UTXO set
+        for output in &tip_block.body.outputs {
+            self.utxos.remove(&output.commitment);
+            self.unspent_outputs.retain(|o| o.commitment != output.commitment);
+        }
+
+        // 2. Restore spent input commitments back to UTXO set
+        for input in &tip_block.body.inputs {
+            self.utxos.insert(input.commitment);
+        }
+
+        // 3. Remove block kernels
+        for kernel in &tip_block.body.kernels {
+            self.kernels.retain(|k| k.excess != kernel.excess);
+        }
+
+        // 4. Restore active validator registry snapshot from height H-1
+        let prev_height = self.current_height - 1;
+        self.active_validators = self.validator_snapshots.get(&prev_height).cloned().unwrap_or_default();
+
+        // 5. Clean up snapshot at height H
+        self.validator_snapshots.remove(&self.current_height);
+
+        // 6. Update tip metadata
+        self.current_height = prev_height;
+        self.last_block_hash = tip_block.header.prev_hash;
+
+        true
+    }
+
+    /// Finds a reorganization path from current active tip to a new block.
+    fn find_reorg_path(&self, new_block: &Block) -> Option<(Vec<[u8; 32]>, Vec<Block>)> {
+        let mut fork_blocks = Vec::new();
+        fork_blocks.push(new_block.clone());
+
+        let mut current_hash = new_block.header.prev_hash;
+
+        while current_hash != [0u8; 32] {
+            // Check if current_hash lies on our active chain chaintip history
+            let mut is_on_active_chain = false;
+            let mut trace = self.last_block_hash;
+            while trace != [0u8; 32] {
+                if trace == current_hash {
+                    is_on_active_chain = true;
+                    break;
+                }
+                if let Some(b) = self.blocks.get(&trace) {
+                    trace = b.header.prev_hash;
+                } else {
+                    break;
+                }
+            }
+
+            if is_on_active_chain {
+                // Found common ancestor!
+                let mut rollback_hashes = Vec::new();
+                let mut active_trace = self.last_block_hash;
+                while active_trace != current_hash && active_trace != [0u8; 32] {
+                    rollback_hashes.push(active_trace);
+                    if let Some(b) = self.blocks.get(&active_trace) {
+                        active_trace = b.header.prev_hash;
+                    } else {
+                        break;
+                    }
+                }
+                fork_blocks.reverse();
+                return Some((rollback_hashes, fork_blocks));
+            }
+
+            // Walk back via prev_hash
+            if let Some(parent_b) = self.blocks.get(&current_hash) {
+                fork_blocks.push(parent_b.clone());
+                current_hash = parent_b.header.prev_hash;
+            } else {
+                return None; // Orphan fork
+            }
+        }
+
+        None
     }
 }

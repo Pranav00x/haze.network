@@ -375,5 +375,91 @@ mod tests {
         assert_eq!(c.active_validators[0].commitment, commitment);
         assert_eq!(c.active_validators[0].value, value);
     }
+
+    #[test]
+    fn test_chain_reorganization() {
+        fn create_empty_block(height: u64, prev_hash: [u8; 32]) -> Block {
+            let mut rng = OsRng;
+            let private_key = Scalar::from(42u64);
+            let r_coinbase = Scalar::random(&mut rng);
+            
+            let coinbase_output = Output {
+                commitment: Commitment::new(60, r_coinbase),
+                proof: RangeProof::prove(60, &r_coinbase),
+            };
+            let coinbase_excess_r = Scalar::zero() - r_coinbase;
+            let coinbase_kernel = TxKernel {
+                excess: Commitment::new(0, coinbase_excess_r),
+                fee: 0,
+                signature: Signature::sign(&0u64.to_le_bytes(), &coinbase_excess_r),
+            };
+            
+            let body = Transaction {
+                inputs: vec![],
+                outputs: vec![coinbase_output],
+                kernels: vec![coinbase_kernel],
+            };
+
+            let mut header = BlockHeader {
+                height,
+                prev_hash,
+                total_kernel_offset: Scalar::zero(),
+                nonce: 0,
+                timestamp: 0,
+                validator_commitment: Commitment::new(1_000_000, private_key),
+                validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            };
+            let msg = header.hash();
+            header.validator_signature = Signature::sign(&msg, &private_key);
+
+            Block { header, body }
+        }
+
+        let mut chain_state = ChainState::new();
+
+        // 1. Apply Genesis Block (height 0)
+        let genesis_block = crate::core::genesis::genesis_block();
+        let genesis_hash = genesis_block.header.hash();
+        assert!(chain_state.apply_block(&genesis_block));
+        assert_eq!(chain_state.current_height, 0);
+
+        // 2. Build and apply Block A1
+        let a1 = create_empty_block(1, genesis_hash);
+        let a1_hash = a1.header.hash();
+        assert!(chain_state.apply_block(&a1));
+        assert_eq!(chain_state.current_height, 1);
+        assert_eq!(chain_state.last_block_hash, a1_hash);
+
+        // 3. Build and apply Block A2 (Main chaintip is now at height 2)
+        let a2 = create_empty_block(2, a1_hash);
+        let a2_hash = a2.header.hash();
+        assert!(chain_state.apply_block(&a2));
+        assert_eq!(chain_state.current_height, 2);
+        assert_eq!(chain_state.last_block_hash, a2_hash);
+
+        // 4. Build competing fork from A1:
+        // Block B2 (height 2, prev_hash = A1)
+        let b2 = create_empty_block(2, a1_hash);
+        let b2_hash = b2.header.hash();
+        
+        // Applying B2 should NOT change active tip (height 2 fork is same length as A2)
+        assert!(!chain_state.apply_block(&b2)); // Returns false because tip didn't switch
+        assert_eq!(chain_state.current_height, 2);
+        assert_eq!(chain_state.last_block_hash, a2_hash);
+
+        // 5. Build Block B3 on top of B2 (height 3, prev_hash = B2)
+        let b3 = create_empty_block(3, b2_hash);
+        let b3_hash = b3.header.hash();
+
+        // Applying B3 should trigger reorganization (height 3 > height 2)
+        assert!(chain_state.apply_block(&b3)); // Returns true because tip switched
+        assert_eq!(chain_state.current_height, 3);
+        assert_eq!(chain_state.last_block_hash, b3_hash);
+
+        // Verify that A2 is no longer tip, and B2 and B3 are active
+        assert!(chain_state.blocks.contains_key(&a2_hash));
+        assert!(chain_state.blocks.contains_key(&b2_hash));
+        assert!(chain_state.blocks.contains_key(&b3_hash));
+    }
 }
 

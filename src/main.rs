@@ -67,8 +67,14 @@ async fn main() -> std::io::Result<()> {
             println!("Starting P2P Network...");
             server.start(bind, seed_peers).await?;
         }
-        Commands::Send { amount } => {
-            Wallet::send_dummy_transaction(*amount).await?;
+        Commands::Init { claim_genesis } => {
+            Wallet::init(*claim_genesis)?;
+        }
+        Commands::Balance { rpc_port } => {
+            Wallet::balance(*rpc_port).await?;
+        }
+        Commands::Send { amount, rpc_port } => {
+            Wallet::send(*amount, *rpc_port).await?;
         }
         Commands::Stake { value, blinding, rpc_port } => {
             Wallet::stake(*value, *blinding, *rpc_port).await?;

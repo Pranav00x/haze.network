@@ -32,11 +32,17 @@ impl ApiServer {
         let stake_route = warp::post()
             .and(warp::path!("v1" / "stake"))
             .and(warp::body::json())
-            .and(chain_filter)
+            .and(chain_filter.clone())
             .and(p2p_filter)
             .and_then(handle_register_validator);
 
-        let routes = tx_route.or(stake_route).with(warp::cors().allow_any_origin());
+        // GET /v1/utxos
+        let utxos_route = warp::get()
+            .and(warp::path!("v1" / "utxos"))
+            .and(chain_filter)
+            .and_then(handle_list_utxos);
+
+        let routes = tx_route.or(stake_route).or(utxos_route).with(warp::cors().allow_any_origin());
         
         warp::serve(routes)
             .run(([127, 0, 0, 1], port))
@@ -89,6 +95,16 @@ async fn handle_submit_transaction(
         };
         Ok(warp::reply::with_status(warp::reply::json(&response), warp::http::StatusCode::BAD_REQUEST))
     }
+}
+
+async fn handle_list_utxos(
+    chain: Arc<Mutex<ChainState>>,
+) -> Result<impl warp::Reply, Infallible> {
+    let utxos: Vec<crate::crypto::pedersen::Commitment> = {
+        let c = chain.lock().unwrap();
+        c.utxos.iter().cloned().collect()
+    };
+    Ok(warp::reply::json(&utxos))
 }
 
 async fn handle_register_validator(

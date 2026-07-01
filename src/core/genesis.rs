@@ -19,9 +19,11 @@ pub fn genesis_block() -> Block {
         proof,
     };
     
-    // Create a genesis kernel with 0 fee.
-    let excess_commitment = Commitment::new(0, genesis_blinding);
-    let signature = Signature::sign(&0u64.to_le_bytes(), &genesis_blinding);
+    // Create a genesis kernel with 0 fee. Since the genesis output has no corresponding
+    // input, the excess blinding factor is the negation of the output's blinding factor.
+    let excess_blinding = Scalar::zero() - genesis_blinding;
+    let excess_commitment = Commitment::new(0, excess_blinding);
+    let signature = Signature::sign(&0u64.to_le_bytes(), &excess_blinding);
     let kernel = TxKernel {
         excess: excess_commitment,
         fee: 0,
@@ -41,7 +43,7 @@ pub fn genesis_block() -> Block {
             total_kernel_offset: Scalar::zero(),
             nonce: 0,
             timestamp: 0,
-            validator_commitment: Commitment::new(0, Scalar::zero()),
+            validator_commitment: Commitment::new(genesis_val, genesis_blinding),
             validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
         },
         body,
