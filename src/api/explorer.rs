@@ -166,6 +166,120 @@ pub async fn handle_validators(
     Ok(warp::reply::json(&validators))
 }
 
+#[derive(Serialize)]
+pub struct TransactionSummary {
+    pub block_height: u64,
+    pub block_hash: String,
+    pub excess: String,
+    pub fee: u64,
+}
+
+pub async fn handle_transactions_list(
+    query: BlocksQuery,
+    chain: Arc<Mutex<ChainState>>,
+) -> Result<impl warp::Reply, Infallible> {
+    let limit = query.limit.unwrap_or(20).clamp(1, 100);
+    // Scanning depth: pull enough recent blocks to have a good chance of
+    // gathering `limit` kernels (blocks may have zero user kernels), same
+    // devnet-scale scan cost the rest of the explorer already accepts.
+    const SCAN_BLOCKS: usize = 100;
+
+    let blocks = {
+        let c = chain.lock().unwrap();
+        let from_height = c.current_height.saturating_sub(SCAN_BLOCKS.saturating_sub(1) as u64);
+        let (blocks, _has_more) = c.get_blocks_from(from_height, SCAN_BLOCKS);
+        blocks
+    };
+
+    let mut summaries: Vec<TransactionSummary> = Vec::new();
+    for block in blocks.iter().rev() {
+        let block_hash = to_hex(&block.header.hash());
+        for kernel in &block.body.kernels {
+            summaries.push(TransactionSummary {
+                block_height: block.header.height,
+                block_hash: block_hash.clone(),
+                excess: commitment_hex(&kernel.excess),
+                fee: kernel.fee,
+            });
+            if summaries.len() >= limit {
+                return Ok(warp::reply::json(&summaries));
+            }
+        }
+    }
+    Ok(warp::reply::json(&summaries))
+}
+
+#[derive(serde::Deserialize)]
+pub struct SearchQuery {
+    pub q: String,
+}
+
+#[derive(Serialize)]
+pub struct SearchResult {
+    pub result_type: String,
+    pub height: Option<u64>,
+}
+
+fn not_found() -> SearchResult {
+    SearchResult { result_type: "not_found".to_string(), height: None }
+}
+
+pub async fn handle_search(
+    query: SearchQuery,
+    chain: Arc<Mutex<ChainState>>,
+) -> Result<impl warp::Reply, Infallible> {
+    let q = query.q.trim();
+
+    // 1. Numeric input: treat as a block height.
+    if let Ok(height) = q.parse::<u64>() {
+        let found = {
+            let c = chain.lock().unwrap();
+            let (blocks, _) = c.get_blocks_from(height, 1);
+            blocks.iter().any(|b| b.header.height == height)
+        };
+        if found {
+            return Ok(warp::reply::json(&SearchResult { result_type: "block".to_string(), height: Some(height) }));
+        }
+        return Ok(warp::reply::json(&not_found()));
+    }
+
+    // 2. 64-char hex input: try block hash, then kernel excess, then a UTXO commitment.
+    if q.len() == 64 && q.chars().all(|c| c.is_ascii_hexdigit()) {
+        let mut bytes = [0u8; 32];
+        let mut valid = true;
+        for i in 0..32 {
+            match u8::from_str_radix(&q[i * 2..i * 2 + 2], 16) {
+                Ok(b) => bytes[i] = b,
+                Err(_) => { valid = false; break; }
+            }
+        }
+
+        if valid {
+            let c = chain.lock().unwrap();
+
+            if let Some(block) = c.blocks.get(&bytes) {
+                return Ok(warp::reply::json(&SearchResult { result_type: "block".to_string(), height: Some(block.header.height) }));
+            }
+
+            let query_hex = q.to_lowercase();
+            for block in c.blocks.values() {
+                if block.body.kernels.iter().any(|k| commitment_hex(&k.excess) == query_hex) {
+                    return Ok(warp::reply::json(&SearchResult { result_type: "transaction".to_string(), height: Some(block.header.height) }));
+                }
+            }
+            for block in c.blocks.values() {
+                let matches_output = block.body.outputs.iter().any(|o| commitment_hex(&o.commitment) == query_hex);
+                let matches_input = block.body.inputs.iter().any(|i| commitment_hex(&i.commitment) == query_hex);
+                if matches_output || matches_input {
+                    return Ok(warp::reply::json(&SearchResult { result_type: "commitment".to_string(), height: Some(block.header.height) }));
+                }
+            }
+        }
+    }
+
+    Ok(warp::reply::json(&not_found()))
+}
+
 pub async fn handle_index() -> Result<impl warp::Reply, Infallible> {
     Ok(warp::reply::html(EXPLORER_HTML))
 }
@@ -174,67 +288,301 @@ const EXPLORER_HTML: &str = r#"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Haze Explorer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Haze &mdash; Explorer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,340..600&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  :root { color-scheme: dark; }
+  :root {
+    color-scheme: dark;
+    --fog-0: oklch(0.15 0.014 292);
+    --fog-1: oklch(0.19 0.016 292);
+    --fog-2: oklch(0.24 0.018 292);
+    --fog-3: oklch(0.32 0.02 292);
+    --mist: oklch(0.68 0.05 285);
+    --ink: oklch(0.93 0.012 90);
+    --ink-dim: oklch(0.93 0.012 90 / 0.62);
+    --ink-faint: oklch(0.93 0.012 90 / 0.34);
+    --amber: oklch(0.78 0.15 70);
+    --amber-dim: oklch(0.78 0.15 70 / 0.16);
+    --violet: oklch(0.72 0.09 300);
+    --ok: oklch(0.75 0.14 155);
+    --font-display: "Fraunces", serif;
+    --font-body: "Public Sans", sans-serif;
+    --font-mono: "IBM Plex Mono", monospace;
+  }
+
+  * { box-sizing: border-box; }
+
   body {
-    background: #0d1117;
-    color: #c9d1d9;
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    background:
+      radial-gradient(ellipse 900px 500px at 12% -10%, oklch(0.26 0.03 296 / 0.55), transparent),
+      radial-gradient(ellipse 700px 500px at 100% 10%, oklch(0.22 0.03 70 / 0.12), transparent),
+      var(--fog-0);
+    color: var(--ink);
+    font-family: var(--font-body);
     margin: 0;
-    padding: 24px;
+    min-height: 100vh;
+    padding: clamp(16px, 4vw, 44px) clamp(16px, 5vw, 64px) 80px;
   }
-  h1 { color: #58a6ff; margin: 0 0 4px 0; font-size: 22px; }
-  .subtitle { color: #8b949e; margin-bottom: 20px; font-size: 13px; }
-  .status-bar {
+
+  a { color: inherit; }
+
+  /* ---------- Top bar ---------- */
+  .topbar {
     display: flex;
-    gap: 24px;
-    background: #161b22;
-    border: 1px solid #30363d;
-    border-radius: 6px;
-    padding: 14px 18px;
-    margin-bottom: 24px;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 32px;
     flex-wrap: wrap;
+    margin-bottom: clamp(28px, 4vw, 48px);
   }
-  .status-item .label { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
-  .status-item .value { color: #e6edf3; font-size: 16px; margin-top: 2px; }
-  h2 { color: #e6edf3; font-size: 15px; border-bottom: 1px solid #30363d; padding-bottom: 8px; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 28px; }
-  th { text-align: left; color: #8b949e; font-weight: normal; padding: 6px 10px; border-bottom: 1px solid #30363d; }
-  td { padding: 6px 10px; border-bottom: 1px solid #21262d; }
-  tr.block-row { cursor: pointer; }
-  tr.block-row:hover { background: #161b22; }
-  .hash { color: #79c0ff; }
-  .detail-row td { background: #0d1117; }
-  .detail-box { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 12px; }
-  .detail-box .section { margin-bottom: 10px; }
-  .detail-box .section-label { color: #8b949e; font-size: 11px; text-transform: uppercase; margin-bottom: 4px; }
-  .detail-box .commitment { color: #7ee787; word-break: break-all; display: block; }
-  .empty { color: #8b949e; font-style: italic; }
+  .brand { display: flex; align-items: baseline; gap: 12px; }
+  .brand-mark {
+    font-family: var(--font-display);
+    font-size: 30px;
+    font-style: italic;
+    font-weight: 480;
+    color: var(--amber);
+  }
+  .brand-name {
+    font-family: var(--font-display);
+    font-optical-sizing: auto;
+    font-weight: 460;
+    font-size: clamp(26px, 3vw, 34px);
+    letter-spacing: -0.01em;
+  }
+  .brand-tag {
+    font-size: 12.5px;
+    color: var(--ink-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    align-self: center;
+    padding-left: 4px;
+    border-left: 1px solid var(--fog-3);
+    margin-left: 2px;
+  }
+
+  .search-form {
+    position: relative;
+    width: min(480px, 100%);
+  }
+  .search-form input {
+    width: 100%;
+    background: var(--fog-1);
+    border: 1px solid var(--fog-3);
+    color: var(--ink);
+    font-family: var(--font-mono);
+    font-size: 13.5px;
+    border-radius: 3px;
+    padding: 13px 44px 13px 16px;
+    outline: none;
+    transition: border-color 0.2s ease, background 0.2s ease;
+  }
+  .search-form input::placeholder { color: var(--ink-faint); font-family: var(--font-body); }
+  .search-form input:focus { border-color: var(--mist); background: var(--fog-2); }
+  .search-form button {
+    position: absolute;
+    right: 6px; top: 6px; bottom: 6px;
+    width: 34px;
+    background: transparent;
+    border: none;
+    color: var(--ink-dim);
+    cursor: pointer;
+    font-size: 16px;
+    border-radius: 2px;
+  }
+  .search-form button:hover { color: var(--amber); }
+
+  /* ---------- Stat row (asymmetric, not a repeated card grid) ---------- */
+  .stat-row {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: clamp(20px, 4vw, 56px);
+    align-items: end;
+    padding-bottom: clamp(20px, 3vw, 32px);
+    margin-bottom: clamp(24px, 3vw, 36px);
+    border-bottom: 1px solid var(--fog-2);
+  }
+  .stat-hero .stat-label { font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 6px; }
+  .stat-hero .stat-value {
+    font-family: var(--font-display);
+    font-size: clamp(44px, 7vw, 68px);
+    line-height: 0.95;
+    font-weight: 460;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat-hero .stat-sub { font-family: var(--font-mono); font-size: 12px; color: var(--ink-faint); margin-top: 8px; }
+
+  .stat-minor { display: flex; gap: clamp(24px, 4vw, 52px); flex-wrap: wrap; }
+  .stat-minor .stat-item { min-width: 110px; }
+  .stat-minor .stat-label { font-size: 11.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 6px; }
+  .stat-minor .stat-value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .stat-minor .stat-value.accent { color: var(--amber); }
+  .stat-minor .stat-note { font-size: 11.5px; color: var(--ink-faint); margin-top: 3px; }
+
+  /* ---------- Search result (fog-clearing reveal) ---------- */
+  .search-result {
+    display: grid;
+    grid-template-rows: 0fr;
+    opacity: 0;
+    filter: blur(6px);
+    transition: grid-template-rows 0.5s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.4s ease, filter 0.5s ease;
+    margin-bottom: 8px;
+  }
+  .search-result.open {
+    grid-template-rows: 1fr;
+    opacity: 1;
+    filter: blur(0);
+    margin-bottom: clamp(20px, 3vw, 32px);
+  }
+  .search-result > div { overflow: hidden; }
+  .search-result-inner {
+    border: 1px solid var(--amber-dim);
+    background: linear-gradient(180deg, oklch(0.22 0.02 292), var(--fog-1));
+    border-radius: 4px;
+    padding: 18px 22px;
+  }
+  .search-result-inner .sr-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--amber); margin-bottom: 8px; }
+  .search-result-inner .sr-empty { color: var(--ink-dim); font-size: 14px; }
+  .search-result-inner .sr-link { color: var(--mist); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+
+  /* ---------- Panels ---------- */
+  .panels {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: clamp(20px, 3vw, 32px);
+  }
+  @media (max-width: 880px) {
+    .panels { grid-template-columns: 1fr; }
+  }
+
+  .panel h2 {
+    font-family: var(--font-display);
+    font-weight: 460;
+    font-size: 19px;
+    margin: 0 0 14px 2px;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .panel h2 .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); display: inline-block; box-shadow: 0 0 0 3px oklch(0.75 0.14 155 / 0.15); }
+
+  .row-list { border-top: 1px solid var(--fog-2); }
+  .row {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 4px;
+    border-bottom: 1px solid var(--fog-2);
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+  .row:hover { background: var(--fog-1); }
+  .row-badge {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--fog-0);
+    background: var(--mist);
+    padding: 4px 9px;
+    border-radius: 3px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .row-badge.tx { background: var(--amber); }
+  .row-main { min-width: 0; }
+  .row-hash { font-family: var(--font-mono); font-size: 13px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row-sub { font-size: 11.5px; color: var(--ink-faint); margin-top: 2px; }
+  .row-meta { text-align: right; font-size: 11.5px; color: var(--ink-faint); white-space: nowrap; }
+  .row-meta .fee { color: var(--amber); font-family: var(--font-mono); }
+
+  .empty-state { padding: 28px 4px; color: var(--ink-faint); font-size: 13.5px; border-bottom: 1px solid var(--fog-2); }
+
+  /* ---------- Detail expansion ---------- */
+  .detail-box {
+    grid-column: 1 / -1;
+    background: var(--fog-1);
+    border: 1px solid var(--fog-3);
+    border-left: 2px solid var(--amber);
+    border-radius: 3px;
+    padding: 16px 18px;
+    margin: 2px 0 10px 0;
+    font-size: 13px;
+  }
+  .detail-box .d-section { margin-bottom: 12px; }
+  .detail-box .d-label { color: var(--ink-faint); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 5px; }
+  .detail-box .d-hash { font-family: var(--font-mono); color: var(--violet); display: block; word-break: break-all; line-height: 1.6; }
+  .detail-box .d-empty { color: var(--ink-faint); font-style: italic; }
+
+  ::selection { background: var(--amber-dim); }
 </style>
 </head>
 <body>
-  <h1>Haze Explorer</h1>
-  <div class="subtitle">Mimblewimble hides transaction amounts &mdash; inputs/outputs are shown as commitment hashes, not values.</div>
 
-  <div class="status-bar" id="status-bar"></div>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">&#9686;</span>
+      <span class="brand-name">Haze</span>
+      <span class="brand-tag">explorer</span>
+    </div>
+    <form class="search-form" id="search-form">
+      <input id="search-input" type="text" placeholder="Block height, block hash, or transaction / commitment hash" autocomplete="off" />
+      <button type="submit" aria-label="Search">&#8594;</button>
+    </form>
+  </header>
 
-  <h2>Recent Blocks</h2>
-  <table>
-    <thead>
-      <tr><th>Height</th><th>Hash</th><th>Timestamp</th><th>Proposer</th><th>In</th><th>Out</th><th>Kernels</th></tr>
-    </thead>
-    <tbody id="blocks-body"></tbody>
-  </table>
+  <section class="stat-row">
+    <div class="stat-hero">
+      <div class="stat-label">Chain Height</div>
+      <div class="stat-value" id="stat-height">&mdash;</div>
+      <div class="stat-sub" id="stat-tip">&mdash;</div>
+    </div>
+    <div class="stat-minor">
+      <div class="stat-item">
+        <div class="stat-label">Validators</div>
+        <div class="stat-value" id="stat-validators">&mdash;</div>
+        <div class="stat-note" id="stat-validators-note"></div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-label">Mempool</div>
+        <div class="stat-value accent" id="stat-mempool">&mdash;</div>
+        <div class="stat-note">pending transactions</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-label">Latest Block</div>
+        <div class="stat-value" id="stat-time" style="font-size: 16px;">&mdash;</div>
+        <div class="stat-note">local time</div>
+      </div>
+    </div>
+  </section>
 
-  <h2>Active Validators</h2>
-  <table>
-    <thead><tr><th>Commitment</th><th>Stake</th></tr></thead>
-    <tbody id="validators-body"></tbody>
-  </table>
+  <div class="search-result" id="search-result">
+    <div><div class="search-result-inner" id="search-result-inner"></div></div>
+  </div>
+
+  <main class="panels">
+    <section class="panel">
+      <h2><span class="dot"></span> Latest Blocks</h2>
+      <div class="row-list" id="blocks-body"></div>
+    </section>
+    <section class="panel">
+      <h2><span class="dot"></span> Latest Transactions</h2>
+      <div class="row-list" id="txs-body"></div>
+    </section>
+  </main>
 
 <script>
-const shortHash = (h) => h.slice(0, 16) + "...";
+const shortHash = (h, n) => h.slice(0, n || 14) + "&hellip;";
+const timeAgo = (unixSecs) => {
+  if (!unixSecs) return "&mdash;";
+  const diff = Math.max(0, Math.floor(Date.now() / 1000) - unixSecs);
+  if (diff < 5) return "just now";
+  if (diff < 60) return diff + "s ago";
+  if (diff < 3600) return Math.floor(diff / 60) + "m ago";
+  return Math.floor(diff / 3600) + "h ago";
+};
 
 async function fetchJson(url) {
   const res = await fetch(url);
@@ -243,28 +591,28 @@ async function fetchJson(url) {
 
 async function refreshStatus() {
   const s = await fetchJson("/v1/status");
-  document.getElementById("status-bar").innerHTML = `
-    <div class="status-item"><div class="label">Height</div><div class="value">${s.height}</div></div>
-    <div class="status-item"><div class="label">Tip</div><div class="value hash">${shortHash(s.tip_hash)}</div></div>
-    <div class="status-item"><div class="label">Validators</div><div class="value">${s.active_validators}</div></div>
-    <div class="status-item"><div class="label">Mempool</div><div class="value">${s.mempool_size}</div></div>
-  `;
-}
+  document.getElementById("stat-height").textContent = s.height;
+  document.getElementById("stat-tip").textContent = "tip " + shortHash(s.tip_hash, 18);
 
-async function refreshValidators() {
-  const validators = await fetchJson("/v1/validators");
-  const body = document.getElementById("validators-body");
-  if (validators.length === 0) {
-    body.innerHTML = `<tr><td colspan="2" class="empty">No registered validators yet (genesis default proposer active)</td></tr>`;
-    return;
+  if (s.active_validators === 0) {
+    document.getElementById("stat-validators").textContent = "1";
+    document.getElementById("stat-validators-note").textContent = "genesis default proposer";
+  } else {
+    document.getElementById("stat-validators").textContent = s.active_validators;
+    document.getElementById("stat-validators-note").textContent = "registered";
   }
-  body.innerHTML = validators.map(v => `
-    <tr><td class="hash">${v.commitment}</td><td>${v.value}</td></tr>
-  `).join("");
+  document.getElementById("stat-mempool").textContent = s.mempool_size;
 }
 
-// Tracks which block height (if any) has its detail row expanded, so the periodic
-// refresh below can restore it instead of silently discarding it.
+async function refreshBlocksTime() {
+  const blocks = await fetchJson("/v1/blocks?limit=1");
+  if (blocks.length) {
+    document.getElementById("stat-time").textContent = timeAgo(blocks[0].timestamp);
+  }
+}
+
+// Tracks which block height (if any) has its detail row expanded, so the
+// periodic refresh below can restore it instead of silently discarding it.
 let expandedHeight = null;
 
 function removeExpandedDetail() {
@@ -272,35 +620,36 @@ function removeExpandedDetail() {
   if (existing) existing.remove();
 }
 
-async function insertBlockDetail(height, rowEl) {
-  const b = await fetchJson(`/v1/blocks/${height}`);
-  const detailRow = document.createElement("tr");
-  detailRow.className = "detail-row";
-  detailRow.id = `detail-${height}`;
-  const inputsHtml = b.inputs.length
-    ? b.inputs.map(i => `<span class="commitment">${i}</span>`).join("")
-    : `<span class="empty">none</span>`;
-  const outputsHtml = b.outputs.length
-    ? b.outputs.map(o => `<span class="commitment">${o}</span>`).join("")
-    : `<span class="empty">none</span>`;
-  const kernelsHtml = b.kernels.length
-    ? b.kernels.map(k => `<span class="commitment">${k.excess} (fee: ${k.fee})</span>`).join("")
-    : `<span class="empty">none</span>`;
+function renderDetailBox(b) {
+  const box = document.createElement("div");
+  box.className = "detail-box";
+  box.id = "detail-" + b.height;
 
-  detailRow.innerHTML = `<td colspan="7">
-    <div class="detail-box">
-      <div class="section"><div class="section-label">Full Hash</div><span class="commitment">${b.hash}</span></div>
-      <div class="section"><div class="section-label">Prev Hash</div><span class="commitment">${b.prev_hash}</span></div>
-      <div class="section"><div class="section-label">Nonce</div>${b.nonce}</div>
-      <div class="section"><div class="section-label">Inputs (${b.inputs.length})</div>${inputsHtml}</div>
-      <div class="section"><div class="section-label">Outputs (${b.outputs.length})</div>${outputsHtml}</div>
-      <div class="section"><div class="section-label">Kernels (${b.kernels.length})</div>${kernelsHtml}</div>
-    </div>
-  </td>`;
-  rowEl.after(detailRow);
+  const list = (items) => items.length
+    ? items.map(i => `<span class="d-hash">${i}</span>`).join("")
+    : `<span class="d-empty">none</span>`;
+  const kernelList = b.kernels.length
+    ? b.kernels.map(k => `<span class="d-hash">${k.excess} <span style="color:var(--amber)">(fee ${k.fee})</span></span>`).join("")
+    : `<span class="d-empty">none</span>`;
+
+  box.innerHTML = `
+    <div class="d-section"><div class="d-label">Full Hash</div><span class="d-hash">${b.hash}</span></div>
+    <div class="d-section"><div class="d-label">Prev Hash</div><span class="d-hash">${b.prev_hash}</span></div>
+    <div class="d-section"><div class="d-label">Nonce</div>${b.nonce}</div>
+    <div class="d-section"><div class="d-label">Inputs (${b.inputs.length})</div>${list(b.inputs)}</div>
+    <div class="d-section"><div class="d-label">Outputs (${b.outputs.length})</div>${list(b.outputs)}</div>
+    <div class="d-section"><div class="d-label">Kernels (${b.kernels.length})</div>${kernelList}</div>
+  `;
+  return box;
 }
 
-async function showBlockDetail(height, rowEl) {
+async function insertBlockDetail(height, rowEl) {
+  const b = await fetchJson(`/v1/blocks/${height}`);
+  const box = renderDetailBox(b);
+  rowEl.after(box);
+}
+
+async function toggleBlockDetail(height, rowEl) {
   if (expandedHeight === height) {
     removeExpandedDetail();
     expandedHeight = null;
@@ -311,39 +660,106 @@ async function showBlockDetail(height, rowEl) {
   await insertBlockDetail(height, rowEl);
 }
 
+function blockRow(b) {
+  const row = document.createElement("div");
+  row.className = "row";
+  row.innerHTML = `
+    <span class="row-badge">#${b.height}</span>
+    <span class="row-main">
+      <span class="row-hash">${shortHash(b.hash, 22)}</span>
+      <div class="row-sub">proposer ${shortHash(b.proposer, 12)}</div>
+    </span>
+    <span class="row-meta">${timeAgo(b.timestamp)}<br>${b.num_inputs}in / ${b.num_outputs}out / ${b.num_kernels}kn</span>
+  `;
+  row.addEventListener("click", () => toggleBlockDetail(b.height, row));
+  return row;
+}
+
 async function refreshBlocks() {
   const blocks = await fetchJson("/v1/blocks?limit=20");
   const body = document.getElementById("blocks-body");
   body.innerHTML = "";
-  let expandedRowEl = null;
+  if (blocks.length === 0) {
+    body.innerHTML = `<div class="empty-state">No blocks yet &mdash; waiting for the chain to produce its first block.</div>`;
+    return;
+  }
+  let expandedRow = null;
   blocks.forEach(b => {
-    const row = document.createElement("tr");
-    row.className = "block-row";
-    row.innerHTML = `
-      <td>${b.height}</td>
-      <td class="hash">${shortHash(b.hash)}</td>
-      <td>${new Date(b.timestamp * 1000).toLocaleString()}</td>
-      <td class="hash">${shortHash(b.proposer)}</td>
-      <td>${b.num_inputs}</td>
-      <td>${b.num_outputs}</td>
-      <td>${b.num_kernels}</td>
-    `;
-    row.addEventListener("click", () => showBlockDetail(b.height, row));
+    const row = blockRow(b);
     body.appendChild(row);
-    if (b.height === expandedHeight) expandedRowEl = row;
+    if (b.height === expandedHeight) expandedRow = row;
   });
-  // Restore the previously expanded detail row, if its block is still in view.
   if (expandedHeight !== null) {
-    if (expandedRowEl) {
-      await insertBlockDetail(expandedHeight, expandedRowEl);
+    if (expandedRow) {
+      await insertBlockDetail(expandedHeight, expandedRow);
     } else {
       expandedHeight = null;
     }
   }
 }
 
+function txRow(t) {
+  const row = document.createElement("div");
+  row.className = "row";
+  row.innerHTML = `
+    <span class="row-badge tx">tx</span>
+    <span class="row-main">
+      <span class="row-hash">${shortHash(t.excess, 22)}</span>
+      <div class="row-sub">block #${t.block_height}</div>
+    </span>
+    <span class="row-meta">fee<br><span class="fee">${t.fee}</span></span>
+  `;
+  return row;
+}
+
+async function refreshTransactions() {
+  const txs = await fetchJson("/v1/transactions?limit=20");
+  const body = document.getElementById("txs-body");
+  body.innerHTML = "";
+  if (txs.length === 0) {
+    body.innerHTML = `<div class="empty-state">No transactions yet &mdash; only coinbase-free blocks so far. Submit one with the wallet CLI.</div>`;
+    return;
+  }
+  txs.forEach(t => body.appendChild(txRow(t)));
+}
+
+async function refreshValidators() {
+  // Folded into refreshStatus's validator count; kept as a no-op hook so
+  // future per-validator detail can slot in without touching refreshAll.
+}
+
+async function runSearch(query) {
+  const panel = document.getElementById("search-result");
+  const inner = document.getElementById("search-result-inner");
+  if (!query.trim()) {
+    panel.classList.remove("open");
+    return;
+  }
+
+  const result = await fetchJson("/v1/search?q=" + encodeURIComponent(query.trim()));
+
+  if (result.result_type === "not_found") {
+    inner.innerHTML = `<div class="sr-label">No match</div><div class="sr-empty">Nothing found for "${query}". Try a block height, a full block hash, or a transaction/commitment hash (64 hex characters).</div>`;
+  } else {
+    const typeLabel = result.result_type === "block" ? "Block found"
+      : result.result_type === "transaction" ? "Transaction found in block"
+      : "Commitment found in block";
+    inner.innerHTML = `<div class="sr-label">${typeLabel}</div><div class="sr-empty">Height <span class="sr-link" id="sr-jump">#${result.height}</span> &mdash; click to view</div>`;
+    document.getElementById("sr-jump").addEventListener("click", async () => {
+      const b = await fetchJson(`/v1/blocks/${result.height}`);
+      inner.appendChild(renderDetailBox(b));
+    });
+  }
+  panel.classList.add("open");
+}
+
+document.getElementById("search-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  runSearch(document.getElementById("search-input").value);
+});
+
 async function refreshAll() {
-  await Promise.all([refreshStatus(), refreshBlocks(), refreshValidators()]);
+  await Promise.all([refreshStatus(), refreshBlocks(), refreshTransactions(), refreshBlocksTime()]);
 }
 
 refreshAll();

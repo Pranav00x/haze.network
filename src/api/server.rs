@@ -76,8 +76,22 @@ impl ApiServer {
         // GET /v1/validators
         let validators_route = warp::get()
             .and(warp::path!("v1" / "validators"))
-            .and(chain_filter)
+            .and(chain_filter.clone())
             .and_then(explorer::handle_validators);
+
+        // GET /v1/transactions?limit=N
+        let transactions_route = warp::get()
+            .and(warp::path!("v1" / "transactions"))
+            .and(warp::query::<explorer::BlocksQuery>())
+            .and(chain_filter.clone())
+            .and_then(explorer::handle_transactions_list);
+
+        // GET /v1/search?q=...
+        let search_route = warp::get()
+            .and(warp::path!("v1" / "search"))
+            .and(warp::query::<explorer::SearchQuery>())
+            .and(chain_filter)
+            .and_then(explorer::handle_search);
 
         let routes = tx_route
             .or(stake_route)
@@ -87,6 +101,8 @@ impl ApiServer {
             .or(blocks_list_route)
             .or(block_detail_route)
             .or(validators_route)
+            .or(transactions_route)
+            .or(search_route)
             .with(warp::cors().allow_any_origin());
         
         warp::serve(routes)
