@@ -26,9 +26,16 @@ impl ApiServer {
         let storage_filter = warp::any().map(move || Arc::clone(&storage));
         let mempool_filter_2 = mempool_filter.clone();
 
+        // Caps request body size for the two write endpoints - now that this
+        // API is meant to be internet-facing, an unbounded body from an
+        // untrusted caller is the same class of problem MAX_MESSAGE_SIZE
+        // guards against on the P2P side (src/p2p/server.rs).
+        const MAX_BODY_SIZE: u64 = 1024 * 1024; // 1MB
+
         // POST /v1/transactions
         let tx_route = warp::post()
             .and(warp::path!("v1" / "transactions"))
+            .and(warp::body::content_length_limit(MAX_BODY_SIZE))
             .and(warp::body::json())
             .and(mempool_filter)
             .and_then(handle_submit_transaction);
@@ -36,6 +43,7 @@ impl ApiServer {
         // POST /v1/stake
         let stake_route = warp::post()
             .and(warp::path!("v1" / "stake"))
+            .and(warp::body::content_length_limit(MAX_BODY_SIZE))
             .and(warp::body::json())
             .and(chain_filter.clone())
             .and(p2p_filter)
@@ -105,8 +113,11 @@ impl ApiServer {
             .or(search_route)
             .with(warp::cors().allow_any_origin());
         
+        // Binds all interfaces, not just loopback - required for this to be
+        // reachable at all once deployed behind a cloud provider's proxy
+        // (e.g. Fly.io), which connects over the network, not localhost.
         warp::serve(routes)
-            .run(([127, 0, 0, 1], port))
+            .run(([0, 0, 0, 0], port))
             .await;
     }
 }

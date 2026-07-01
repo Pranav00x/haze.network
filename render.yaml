@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: haze-l1-devnet
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /v1/status
+    envVars:
+      - key: PORT
+        value: 8332
