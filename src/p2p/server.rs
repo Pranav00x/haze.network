@@ -3,7 +3,7 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::Mutex as TokioMutex;
 use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use rand::Rng;
 
 use crate::core::mempool::Mempool;
@@ -20,14 +20,28 @@ const SYNC_BATCH_SIZE: usize = 256;
 /// Guards against a peer claiming an oversized length and forcing a huge allocation.
 const MAX_MESSAGE_SIZE: usize = 32 * 1024 * 1024;
 
+/// Maximum number of simultaneous outbound+inbound connections a node will maintain.
+/// Bounds automatic peer-discovery dialing so a node doesn't try to connect to
+/// every address it ever hears about.
+const MAX_PEERS: usize = 8;
+
+/// Maximum number of addresses returned in a single PeersList response.
+const MAX_PEERS_SHARED: usize = 50;
+
 pub struct PeerManager {
     peers: Mutex<HashMap<String, Arc<TokioMutex<OwnedWriteHalf>>>>,
+    /// Address book of peers' real, dialable listen addresses (learned via
+    /// Handshake/PeersList) - distinct from `peers`, which is keyed by whatever
+    /// address identifies the live connection (the inbound side's ephemeral
+    /// remote port isn't dialable by anyone else).
+    known_peers: Mutex<HashSet<String>>,
 }
 
 impl PeerManager {
     pub fn new() -> Self {
         Self {
             peers: Mutex::new(HashMap::new()),
+            known_peers: Mutex::new(HashSet::new()),
         }
     }
 
@@ -42,6 +56,24 @@ impl PeerManager {
     pub fn remove_peer(&self, addr: &str) {
         let mut peers = self.peers.lock().unwrap();
         peers.remove(addr);
+    }
+
+    pub fn is_connected(&self, addr: &str) -> bool {
+        self.peers.lock().unwrap().contains_key(addr)
+    }
+
+    pub fn connection_count(&self) -> usize {
+        self.peers.lock().unwrap().len()
+    }
+
+    /// Records a peer's real listen address in the address book.
+    pub fn add_known_peer(&self, addr: String) {
+        self.known_peers.lock().unwrap().insert(addr);
+    }
+
+    /// A bounded snapshot of known peer addresses, suitable for sharing via PeersList.
+    pub fn known_peers_snapshot(&self) -> Vec<String> {
+        self.known_peers.lock().unwrap().iter().take(MAX_PEERS_SHARED).cloned().collect()
     }
 
     pub async fn broadcast(&self, msg: &P2pMessage) {
@@ -125,40 +157,19 @@ impl P2pServer {
         let listener = TcpListener::bind(addr).await?;
         println!("P2P Server listening on {}", addr);
 
+        let own_listen_addr = addr.to_string();
+
         // Connect to seed peers outbound
         for peer in seed_peers {
-            let peer_addr = peer.clone();
             let pm = Arc::clone(&self.peer_manager);
             let mp = Arc::clone(&self.mempool);
             let c = Arc::clone(&self.chain);
             let st = Arc::clone(&self.storage);
             let r = Arc::clone(&self.router);
-            let local_listen_addr = addr.to_string();
+            let own_listen_addr = own_listen_addr.clone();
 
             tokio::spawn(async move {
-                println!("P2P: Connecting outbound to seed peer {}...", peer_addr);
-                match TcpStream::connect(&peer_addr).await {
-                    Ok(mut stream) => {
-                        println!("P2P: Connected outbound to peer {}!", peer_addr);
-
-                        // Send Handshake
-                        if write_msg(&mut stream, &P2pMessage::Handshake { listen_addr: local_listen_addr }).await.is_ok() {
-                            // Also send our chain info so the peer can sync from us if they're behind
-                            let (our_height, our_tip) = {
-                                let cs = c.lock().unwrap();
-                                (cs.current_height, cs.last_block_hash)
-                            };
-                            let _ = write_msg(&mut stream, &P2pMessage::ChainInfo { height: our_height, tip_hash: our_tip }).await;
-
-                            let (read_half, write_half) = stream.into_split();
-                            let write_handle = pm.add_peer(peer_addr.clone(), write_half);
-                            handle_peer_connection(read_half, write_handle, peer_addr, pm, mp, c, st, r).await;
-                        }
-                    }
-                    Err(e) => {
-                        println!("P2P: Failed to connect outbound to seed peer {}: {}", peer_addr, e);
-                    }
-                }
+                connect_to_peer(peer, pm, mp, c, st, r, own_listen_addr).await;
             });
         }
 
@@ -179,14 +190,62 @@ impl P2pServer {
             let st_clone = Arc::clone(&st);
             let r_clone = Arc::clone(&r);
             let peer_str = peer_addr.to_string();
+            let own_listen_addr = own_listen_addr.clone();
 
             tokio::spawn(async move {
                 let (read_half, write_half) = stream.into_split();
                 let write_handle = pm_clone.add_peer(peer_str.clone(), write_half);
-                handle_peer_connection(read_half, write_handle, peer_str, pm_clone, mp_clone, c_clone, st_clone, r_clone).await;
+                handle_peer_connection(read_half, write_handle, peer_str, pm_clone, mp_clone, c_clone, st_clone, r_clone, own_listen_addr).await;
             });
         }
     }
+}
+
+/// Dials a peer outbound, performs the Handshake/ChainInfo/GetPeers exchange, and
+/// hands the connection off to handle_peer_connection. Used both for the initial
+/// --peers seed list and for peers learned via PeersList (peer discovery).
+/// Returns a boxed future rather than being declared `async fn` so its return type
+/// is a fixed, already-Send concrete type instead of an opaque one inferred from
+/// the body. connect_to_peer and handle_peer_connection are mutually recursive
+/// (peer discovery reconnects via connect_to_peer from inside
+/// handle_peer_connection's PeersList arm): without this, rustc's auto-trait
+/// inference for the opaque future types goes in a cycle and can't resolve.
+fn connect_to_peer(
+    peer_addr: String,
+    pm: Arc<PeerManager>,
+    mp: Arc<Mutex<Mempool>>,
+    c: Arc<Mutex<ChainState>>,
+    st: Arc<Storage>,
+    r: Arc<DandelionRouter>,
+    own_listen_addr: String,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+    Box::pin(async move {
+        println!("P2P: Connecting outbound to peer {}...", peer_addr);
+        match TcpStream::connect(&peer_addr).await {
+            Ok(mut stream) => {
+                println!("P2P: Connected outbound to peer {}!", peer_addr);
+                pm.add_known_peer(peer_addr.clone());
+
+                // Send Handshake
+                if write_msg(&mut stream, &P2pMessage::Handshake { listen_addr: own_listen_addr.clone() }).await.is_ok() {
+                    // Also send our chain info so the peer can sync from us if they're behind
+                    let (our_height, our_tip) = {
+                        let cs = c.lock().unwrap();
+                        (cs.current_height, cs.last_block_hash)
+                    };
+                    let _ = write_msg(&mut stream, &P2pMessage::ChainInfo { height: our_height, tip_hash: our_tip }).await;
+                    let _ = write_msg(&mut stream, &P2pMessage::GetPeers).await;
+
+                    let (read_half, write_half) = stream.into_split();
+                    let write_handle = pm.add_peer(peer_addr.clone(), write_half);
+                    handle_peer_connection(read_half, write_handle, peer_addr, pm, mp, c, st, r, own_listen_addr).await;
+                }
+            }
+            Err(e) => {
+                println!("P2P: Failed to connect outbound to peer {}: {}", peer_addr, e);
+            }
+        }
+    })
 }
 
 /// Persists an ApplyResult's deltas to storage, logging (but not failing on) any error.
@@ -231,6 +290,7 @@ async fn handle_peer_connection(
     chain: Arc<Mutex<ChainState>>,
     storage: Arc<Storage>,
     router: Arc<DandelionRouter>,
+    own_listen_addr: String,
 ) {
     let mut len_bytes = [0u8; 4];
     loop {
@@ -250,12 +310,14 @@ async fn handle_peer_connection(
                     match msg {
                         P2pMessage::Handshake { listen_addr } => {
                             println!("P2P: Handshake received from {} (listening on {})", peer_addr, listen_addr);
+                            pm.add_known_peer(listen_addr);
                             let (our_height, our_tip) = {
                                 let cs = chain.lock().unwrap();
                                 (cs.current_height, cs.last_block_hash)
                             };
                             let mut w = write_half.lock().await;
                             let _ = write_msg(&mut *w, &P2pMessage::ChainInfo { height: our_height, tip_hash: our_tip }).await;
+                            let _ = write_msg(&mut *w, &P2pMessage::GetPeers).await;
                         }
                         P2pMessage::Ping => {
                             let mut w = write_half.lock().await;
@@ -406,6 +468,32 @@ async fn handle_peer_connection(
                                 let next_from = { chain.lock().unwrap().current_height + 1 };
                                 let mut w = write_half.lock().await;
                                 let _ = write_msg(&mut *w, &P2pMessage::GetBlocks { from_height: next_from }).await;
+                            }
+                        }
+                        P2pMessage::GetPeers => {
+                            let peers_list = pm.known_peers_snapshot();
+                            let mut w = write_half.lock().await;
+                            let _ = write_msg(&mut *w, &P2pMessage::PeersList(peers_list)).await;
+                        }
+                        P2pMessage::PeersList(addrs) => {
+                            for candidate in addrs {
+                                if candidate == own_listen_addr || pm.is_connected(&candidate) {
+                                    continue;
+                                }
+                                pm.add_known_peer(candidate.clone());
+                                if pm.connection_count() >= MAX_PEERS {
+                                    continue;
+                                }
+                                println!("P2P: Discovered new peer {} via {}, connecting...", candidate, peer_addr);
+                                let pm2 = Arc::clone(&pm);
+                                let mp2 = Arc::clone(&mempool);
+                                let c2 = Arc::clone(&chain);
+                                let st2 = Arc::clone(&storage);
+                                let r2 = Arc::clone(&router);
+                                let own_listen_addr2 = own_listen_addr.clone();
+                                tokio::spawn(async move {
+                                    connect_to_peer(candidate, pm2, mp2, c2, st2, r2, own_listen_addr2).await;
+                                });
                             }
                         }
                     }

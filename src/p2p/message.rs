@@ -18,4 +18,6 @@ pub enum P2pMessage {
     ChainInfo { height: u64, tip_hash: [u8; 32] },
     GetBlocks { from_height: u64 },
     BlocksBatch { blocks: Vec<Block>, has_more: bool },
+    GetPeers,
+    PeersList(Vec<String>),
 }
