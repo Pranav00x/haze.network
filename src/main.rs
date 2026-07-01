@@ -52,10 +52,12 @@ async fn main() -> std::io::Result<()> {
             });
 
             let rpc_mempool = Arc::clone(&mempool);
+            let rpc_chain = Arc::clone(&chain);
+            let rpc_server = Arc::clone(&server);
             let port = *rpc_port;
             println!("Starting HTTP JSON-RPC Server on 127.0.0.1:{}...", port);
             tokio::spawn(async move {
-                ApiServer::start(rpc_mempool, port).await;
+                ApiServer::start(rpc_mempool, rpc_chain, rpc_server, port).await;
             });
 
             let seed_peers: Vec<String> = peers.as_ref()
@@ -67,6 +69,9 @@ async fn main() -> std::io::Result<()> {
         }
         Commands::Send { amount } => {
             Wallet::send_dummy_transaction(*amount).await?;
+        }
+        Commands::Stake { value, blinding, rpc_port } => {
+            Wallet::stake(*value, *blinding, *rpc_port).await?;
         }
     }
 

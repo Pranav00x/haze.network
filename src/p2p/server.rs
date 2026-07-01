@@ -300,6 +300,17 @@ async fn handle_peer_connection(
                                 pm.broadcast(&P2pMessage::NewBlock(block)).await;
                             }
                         }
+                        P2pMessage::RegisterValidator { commitment, value, blinding } => {
+                            println!("P2P: Received RegisterValidator for commitment {:?}", commitment);
+                            let registered = {
+                                let mut c = chain.lock().unwrap();
+                                c.register_validator(commitment, value, blinding)
+                            };
+                            if registered {
+                                println!("P2P: Validator registered and propagated to peers.");
+                                pm.broadcast(&P2pMessage::RegisterValidator { commitment, value, blinding }).await;
+                            }
+                        }
                     }
                 }
             }

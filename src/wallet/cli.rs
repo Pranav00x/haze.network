@@ -37,6 +37,15 @@ pub enum Commands {
         #[arg(short, long)]
         amount: u64,
     },
+    /// Locks a UTXO as stake and registers as a validator
+    Stake {
+        #[arg(short, long)]
+        value: u64,
+        #[arg(short, long)]
+        blinding: u64,
+        #[arg(short, long, default_value = "8332")]
+        rpc_port: u16,
+    },
 }
 
 pub struct Wallet;
@@ -124,6 +133,48 @@ impl Wallet {
             }
         }
 
+        Ok(())
+    }
+
+    pub async fn stake(value: u64, blinding: u64, rpc_port: u16) -> std::io::Result<()> {
+        println!("Registering validator stake: value={}, blinding={}...", value, blinding);
+        
+        let blinding_scalar = Scalar::from(blinding);
+        let commitment = Commitment::new(value, blinding_scalar);
+        
+        #[derive(serde::Serialize)]
+        struct StakePayload {
+            commitment: Commitment,
+            value: u64,
+            blinding: Scalar,
+        }
+        
+        let payload = StakePayload {
+            commitment,
+            value,
+            blinding: blinding_scalar,
+        };
+        
+        let client = reqwest::Client::new();
+        let url = format!("http://127.0.0.1:{}/v1/stake", rpc_port);
+        match client.post(&url)
+            .json(&payload)
+            .send()
+            .await 
+        {
+            Ok(response) => {
+                if response.status().is_success() {
+                    println!("Stake successfully registered on node and propagated to peers!");
+                } else {
+                    let err = response.text().await.unwrap_or_default();
+                    println!("Validator registration rejected: {}", err);
+                }
+            }
+            Err(e) => {
+                println!("Failed to connect to node API. Is the node running? Error: {}", e);
+            }
+        }
+        
         Ok(())
     }
 }

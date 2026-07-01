@@ -33,7 +33,6 @@ impl ChainState {
         Self::default()
     }
 
-    /// Registers a staker as an active validator by revealing their stake value and blinding factor.
     pub fn register_validator(&mut self, commitment: Commitment, value: u64, blinding: Scalar) -> bool {
         if Commitment::new(value, blinding) != commitment {
             return false;
@@ -42,6 +41,9 @@ impl ChainState {
             return false;
         }
         if let Some(pos) = self.active_validators.iter().position(|v| v.commitment == commitment) {
+            if self.active_validators[pos].value == value {
+                return false;
+            }
             self.active_validators[pos].value = value;
         } else {
             self.active_validators.push(Validator { commitment, value });

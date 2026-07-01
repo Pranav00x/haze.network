@@ -10,4 +10,9 @@ pub enum P2pMessage {
     StemTx(Transaction),
     FluffTx(Transaction),
     NewBlock(Block),
+    RegisterValidator {
+        commitment: crate::crypto::pedersen::Commitment,
+        value: u64,
+        blinding: curve25519_dalek_ng::scalar::Scalar,
+    },
 }
