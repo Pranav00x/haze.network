@@ -576,7 +576,7 @@ const EXPLORER_HTML: &str = r#"<!DOCTYPE html>
 <script>
 const shortHash = (h, n) => h.slice(0, n || 14) + "&hellip;";
 const timeAgo = (unixSecs) => {
-  if (!unixSecs) return "&mdash;";
+  if (!unixSecs) return "—";
   const diff = Math.max(0, Math.floor(Date.now() / 1000) - unixSecs);
   if (diff < 5) return "just now";
   if (diff < 60) return diff + "s ago";
