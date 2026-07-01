@@ -10,6 +10,7 @@ use super::block::{Block, BlockHeader};
 use crate::crypto::pedersen::Commitment;
 use crate::crypto::schnorr::Signature;
 use crate::p2p::server::P2pServer;
+use crate::core::transaction::Transaction;
 
 pub struct Proposer {
     mempool: Arc<Mutex<Mempool>>,
@@ -87,65 +88,98 @@ impl Proposer {
                 };
 
                 if chosen_proposer == validator.commitment {
-                    // Check if there are transactions in the mempool
+                    // Check for pending transactions or create empty block if none
                     let tx_bundle = {
                         let mut mp = self.mempool.lock().unwrap();
                         mp.aggregate()
                     };
 
-                    // Propose block if we have transactions
-                    if let Some(tx) = tx_bundle {
-                        println!("We are chosen proposer for block #{}! Proposing block with {} transactions...", next_height, tx.kernels.len());
-                        
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs();
+                    let mut tx = tx_bundle.unwrap_or_else(|| Transaction {
+                        inputs: vec![],
+                        outputs: vec![],
+                        kernels: vec![],
+                    });
 
-                        let mut header = BlockHeader {
-                            height: next_height,
-                            prev_hash,
-                            total_kernel_offset: Scalar::zero(),
-                            nonce: 0,
-                            timestamp: now,
-                            validator_commitment: validator.commitment,
-                            validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
-                        };
+                    println!("We are chosen proposer for block #{}! Proposing block with {} user transactions...", next_height, tx.kernels.len());
+                    
+                    // 1. Calculate total fees and coinbase value
+                    let total_fees: u64 = tx.kernels.iter().map(|k| k.fee).sum();
+                    let coinbase_value = super::block::BLOCK_REWARD + total_fees;
 
-                        // Sign the block header
-                        let msg = header.hash();
-                        header.validator_signature = Signature::sign(&msg, &private_key);
+                    // 2. Generate random blinding factor for coinbase output
+                    let mut rng = rand::thread_rng();
+                    let r_coinbase = Scalar::random(&mut rng);
 
-                        let block = Block {
-                            header,
-                            body: tx,
-                        };
+                    // 3. Create coinbase output and range proof
+                    let coinbase_commitment = Commitment::new(coinbase_value, r_coinbase);
+                    let coinbase_proof = crate::crypto::range_proof::RangeProof::prove(coinbase_value, &r_coinbase);
+                    let coinbase_output = crate::core::transaction::Output {
+                        commitment: coinbase_commitment,
+                        proof: coinbase_proof,
+                    };
 
-                        // Apply locally
-                        let mut c = self.chain.lock().unwrap();
-                        if c.apply_block(&block) {
-                            println!("Block #{} successfully proposed and added to chain locally!", block.header.height);
+                    // 4. Create coinbase kernel with additive inverse blinding factor: excess = -r_coinbase * H
+                    let coinbase_excess_r = Scalar::zero() - r_coinbase;
+                    let coinbase_excess_commitment = Commitment::new(0, coinbase_excess_r);
+                    let coinbase_signature = Signature::sign(&0u64.to_le_bytes(), &coinbase_excess_r);
+                    let coinbase_kernel = crate::core::transaction::TxKernel {
+                        excess: coinbase_excess_commitment,
+                        fee: 0,
+                        signature: coinbase_signature,
+                    };
 
-                            // Save to disk
-                            if let Err(e) = crate::core::storage::Storage::save_state(&c) {
-                                println!("Warning: Failed to save chain state to disk: {}", e);
-                            }
+                    // 5. Append coinbase output and kernel to block transaction body
+                    tx.outputs.push(coinbase_output);
+                    tx.kernels.push(coinbase_kernel);
 
-                            // Broadcast block
-                            let server_opt = {
-                                let s = self.p2p_server.lock().unwrap();
-                                s.clone()
-                            };
-                            if let Some(p2p) = server_opt {
-                                let p2p_clone = Arc::clone(&p2p);
-                                let block_clone = block.clone();
-                                tokio::spawn(async move {
-                                    p2p_clone.broadcast_block(block_clone).await;
-                                });
-                            }
-                        } else {
-                            println!("Warning: Locally proposed block was rejected by local validation!");
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+
+                    let mut header = BlockHeader {
+                        height: next_height,
+                        prev_hash,
+                        total_kernel_offset: Scalar::zero(),
+                        nonce: 0,
+                        timestamp: now,
+                        validator_commitment: validator.commitment,
+                        validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+                    };
+
+                    // Sign the block header
+                    let msg = header.hash();
+                    header.validator_signature = Signature::sign(&msg, &private_key);
+
+                    let block = Block {
+                        header,
+                        body: tx,
+                    };
+
+                    // Apply locally
+                    let mut c = self.chain.lock().unwrap();
+                    if c.apply_block(&block) {
+                        println!("Block #{} successfully proposed and added to chain locally!", block.header.height);
+
+                        // Save to disk
+                        if let Err(e) = crate::core::storage::Storage::save_state(&c) {
+                            println!("Warning: Failed to save chain state to disk: {}", e);
                         }
+
+                        // Broadcast block
+                        let server_opt = {
+                            let s = self.p2p_server.lock().unwrap();
+                            s.clone()
+                        };
+                        if let Some(p2p) = server_opt {
+                            let p2p_clone = Arc::clone(&p2p);
+                            let block_clone = block.clone();
+                            tokio::spawn(async move {
+                                p2p_clone.broadcast_block(block_clone).await;
+                            });
+                        }
+                    } else {
+                        println!("Warning: Locally proposed block was rejected by local validation!");
                     }
                 }
             }

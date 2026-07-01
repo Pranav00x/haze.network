@@ -153,6 +153,25 @@ mod tests {
         chain_state.utxos.insert(in1.commitment);
         chain_state.utxos.insert(in2.commitment);
 
+        // Construct the coinbase transaction for block 1:
+        // Value: BLOCK_REWARD (60) + total_fees (fee1 + fee2 = 5 + 5 = 10) = 70.
+        let r_coinbase = Scalar::random(&mut rng);
+        let coinbase_output = Output {
+            commitment: Commitment::new(70, r_coinbase),
+            proof: RangeProof::prove(70, &r_coinbase),
+        };
+        
+        let coinbase_excess_r = Scalar::zero() - r_coinbase;
+        let coinbase_kernel = TxKernel {
+            excess: Commitment::new(0, coinbase_excess_r),
+            fee: 0,
+            signature: Signature::sign(&0u64.to_le_bytes(), &coinbase_excess_r),
+        };
+        
+        let mut block_body = aggregated_tx.clone();
+        block_body.outputs.push(coinbase_output.clone());
+        block_body.kernels.push(coinbase_kernel.clone());
+
         let private_key = Scalar::from(42u64);
         let mut header = BlockHeader {
             height: 1,
@@ -166,28 +185,29 @@ mod tests {
         let msg = header.hash();
         header.validator_signature = Signature::sign(&msg, &private_key);
 
-        // Construct a block with the aggregated transaction
+        // Construct a block with the aggregated transaction (including coinbase)
         let block = Block {
             header,
-            body: aggregated_tx,
+            body: block_body,
         };
 
         // Apply the block to the chain state
         let applied = chain_state.apply_block(&block);
         assert!(applied, "Applying aggregated block to ChainState failed!");
 
-        // Verify the unspent UTXO set in the chain state matches the expected outputs
-        assert_eq!(chain_state.utxos.len(), 2);
+        // Verify the unspent UTXO set in the chain state matches the expected outputs (Out2, Out3, and Coinbase Output)
+        assert_eq!(chain_state.utxos.len(), 3);
         assert!(chain_state.utxos.contains(&out2.commitment), "UTXO set must contain Out2");
         assert!(chain_state.utxos.contains(&out3.commitment), "UTXO set must contain Out3");
+        assert!(chain_state.utxos.contains(&coinbase_output.commitment), "UTXO set must contain Coinbase Output");
         assert!(!chain_state.utxos.contains(&out1.commitment), "UTXO set must NOT contain Out1");
         assert!(!chain_state.utxos.contains(&in1.commitment), "UTXO set must NOT contain spent In1");
         assert!(!chain_state.utxos.contains(&in2.commitment), "UTXO set must NOT contain spent In2");
 
         // Verify global Mimblewimble balance invariant:
-        // Sum(Initial UTXOs) - Sum(Final UTXOs) - Total Fee Commitment = Sum(Kernel Excesses)
+        // Sum(Initial UTXOs) - Sum(Final UTXOs) - Total Fee Commitment + BLOCK_REWARD = Sum(Kernel Excesses)
         // Which is algebraically:
-        // Sum(Initial UTXOs) - Sum(Final UTXOs) - Total Fee Commitment - Sum(Kernel Excesses) = 0
+        // Sum(Initial UTXOs) - Sum(Final UTXOs) - Total Fee Commitment + BLOCK_REWARD - Sum(Kernel Excesses) = 0
         let mut sum_initial = curve25519_dalek_ng::ristretto::RistrettoPoint::default();
         sum_initial += in1.commitment.as_point();
         sum_initial += in2.commitment.as_point();
@@ -195,15 +215,16 @@ mod tests {
         let mut sum_final = curve25519_dalek_ng::ristretto::RistrettoPoint::default();
         sum_final += out2.commitment.as_point();
         sum_final += out3.commitment.as_point();
+        sum_final += coinbase_output.commitment.as_point();
 
-        let total_fee = fee1 + fee2;
-        let fee_commitment = Commitment::new(total_fee, Scalar::zero()).as_point();
+        let reward_commitment = Commitment::new(crate::core::block::BLOCK_REWARD, Scalar::zero()).as_point();
 
         let mut sum_kernels = curve25519_dalek_ng::ristretto::RistrettoPoint::default();
         sum_kernels += kernel1.excess.as_point();
         sum_kernels += kernel2.excess.as_point();
+        sum_kernels += coinbase_kernel.excess.as_point();
 
-        let expected_zero = sum_initial - sum_final - fee_commitment - sum_kernels;
+        let expected_zero = sum_initial - sum_final + reward_commitment - sum_kernels;
         assert_eq!(
             expected_zero,
             curve25519_dalek_ng::ristretto::RistrettoPoint::default(),

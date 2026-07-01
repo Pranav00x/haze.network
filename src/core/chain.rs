@@ -124,7 +124,13 @@ impl ChainState {
         }
 
         // 3. Verify the block's internal cryptography
-        if !block.validate() {
+        let block_reward = if block.header.height == 0 {
+            1_000_000
+        } else {
+            super::block::BLOCK_REWARD
+        };
+
+        if !block.body.validate_with_reward(block_reward) {
             return false;
         }
 

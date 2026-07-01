@@ -34,6 +34,8 @@ impl BlockHeader {
     }
 }
 
+pub const BLOCK_REWARD: u64 = 60;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Block {
     pub header: BlockHeader,
@@ -44,8 +46,6 @@ pub struct Block {
 impl Block {
     /// Validates the block by checking its internal transaction balances and signatures
     pub fn validate(&self) -> bool {
-        self.body.validate()
-        // In a full implementation, we'd also verify the total_kernel_offset
-        // and check proof-of-work, etc.
+        self.body.validate_with_reward(BLOCK_REWARD)
     }
 }
