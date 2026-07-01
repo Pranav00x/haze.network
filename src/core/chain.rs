@@ -363,10 +363,11 @@ impl ChainState {
 
         collected.reverse();
 
+        // `collected` is ascending by height starting at `from_height`. Keep the
+        // oldest `limit` blocks (i.e. the ones actually starting at `from_height`) -
+        // truncating from the end, not the start.
         let has_more = collected.len() > limit;
-        if has_more {
-            collected.drain(0..collected.len() - limit);
-        }
+        collected.truncate(limit);
         (collected, has_more)
     }
 

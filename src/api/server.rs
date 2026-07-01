@@ -8,6 +8,7 @@ use crate::core::chain::ChainState;
 use crate::core::storage::Storage;
 use crate::core::transaction::Transaction;
 use crate::p2p::server::P2pServer;
+use super::explorer;
 
 pub struct ApiServer;
 
@@ -23,6 +24,7 @@ impl ApiServer {
         let chain_filter = warp::any().map(move || Arc::clone(&chain));
         let p2p_filter = warp::any().map(move || Arc::clone(&p2p_server));
         let storage_filter = warp::any().map(move || Arc::clone(&storage));
+        let mempool_filter_2 = mempool_filter.clone();
 
         // POST /v1/transactions
         let tx_route = warp::post()
@@ -43,10 +45,49 @@ impl ApiServer {
         // GET /v1/utxos
         let utxos_route = warp::get()
             .and(warp::path!("v1" / "utxos"))
-            .and(chain_filter)
+            .and(chain_filter.clone())
             .and_then(handle_list_utxos);
 
-        let routes = tx_route.or(stake_route).or(utxos_route).with(warp::cors().allow_any_origin());
+        // GET /
+        let index_route = warp::get()
+            .and(warp::path::end())
+            .and_then(explorer::handle_index);
+
+        // GET /v1/status
+        let status_route = warp::get()
+            .and(warp::path!("v1" / "status"))
+            .and(chain_filter.clone())
+            .and(mempool_filter_2)
+            .and_then(explorer::handle_status);
+
+        // GET /v1/blocks?limit=N
+        let blocks_list_route = warp::get()
+            .and(warp::path!("v1" / "blocks"))
+            .and(warp::query::<explorer::BlocksQuery>())
+            .and(chain_filter.clone())
+            .and_then(explorer::handle_blocks_list);
+
+        // GET /v1/blocks/:height
+        let block_detail_route = warp::get()
+            .and(warp::path!("v1" / "blocks" / u64))
+            .and(chain_filter.clone())
+            .and_then(explorer::handle_block_detail);
+
+        // GET /v1/validators
+        let validators_route = warp::get()
+            .and(warp::path!("v1" / "validators"))
+            .and(chain_filter)
+            .and_then(explorer::handle_validators);
+
+        let routes = tx_route
+            .or(stake_route)
+            .or(utxos_route)
+            .or(index_route)
+            .or(status_route)
+            .or(blocks_list_route)
+            .or(block_detail_route)
+            .or(validators_route)
+            .with(warp::cors().allow_any_origin());
         
         warp::serve(routes)
             .run(([127, 0, 0, 1], port))

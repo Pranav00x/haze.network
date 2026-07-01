@@ -32,6 +32,11 @@ impl Mempool {
         Some(aggregate_and_cut_through(txs))
     }
 
+    /// Number of transactions currently pending in the mempool.
+    pub fn len(&self) -> usize {
+        self.pending_txs.len()
+    }
+
     /// Removes pending transactions that spend any outputs spent in the given block transaction.
     pub fn clear_spent(&mut self, block_tx: &Transaction) {
         use std::collections::HashSet;
