@@ -64,7 +64,7 @@ impl Wallet {
         };
 
         // 3. Calculate Kernel Excess
-        let fee = 5;
+        let fee = 5u64;
         // The transaction balance equation: sum(output) - sum(input) + fee = 0
         // Blinding equation: sum(output_blinding) - sum(input_blinding) = excess
         let excess_blinding = output_blinding - input_blinding;
@@ -72,7 +72,7 @@ impl Wallet {
         // The excess commitment commits to 0 value, with the excess blinding factor
         let excess_commitment = Commitment::new(0, excess_blinding);
         
-        let signature = Signature::sign(&excess_blinding);
+        let signature = Signature::sign(&fee.to_le_bytes(), &excess_blinding);
         
         let kernel = TxKernel {
             excess: excess_commitment,
