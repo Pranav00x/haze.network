@@ -15,6 +15,10 @@ use super::message::P2pMessage;
 /// Maximum number of blocks sent per GetBlocks/BlocksBatch round during chain sync.
 const SYNC_BATCH_SIZE: usize = 256;
 
+/// Maximum allowed size (in bytes) for a single length-prefixed P2P message.
+/// Guards against a peer claiming an oversized length and forcing a huge allocation.
+const MAX_MESSAGE_SIZE: usize = 32 * 1024 * 1024;
+
 pub struct PeerManager {
     peers: Mutex<HashMap<String, Arc<TokioMutex<OwnedWriteHalf>>>>,
 }
@@ -202,6 +206,10 @@ async fn handle_peer_connection(
         match read_half.read_exact(&mut len_bytes).await {
             Ok(_) => {
                 let len = u32::from_le_bytes(len_bytes) as usize;
+                if len > MAX_MESSAGE_SIZE {
+                    println!("P2P: Peer {} sent oversized message ({} bytes), disconnecting", peer_addr, len);
+                    break;
+                }
                 let mut buf = vec![0u8; len];
                 if read_half.read_exact(&mut buf).await.is_err() {
                     break;
