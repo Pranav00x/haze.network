@@ -23,6 +23,14 @@ impl Commitment {
     }
 }
 
+use std::hash::{Hash, Hasher};
+
+impl Hash for Commitment {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.as_point().compress().as_bytes().hash(state);
+    }
+}
+
 /// Homomorphic Addition: C(v1, r1) + C(v2, r2) = C(v1 + v2, r1 + r2)
 impl Add for Commitment {
     type Output = Self;
