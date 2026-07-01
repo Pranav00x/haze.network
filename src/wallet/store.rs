@@ -53,9 +53,20 @@ impl WalletStore {
     }
 
     pub fn save(&self) {
-        let encoded = bincode::serialize(self).unwrap();
+        let encoded = self.to_bytes();
         let mut file = File::create(STORE_FILE).unwrap();
         file.write_all(&encoded).unwrap();
+    }
+
+    /// Serializes the store to bytes, for callers (e.g. mobile FFI) that manage
+    /// their own persistence instead of using load_or_create()'s file-based storage.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        bincode::serialize(self).unwrap()
+    }
+
+    /// Reconstructs a store from bytes previously produced by to_bytes().
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        bincode::deserialize(bytes).ok()
     }
 
     pub fn has_index(&self, index: u32) -> bool {

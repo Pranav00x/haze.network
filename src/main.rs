@@ -1,18 +1,14 @@
-pub mod core;
-pub mod crypto;
-pub mod p2p;
-pub mod api;
-pub mod wallet;
-
 use std::sync::{Arc, Mutex};
 use clap::Parser;
 
-use crate::core::mempool::Mempool;
-use crate::core::proposer::Proposer;
-use crate::core::storage::Storage;
-use crate::p2p::server::P2pServer;
-use crate::api::server::ApiServer;
-use crate::wallet::cli::{Cli, Commands, Wallet};
+use haze_core::core::mempool::Mempool;
+use haze_core::core::proposer::Proposer;
+use haze_core::core::storage::Storage;
+use haze_core::core::chain::ApplyResult;
+use haze_core::core::genesis;
+use haze_core::p2p::server::P2pServer;
+use haze_core::api::server::ApiServer;
+use haze_core::wallet::cli::{Cli, Commands, Wallet};
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
@@ -26,8 +22,8 @@ async fn main() -> std::io::Result<()> {
             let mut state = storage.load_state();
             if state.current_height == 0 && state.last_block_hash == [0u8; 32] && state.blocks.is_empty() {
                 println!("No previous state found. Starting fresh with Genesis Block.");
-                let genesis = crate::core::genesis::genesis_block();
-                if let core::chain::ApplyResult::Linear(delta) = state.apply_block(&genesis) {
+                let genesis = genesis::genesis_block();
+                if let ApplyResult::Linear(delta) = state.apply_block(&genesis) {
                     if let Err(e) = storage.persist_applied(&delta) {
                         println!("Warning: Failed to persist genesis block: {}", e);
                     }

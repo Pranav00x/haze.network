@@ -13,7 +13,7 @@ fn to_hex(bytes: &[u8]) -> String {
 }
 
 fn commitment_hex(c: &crate::crypto::pedersen::Commitment) -> String {
-    to_hex(c.as_point().compress().as_bytes())
+    c.to_hex()
 }
 
 #[derive(Serialize)]

@@ -30,6 +30,23 @@ impl Commitment {
         let compressed = curve25519_dalek_ng::ristretto::CompressedRistretto::from_slice(bytes);
         compressed.decompress().map(Commitment)
     }
+
+    /// Encodes the commitment as a lowercase hex string of its compressed bytes.
+    pub fn to_hex(&self) -> String {
+        self.as_point().compress().as_bytes().iter().map(|b| format!("{:02x}", b)).collect()
+    }
+
+    /// Parses a commitment from a lowercase hex string produced by to_hex().
+    pub fn from_hex(hex: &str) -> Option<Self> {
+        if hex.len() != 64 {
+            return None;
+        }
+        let mut bytes = [0u8; 32];
+        for i in 0..32 {
+            bytes[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?;
+        }
+        Self::from_compressed_bytes(&bytes)
+    }
 }
 
 use std::hash::{Hash, Hasher};
