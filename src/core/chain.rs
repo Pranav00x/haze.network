@@ -13,6 +13,7 @@ pub struct ChainState {
     /// All transaction kernels ever recorded on the chain
     pub kernels: Vec<TxKernel>,
     pub current_height: u64,
+    pub last_block_hash: [u8; 32],
 }
 
 impl ChainState {
@@ -52,6 +53,7 @@ impl ChainState {
         }
 
         self.current_height = block.header.height;
+        self.last_block_hash = block.header.hash();
         true
     }
 }

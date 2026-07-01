@@ -7,6 +7,22 @@ pub struct BlockHeader {
     pub prev_hash: [u8; 32],
     // Mimblewimble offset for the block
     pub total_kernel_offset: curve25519_dalek::scalar::Scalar,
+    pub nonce: u64,
+}
+
+impl BlockHeader {
+    pub fn hash(&self) -> [u8; 32] {
+        use sha2::{Sha256, Digest};
+        let mut hasher = Sha256::new();
+        hasher.update(&self.height.to_le_bytes());
+        hasher.update(&self.prev_hash);
+        hasher.update(self.total_kernel_offset.as_bytes());
+        hasher.update(&self.nonce.to_le_bytes());
+        let result = hasher.finalize();
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&result);
+        hash
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
