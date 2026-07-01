@@ -1,7 +1,6 @@
 use clap::{Parser, Subcommand};
 use rand::{thread_rng, Rng};
-use tokio::net::TcpStream;
-use tokio::io::AsyncWriteExt;
+use reqwest;
 use curve25519_dalek_ng::scalar::Scalar;
 
 use crate::crypto::pedersen::Commitment;
@@ -92,15 +91,25 @@ impl Wallet {
             return Ok(());
         }
 
-        println!("Serialization...");
-        let encoded = bincode::serialize(&tx).unwrap();
+        println!("Submitting to http://127.0.0.1:8332/v1/transactions via JSON-RPC...");
         
-        println!("Broadcasting to 127.0.0.1:8333...");
-        if let Ok(mut stream) = TcpStream::connect("127.0.0.1:8333").await {
-            stream.write_all(&encoded).await?;
-            println!("Transaction successfully broadcasted to the network!");
-        } else {
-            println!("Failed to connect to the node. Is it running?");
+        let client = reqwest::Client::new();
+        match client.post("http://127.0.0.1:8332/v1/transactions")
+            .json(&tx)
+            .send()
+            .await 
+        {
+            Ok(response) => {
+                if response.status().is_success() {
+                    println!("Transaction successfully broadcasted to the network!");
+                } else {
+                    let err = response.text().await.unwrap_or_default();
+                    println!("Node rejected transaction: {}", err);
+                }
+            }
+            Err(e) => {
+                println!("Failed to connect to the node. Is it running? Error: {}", e);
+            }
         }
 
         Ok(())

@@ -1,6 +1,7 @@
 pub mod core;
 pub mod crypto;
 pub mod p2p;
+pub mod api;
 pub mod wallet;
 
 use std::sync::{Arc, Mutex};
@@ -11,6 +12,7 @@ use crate::core::chain::ChainState;
 use crate::core::miner::Miner;
 use crate::core::storage::Storage;
 use crate::p2p::server::P2pServer;
+use crate::api::server::ApiServer;
 use crate::wallet::cli::{Cli, Commands, Wallet};
 
 #[tokio::main]
@@ -36,6 +38,12 @@ async fn main() -> std::io::Result<()> {
             println!("Starting Background Miner...");
             tokio::spawn(async move {
                 miner.start_mining().await;
+            });
+
+            let rpc_mempool = Arc::clone(&mempool);
+            println!("Starting HTTP JSON-RPC Server on 127.0.0.1:8332...");
+            tokio::spawn(async move {
+                ApiServer::start(rpc_mempool, 8332).await;
             });
 
             println!("Starting P2P Network...");
