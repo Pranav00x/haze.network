@@ -1,7 +1,8 @@
-use curve25519_dalek_ng::constants::RISTRETTO_BASEPOINT_POINT;
 use curve25519_dalek_ng::scalar::Scalar;
 use merlin::Transcript;
 use rand::rngs::OsRng;
+use bulletproofs::PedersenGens;
+
 
 use super::pedersen::Commitment;
 use serde::{Serialize, Serializer, Deserialize, Deserializer};
@@ -50,17 +51,22 @@ impl<'de> Deserialize<'de> for Signature {
 
 impl Signature {
     /// Sign a message using a secret key (which in Mimblewimble is the excess blinding factor).
-    /// The public key is derived implicitly as `secret_key * G` which is what the kernel excess commits to.
+    /// The public key is derived implicitly as `secret_key * H` which is what the kernel excess commits to.
     pub fn sign(message: &[u8], secret_key: &Scalar) -> Self {
         let mut rng = OsRng;
         let mut transcript = Transcript::new(b"Haze Schnorr Signature");
+        let gens = PedersenGens::default();
         
-        // Add message to transcript
+        // Derive public key point
+        let public_key = secret_key * gens.B_blinding;
+        
+        // Add message and public key to transcript
         transcript.append_message(b"message", message);
+        transcript.append_message(b"public_key", public_key.compress().as_bytes());
         
         // Generate a random nonce k
         let k = Scalar::random(&mut rng);
-        let public_nonce = k * RISTRETTO_BASEPOINT_POINT;
+        let public_nonce = k * gens.B_blinding;
         
         // Add public nonce to transcript to get challenge e
         transcript.append_message(b"public_nonce", public_nonce.compress().as_bytes());
@@ -78,13 +84,16 @@ impl Signature {
     /// Verify a signature against a public key (which is a Commitment to 0 with excess blinding factor).
     pub fn verify(&self, message: &[u8], public_key: &Commitment) -> bool {
         let mut transcript = Transcript::new(b"Haze Schnorr Signature");
+        let gens = PedersenGens::default();
         
-        // Add message to transcript
-        transcript.append_message(b"message", message);
-        
-        // R = s * G - e * P
         let pk_point = public_key.as_point();
-        let r_point = self.s * RISTRETTO_BASEPOINT_POINT - self.e * pk_point;
+        
+        // Add message and public key to transcript
+        transcript.append_message(b"message", message);
+        transcript.append_message(b"public_key", pk_point.compress().as_bytes());
+        
+        // R = s * H - e * P
+        let r_point = self.s * gens.B_blinding - self.e * pk_point;
         
         // Recompute the challenge
         transcript.append_message(b"public_nonce", r_point.compress().as_bytes());

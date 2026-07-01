@@ -134,7 +134,7 @@ mod tests {
         let out_c1 = Commitment::new(out_v1, out_r1);
         
         let fee = 10u64; // implicitly committed to with zero blinding: fee * H + 0 * G
-        let fee_c = Commitment::new(fee, Scalar::ZERO);
+        let fee_c = Commitment::new(fee, Scalar::zero());
         
         // Net sum of commitments: (in_c1 + in_c2) - (out_c1 + fee_c)
         let sum_commitments = (in_c1 + in_c2) - (out_c1 + fee_c);

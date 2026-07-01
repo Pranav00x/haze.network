@@ -5,3 +5,7 @@ pub mod chain;
 pub mod mempool;
 pub mod miner;
 pub mod storage;
+
+#[cfg(test)]
+pub mod integration_tests;
+
