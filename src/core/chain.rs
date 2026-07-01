@@ -266,6 +266,39 @@ impl ChainState {
         true
     }
 
+    /// Returns up to `limit` blocks starting at `from_height` from the active chain,
+    /// walking backward from the tip via prev_hash. `has_more` is true if there were
+    /// additional blocks beyond `limit`.
+    pub fn get_blocks_from(&self, from_height: u64, limit: usize) -> (Vec<Block>, bool) {
+        let mut collected: Vec<Block> = Vec::new();
+        let mut current_hash = self.last_block_hash;
+
+        loop {
+            let block = match self.blocks.get(&current_hash) {
+                Some(b) => b.clone(),
+                None => break,
+            };
+            if block.header.height < from_height {
+                break;
+            }
+            let prev = block.header.prev_hash;
+            let height = block.header.height;
+            collected.push(block);
+            if height == 0 {
+                break;
+            }
+            current_hash = prev;
+        }
+
+        collected.reverse();
+
+        let has_more = collected.len() > limit;
+        if has_more {
+            collected.drain(0..collected.len() - limit);
+        }
+        (collected, has_more)
+    }
+
     /// Finds a reorganization path from current active tip to a new block.
     fn find_reorg_path(&self, new_block: &Block) -> Option<(Vec<[u8; 32]>, Vec<Block>)> {
         let mut fork_blocks = Vec::new();
