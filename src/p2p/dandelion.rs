@@ -20,8 +20,8 @@ impl DandelionRouter {
 
     /// Determines the next state for a transaction currently in the Stem phase
     pub fn next_state(&self) -> TxState {
-        let mut rng = rand::rng();
-        if rng.random_bool(self.fluff_probability) {
+        let mut rng = rand::thread_rng();
+        if rng.gen_bool(self.fluff_probability) {
             TxState::Fluff
         } else {
             TxState::Stem

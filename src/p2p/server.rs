@@ -51,8 +51,12 @@ impl P2pServer {
                             }
                             
                             // Add to local mempool
-                            let mut mp = mempool.lock().unwrap();
-                            if mp.add_transaction(tx) {
+                            let added = {
+                                let mut mp = mempool.lock().unwrap();
+                                mp.add_transaction(tx)
+                            };
+                            
+                            if added {
                                 println!("Transaction added to mempool");
                                 let _ = socket.write_all(b"OK").await;
                             } else {

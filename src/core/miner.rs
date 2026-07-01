@@ -39,7 +39,7 @@ impl Miner {
                 let mut header = BlockHeader {
                     height,
                     prev_hash,
-                    total_kernel_offset: curve25519_dalek::scalar::Scalar::ZERO, // Simplified for now
+                    total_kernel_offset: curve25519_dalek_ng::scalar::Scalar::zero(), // Simplified for now
                     nonce: 0,
                 };
 
@@ -67,6 +67,11 @@ impl Miner {
                 let mut c = self.chain.lock().unwrap();
                 if c.apply_block(&block) {
                     println!("Block #{} successfully added to chain!", block.header.height);
+                    
+                    // Persist state to disk
+                    if let Err(e) = crate::core::storage::Storage::save_state(&c) {
+                        println!("Warning: Failed to save chain state to disk: {}", e);
+                    }
                 } else {
                     println!("Mined block was invalid.");
                     // In a real node, we would return txs to mempool

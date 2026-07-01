@@ -1,7 +1,7 @@
 use crate::crypto::pedersen::Commitment;
 use crate::crypto::range_proof::RangeProof;
 use crate::crypto::schnorr::Signature;
-use curve25519_dalek::scalar::Scalar;
+use curve25519_dalek_ng::scalar::Scalar;
 use serde::{Serialize, Deserialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,24 +53,23 @@ impl Transaction {
         }
         
         // 3. Verify Equation: sum(inputs) - sum(outputs) - fee*H = sum(kernel_excess)
-        let mut sum_inputs = curve25519_dalek::ristretto::RistrettoPoint::default();
+        let mut sum_inputs = curve25519_dalek_ng::ristretto::RistrettoPoint::default();
         for input in &self.inputs {
             sum_inputs += input.commitment.as_point();
         }
         
-        let mut sum_outputs = curve25519_dalek::ristretto::RistrettoPoint::default();
+        let mut sum_outputs = curve25519_dalek_ng::ristretto::RistrettoPoint::default();
         for output in &self.outputs {
             sum_outputs += output.commitment.as_point();
         }
         
-        let mut sum_kernels = curve25519_dalek::ristretto::RistrettoPoint::default();
-        let mut total_fee = 0u64;
+        let mut sum_kernels = curve25519_dalek_ng::ristretto::RistrettoPoint::default();
         for kernel in &self.kernels {
             sum_kernels += kernel.excess.as_point();
-            total_fee += kernel.fee;
         }
         
-        let fee_commitment = Commitment::new(total_fee, Scalar::ZERO).as_point();
+        let total_fee = self.kernels.iter().map(|k| k.fee).sum();
+        let fee_commitment = Commitment::new(total_fee, Scalar::zero()).as_point();
         
         // We expect: sum_inputs - sum_outputs - fee_commitment = sum_kernels
         let expected_kernels = sum_inputs - sum_outputs - fee_commitment;

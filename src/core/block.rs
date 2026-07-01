@@ -6,7 +6,7 @@ pub struct BlockHeader {
     pub height: u64,
     pub prev_hash: [u8; 32],
     // Mimblewimble offset for the block
-    pub total_kernel_offset: curve25519_dalek::scalar::Scalar,
+    pub total_kernel_offset: curve25519_dalek_ng::scalar::Scalar,
     pub nonce: u64,
 }
 

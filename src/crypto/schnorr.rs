@@ -1,5 +1,5 @@
-use curve25519_dalek::constants::RISTRETTO_BASEPOINT_POINT;
-use curve25519_dalek::scalar::Scalar;
+use curve25519_dalek_ng::constants::RISTRETTO_BASEPOINT_POINT;
+use curve25519_dalek_ng::scalar::Scalar;
 use merlin::Transcript;
 use rand::rngs::OsRng;
 
@@ -36,13 +36,13 @@ impl<'de> Deserialize<'de> for Signature {
         
         let mut s_bytes = [0u8; 32];
         s_bytes.copy_from_slice(&bytes[0..32]);
-        let s = curve25519_dalek::scalar::Scalar::from_canonical_bytes(s_bytes)
-            .into_option().ok_or_else(|| serde::de::Error::custom("Invalid scalar s"))?;
+        let s = curve25519_dalek_ng::scalar::Scalar::from_canonical_bytes(s_bytes)
+            .ok_or_else(|| serde::de::Error::custom("Invalid scalar s"))?;
             
         let mut e_bytes = [0u8; 32];
         e_bytes.copy_from_slice(&bytes[32..64]);
-        let e = curve25519_dalek::scalar::Scalar::from_canonical_bytes(e_bytes)
-            .into_option().ok_or_else(|| serde::de::Error::custom("Invalid scalar e"))?;
+        let e = curve25519_dalek_ng::scalar::Scalar::from_canonical_bytes(e_bytes)
+            .ok_or_else(|| serde::de::Error::custom("Invalid scalar e"))?;
             
         Ok(Signature { s, e })
     }

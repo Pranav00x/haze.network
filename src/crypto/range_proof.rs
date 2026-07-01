@@ -1,5 +1,5 @@
 use bulletproofs::{BulletproofGens, PedersenGens, RangeProof as BpRangeProof};
-use curve25519_dalek::scalar::Scalar;
+use curve25519_dalek_ng::scalar::Scalar;
 use merlin::Transcript;
 
 use super::pedersen::Commitment;
@@ -8,7 +8,7 @@ const RANGE_BIT_LENGTH: usize = 64; // Proof that value is within 0..2^64-1
 
 use serde::{Serialize, Serializer, Deserialize, Deserializer};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct RangeProof(pub BpRangeProof);
 
 impl Serialize for RangeProof {
@@ -44,6 +44,7 @@ impl RangeProof {
             &mut transcript,
             value,
             blinding,
+            RANGE_BIT_LENGTH,
         ).expect("A range proof should always generate successfully");
         
         RangeProof(proof)
@@ -62,7 +63,7 @@ impl RangeProof {
             &pc_gens,
             &mut transcript,
             &compressed,
-            1,
+            RANGE_BIT_LENGTH,
         ).is_ok()
     }
 }

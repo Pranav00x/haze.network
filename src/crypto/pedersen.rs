@@ -1,6 +1,6 @@
 use bulletproofs::PedersenGens;
-use curve25519_dalek::ristretto::RistrettoPoint;
-use curve25519_dalek::scalar::Scalar;
+use curve25519_dalek_ng::ristretto::RistrettoPoint;
+use curve25519_dalek_ng::scalar::Scalar;
 use std::ops::{Add, Sub};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,7 +50,7 @@ impl<'de> Deserialize<'de> for Commitment {
         if bytes.len() != 32 {
             return Err(serde::de::Error::custom("Invalid commitment length"));
         }
-        let compressed = curve25519_dalek::ristretto::CompressedRistretto::from_slice(&bytes).map_err(|_| serde::de::Error::custom("Invalid commitment bytes"))?;
+        let compressed = curve25519_dalek_ng::ristretto::CompressedRistretto::from_slice(&bytes);
         let point = compressed.decompress().ok_or_else(|| serde::de::Error::custom("Failed to decompress commitment"))?;
         Ok(Commitment(point))
     }
@@ -77,7 +77,7 @@ impl Sub for Commitment {
 mod tests {
     use super::*;
     use rand::rngs::OsRng;
-    use curve25519_dalek::traits::Identity;
+    use curve25519_dalek_ng::traits::Identity;
     
     #[test]
     fn test_homomorphic_addition() {

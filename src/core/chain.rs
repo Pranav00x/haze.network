@@ -2,9 +2,10 @@ use std::collections::HashSet;
 use crate::crypto::pedersen::Commitment;
 use super::transaction::{TxKernel, Output};
 use super::block::Block;
+use serde::{Serialize, Deserialize};
 
 /// Maintains the global state of the Mimblewimble blockchain.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ChainState {
     /// The Unspent Transaction Output (UTXO) set.
     pub utxos: HashSet<Commitment>,

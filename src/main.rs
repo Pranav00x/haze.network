@@ -6,13 +6,21 @@ use std::sync::{Arc, Mutex};
 use crate::core::mempool::Mempool;
 use crate::core::chain::ChainState;
 use crate::core::miner::Miner;
+use crate::core::storage::Storage;
 use crate::p2p::server::P2pServer;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     println!("Initializing Haze Node...");
+    Storage::init();
 
-    let chain = Arc::new(Mutex::new(ChainState::new()));
+    // Try to load state from disk
+    let state = Storage::load_state().unwrap_or_else(|| {
+        println!("No previous state found. Starting fresh.");
+        ChainState::new()
+    });
+
+    let chain = Arc::new(Mutex::new(state));
     let mempool = Arc::new(Mutex::new(Mempool::new()));
     
     let server = P2pServer::new(Arc::clone(&mempool));
