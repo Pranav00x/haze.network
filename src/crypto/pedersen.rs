@@ -24,10 +24,35 @@ impl Commitment {
 }
 
 use std::hash::{Hash, Hasher};
+use serde::{Serialize, Serializer, Deserialize, Deserializer};
 
 impl Hash for Commitment {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.as_point().compress().as_bytes().hash(state);
+    }
+}
+
+impl Serialize for Commitment {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_bytes(self.as_point().compress().as_bytes())
+    }
+}
+
+impl<'de> Deserialize<'de> for Commitment {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        if bytes.len() != 32 {
+            return Err(serde::de::Error::custom("Invalid commitment length"));
+        }
+        let compressed = curve25519_dalek::ristretto::CompressedRistretto::from_slice(&bytes).map_err(|_| serde::de::Error::custom("Invalid commitment bytes"))?;
+        let point = compressed.decompress().ok_or_else(|| serde::de::Error::custom("Failed to decompress commitment"))?;
+        Ok(Commitment(point))
     }
 }
 

@@ -4,11 +4,48 @@ use merlin::Transcript;
 use rand::rngs::OsRng;
 
 use super::pedersen::Commitment;
+use serde::{Serialize, Serializer, Deserialize, Deserializer};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Signature {
     pub s: Scalar,
     pub e: Scalar,
+}
+
+impl Serialize for Signature {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut bytes = [0u8; 64];
+        bytes[0..32].copy_from_slice(self.s.as_bytes());
+        bytes[32..64].copy_from_slice(self.e.as_bytes());
+        serializer.serialize_bytes(&bytes)
+    }
+}
+
+impl<'de> Deserialize<'de> for Signature {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        if bytes.len() != 64 {
+            return Err(serde::de::Error::custom("Invalid signature length"));
+        }
+        
+        let mut s_bytes = [0u8; 32];
+        s_bytes.copy_from_slice(&bytes[0..32]);
+        let s = curve25519_dalek::scalar::Scalar::from_canonical_bytes(s_bytes)
+            .into_option().ok_or_else(|| serde::de::Error::custom("Invalid scalar s"))?;
+            
+        let mut e_bytes = [0u8; 32];
+        e_bytes.copy_from_slice(&bytes[32..64]);
+        let e = curve25519_dalek::scalar::Scalar::from_canonical_bytes(e_bytes)
+            .into_option().ok_or_else(|| serde::de::Error::custom("Invalid scalar e"))?;
+            
+        Ok(Signature { s, e })
+    }
 }
 
 impl Signature {

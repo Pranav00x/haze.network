@@ -6,8 +6,30 @@ use super::pedersen::Commitment;
 
 const RANGE_BIT_LENGTH: usize = 64; // Proof that value is within 0..2^64-1
 
+use serde::{Serialize, Serializer, Deserialize, Deserializer};
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RangeProof(pub BpRangeProof);
+
+impl Serialize for RangeProof {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_bytes(&self.0.to_bytes())
+    }
+}
+
+impl<'de> Deserialize<'de> for RangeProof {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        let bp_proof = BpRangeProof::from_bytes(&bytes).map_err(|_| serde::de::Error::custom("Invalid range proof bytes"))?;
+        Ok(RangeProof(bp_proof))
+    }
+}
 
 impl RangeProof {
     /// Create a range proof for a value and its blinding factor

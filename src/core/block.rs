@@ -1,6 +1,7 @@
 use super::transaction::Transaction;
+use serde::{Serialize, Deserialize};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BlockHeader {
     pub height: u64,
     pub prev_hash: [u8; 32],
@@ -8,7 +9,7 @@ pub struct BlockHeader {
     pub total_kernel_offset: curve25519_dalek::scalar::Scalar,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Block {
     pub header: BlockHeader,
     // The entire block is just one giant cut-through transaction

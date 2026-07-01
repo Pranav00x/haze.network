@@ -2,26 +2,27 @@ use crate::crypto::pedersen::Commitment;
 use crate::crypto::range_proof::RangeProof;
 use crate::crypto::schnorr::Signature;
 use curve25519_dalek::scalar::Scalar;
+use serde::{Serialize, Deserialize};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Input {
     pub commitment: Commitment,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Output {
     pub commitment: Commitment,
     pub proof: RangeProof,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TxKernel {
     pub excess: Commitment,
     pub fee: u64,
     pub signature: Signature,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Transaction {
     pub inputs: Vec<Input>,
     pub outputs: Vec<Output>,
