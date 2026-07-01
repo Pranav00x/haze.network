@@ -29,12 +29,33 @@ pub enum PlanError {
 /// The blinding factor for a wallet-owned output index. The well-known genesis
 /// output (see wallet/cli.rs's --claim-genesis flow) uses a fixed devnet secret
 /// rather than a keystore-derived one.
-fn blinding_for(keystore: &Keystore, index: u32) -> Scalar {
+pub(crate) fn blinding_for(keystore: &Keystore, index: u32) -> Scalar {
     if index == GENESIS_INDEX {
         Scalar::from(42u64)
     } else {
         keystore.derive_blinding(index)
     }
+}
+
+/// Greedily selects confirmed, on-chain-verified outputs covering `target`,
+/// shared by both self-pay (plan_send) and the interactive slate flow
+/// (wallet/slate.rs).
+pub(crate) fn select_spendable(store: &WalletStore, target: u64) -> Result<Vec<PlannedOutput>, PlanError> {
+    let mut selected: Vec<PlannedOutput> = Vec::new();
+    let mut selected_total = 0u64;
+    for output in store.spendable() {
+        if selected_total >= target {
+            break;
+        }
+        selected.push((output.index, output.commitment, output.value));
+        selected_total += output.value;
+    }
+
+    if selected_total < target {
+        return Err(PlanError::InsufficientBalance { have: store.balance(), need: target });
+    }
+
+    Ok(selected)
 }
 
 /// Builds a real, self-contained Mimblewimble transaction spending the wallet's own
@@ -50,19 +71,8 @@ pub fn plan_send(keystore: &mut Keystore, store: &WalletStore, amount: u64, fee:
     let target = amount + fee;
 
     // 1. Greedily select confirmed, on-chain-verified outputs to cover amount + fee.
-    let mut selected: Vec<PlannedOutput> = Vec::new();
-    let mut selected_total = 0u64;
-    for output in store.spendable() {
-        if selected_total >= target {
-            break;
-        }
-        selected.push((output.index, output.commitment, output.value));
-        selected_total += output.value;
-    }
-
-    if selected_total < target {
-        return Err(PlanError::InsufficientBalance { have: store.balance(), need: target });
-    }
+    let selected = select_spendable(store, target)?;
+    let selected_total: u64 = selected.iter().map(|(_, _, value)| value).sum();
 
     // 2. Derive input blinding factors from the keystore.
     let mut input_blindings: Vec<Scalar> = Vec::new();

@@ -80,6 +80,15 @@ async fn main() -> std::io::Result<()> {
         Commands::Stake { value, blinding, rpc_port } => {
             Wallet::stake(*value, *blinding, *rpc_port).await?;
         }
+        Commands::Pay { amount, slate_out, rpc_port } => {
+            Wallet::pay(*amount, slate_out.clone(), *rpc_port).await?;
+        }
+        Commands::Receive { slate_in, slate_out } => {
+            Wallet::receive(slate_in.clone(), slate_out.clone()).await?;
+        }
+        Commands::Complete { slate_in, rpc_port } => {
+            Wallet::complete(slate_in.clone(), *rpc_port).await?;
+        }
     }
 
     Ok(())

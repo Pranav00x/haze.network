@@ -105,3 +105,54 @@ impl Signature {
         self.e == expected_e
     }
 }
+
+/// Additive support for two-party (interactive) Schnorr signing, e.g. for the
+/// slate-exchange payment protocol (src/wallet/slate.rs). These functions are
+/// deliberately separate from sign()/verify() above rather than refactoring
+/// them - the existing single-party path is already tested and used by every
+/// kernel construction site (genesis, coinbase, self-pay); this just adds a
+/// second, additive way to arrive at a signature that satisfies the same
+/// unmodified verify().
+///
+/// A two-party signature is built as: each side picks a secret nonce and
+/// publishes its point, the points are summed to get the aggregate nonce, a
+/// shared challenge `e` is derived from (message, aggregate public key,
+/// aggregate nonce) - using the exact same transcript order as sign()/verify()
+/// - and each side computes a partial signature `nonce + e * secret_key`.
+/// Summing the partial signatures yields a valid (s, e) pair for the
+/// aggregate public key.
+use curve25519_dalek_ng::ristretto::RistrettoPoint;
+
+/// Generates a random nonce and its public point (nonce * B_blinding).
+pub fn generate_nonce() -> (Scalar, RistrettoPoint) {
+    let mut rng = OsRng;
+    let gens = PedersenGens::default();
+    let k = Scalar::random(&mut rng);
+    (k, k * gens.B_blinding)
+}
+
+/// Computes the shared Schnorr challenge for a message, an aggregate public
+/// key point, and an aggregate nonce point - using the same transcript
+/// convention as sign()/verify(), so a signature assembled from partial
+/// contributions using this `e` satisfies the existing verify() unchanged.
+pub fn compute_challenge(message: &[u8], public_key_point: RistrettoPoint, nonce_point: RistrettoPoint) -> Scalar {
+    let mut transcript = Transcript::new(b"Haze Schnorr Signature");
+    transcript.append_message(b"message", message);
+    transcript.append_message(b"public_key", public_key_point.compress().as_bytes());
+    transcript.append_message(b"public_nonce", nonce_point.compress().as_bytes());
+
+    let mut e_bytes = [0u8; 64];
+    transcript.challenge_bytes(b"e", &mut e_bytes);
+    Scalar::from_bytes_mod_order_wide(&e_bytes)
+}
+
+/// Computes one party's partial signature scalar given the shared challenge.
+pub fn partial_sign(nonce: &Scalar, secret_key: &Scalar, e: &Scalar) -> Scalar {
+    nonce + e * secret_key
+}
+
+/// Combines partial signature scalars (and the shared challenge) into a final Signature.
+pub fn aggregate(partial_sigs: &[Scalar], e: Scalar) -> Signature {
+    let s: Scalar = partial_sigs.iter().sum();
+    Signature { s, e }
+}
