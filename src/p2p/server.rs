@@ -429,9 +429,14 @@ async fn handle_peer_connection(
                         P2pMessage::ChainInfo { height, tip_hash } => {
                             let our_height = { chain.lock().unwrap().current_height };
                             println!("P2P: Peer {} reports chain height {} (tip {:?}, ours: {})", peer_addr, height, tip_hash, our_height);
+                            let mut w = write_half.lock().await;
                             if height > our_height {
-                                let mut w = write_half.lock().await;
                                 let _ = write_msg(&mut *w, &P2pMessage::GetBlocks { from_height: our_height + 1 }).await;
+                            } else {
+                                // Already caught up on blocks - still need to catch up on
+                                // active_validators, which isn't part of block history (see
+                                // the BlocksBatch handler's sync-completion path below).
+                                let _ = write_msg(&mut *w, &P2pMessage::GetValidators).await;
                             }
                         }
                         P2pMessage::GetBlocks { from_height } => {
@@ -468,6 +473,30 @@ async fn handle_peer_connection(
                                 let next_from = { chain.lock().unwrap().current_height + 1 };
                                 let mut w = write_half.lock().await;
                                 let _ = write_msg(&mut *w, &P2pMessage::GetBlocks { from_height: next_from }).await;
+                            } else if applied_count == batch_len {
+                                // Block sync just finished - active_validators isn't part of
+                                // block history, so catch up on it now that we have the UTXOs
+                                // needed to verify each entry (see ChainState::adopt_validator).
+                                let mut w = write_half.lock().await;
+                                let _ = write_msg(&mut *w, &P2pMessage::GetValidators).await;
+                            }
+                        }
+                        P2pMessage::GetValidators => {
+                            let validators = { chain.lock().unwrap().active_validators.clone() };
+                            let mut w = write_half.lock().await;
+                            let _ = write_msg(&mut *w, &P2pMessage::ValidatorsList(validators)).await;
+                        }
+                        P2pMessage::ValidatorsList(validators) => {
+                            let adopted = {
+                                let mut c = chain.lock().unwrap();
+                                validators.iter().any(|v| c.adopt_validator(v.commitment, v.value))
+                            };
+                            if adopted {
+                                println!("P2P: Adopted validator set from {} ({} entries)", peer_addr, validators.len());
+                                let snapshot = { chain.lock().unwrap().active_validators.clone() };
+                                if let Err(e) = storage.persist_active_validators(&snapshot) {
+                                    println!("Warning: Failed to persist adopted validators: {}", e);
+                                }
                             }
                         }
                         P2pMessage::GetPeers => {

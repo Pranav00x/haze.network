@@ -60,6 +60,13 @@ export class WasmSendPlan {
 }
 
 /**
+ * Builds a POST /v1/stake request body by staking the wallet's single
+ * largest confirmed output. Fails if there is no confirmed output at least
+ * `min_value`. Does not touch the store - staking doesn't spend anything.
+ */
+export function build_stake_request(keystore_bytes: Uint8Array, store_bytes: Uint8Array, min_value: bigint): string;
+
+/**
  * Seeds the store with the well-known devnet genesis output (1,000,000,
  * blinding=42) - devnet-only convenience for funding a fresh web wallet,
  * mirrors the CLI's --claim-genesis. Only one wallet instance should do this.
@@ -130,6 +137,16 @@ export function reconcile_wallet_store(store_bytes: Uint8Array, chain_utxo_commi
 export function respond_to_slate(keystore_bytes: Uint8Array, slate_json: string): WasmRespondResult;
 
 /**
+ * Reveals the raw blinding factor (as hex) for the wallet's single largest
+ * confirmed output - the private key needed to actually run a node as the
+ * proposer for that staked output (`haze node --stake-key <hex>`). This is
+ * sensitive: it's the spending key for that output, not just a view key.
+ * Only exposed so a wallet holder can run their own validator; never sent
+ * anywhere except directly into the user's own node process.
+ */
+export function reveal_stake_blinding_hex(keystore_bytes: Uint8Array, store_bytes: Uint8Array, min_value: bigint): string;
+
+/**
  * Confirmed (safely spendable) balance.
  */
 export function wallet_balance(store_bytes: Uint8Array): bigint;
@@ -183,6 +200,7 @@ export interface InitOutput {
     readonly __wbg_wasmownedoutput_free: (a: number, b: number) => void;
     readonly __wbg_wasmrespondresult_free: (a: number, b: number) => void;
     readonly __wbg_wasmsendplan_free: (a: number, b: number) => void;
+    readonly build_stake_request: (a: number, b: number, c: number, d: number, e: bigint) => [number, number, number, number];
     readonly claim_genesis: (a: number, b: number) => [number, number, number, number];
     readonly commit_receive: (a: number, b: number, c: number) => [number, number, number, number];
     readonly commit_send: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
@@ -193,6 +211,7 @@ export interface InitOutput {
     readonly plan_send: (a: number, b: number, c: number, d: number, e: bigint, f: bigint) => [number, number, number];
     readonly reconcile_wallet_store: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly respond_to_slate: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly reveal_stake_blinding_hex: (a: number, b: number, c: number, d: number, e: bigint) => [number, number, number, number];
     readonly wallet_balance: (a: number, b: number) => [bigint, number, number];
     readonly wallet_pending_balance: (a: number, b: number) => [bigint, number, number];
     readonly wallet_store_new: () => [number, number];

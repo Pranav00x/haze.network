@@ -20,4 +20,11 @@ pub enum P2pMessage {
     BlocksBatch { blocks: Vec<Block>, has_more: bool },
     GetPeers,
     PeersList(Vec<String>),
+    /// Requests the peer's current active validator set - sent once block
+    /// sync completes, since active_validators isn't part of block history
+    /// (it's only ever mutated live via RegisterValidator) and a node that
+    /// joins/reconnects after a registration was broadcast would otherwise
+    /// never learn about it.
+    GetValidators,
+    ValidatorsList(Vec<crate::core::chain::Validator>),
 }

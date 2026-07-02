@@ -165,7 +165,8 @@
 import init, {
   generate_keystore, wallet_store_new, reconcile_wallet_store,
   wallet_balance, wallet_pending_balance, plan_send, commit_send,
-  create_send_slate, respond_to_slate, finalize_slate, commit_receive, commit_slate_send
+  create_send_slate, respond_to_slate, finalize_slate, commit_receive, commit_slate_send,
+  build_stake_request, reveal_stake_blinding_hex
 } from './pkg/haze_core.js';
 
 // ---------- Node API base (same convention as the explorer) ----------
@@ -387,6 +388,11 @@ function renderDashboard() {
         </div>
       </div>
 
+      <div class="action-row" style="margin-bottom: 4px;">
+        <button class="btn-primary" id="faucet-btn" style="margin-top:0;">Get devnet funds</button>
+      </div>
+      <div id="dash-message"></div>
+
       <div class="panel">
         <h2>Send</h2>
         <div class="sub">Splits/consolidates your own confirmed UTXOs (self-pay). Fee is fixed at 5.</div>
@@ -434,13 +440,65 @@ function renderDashboard() {
         <span class="toggle-link" id="discard-pending-link">Discard this pending payment</span>
       </div>
 
+      <div class="panel">
+        <h2>Become a validator</h2>
+        <div class="sub">Stakes your single largest confirmed output as a validator. This doesn't spend anything - it just registers that output's commitment on-chain, proving ownership by revealing its blinding factor to the node. To actually propose blocks with it (not just appear in the validator list), you need to run your own node with that output's private key - see "Reveal my validator key" below.</div>
+        <label>Minimum amount to stake</label>
+        <input type="number" id="stake-min" min="1" value="1" />
+        <button class="btn-primary" id="stake-btn">Register as validator</button>
+        <div id="stake-message"></div>
+        <span class="toggle-link" id="reveal-key-link">Reveal my validator key (to run my own node)</span>
+        <div id="reveal-key-output" style="display:none;">
+          <label>Your validator's private key (do not share)</label>
+          <textarea id="reveal-key-text" readonly></textarea>
+          <div class="keystore-note">Run your own validator with: <code>haze node --stake-key &lt;this hex&gt; --bind 0.0.0.0:8333 --rpc-port 8332 --peers &lt;this node's P2P address&gt;</code></div>
+        </div>
+      </div>
+
       <div class="action-row">
-        <button class="btn-ghost btn-small" id="faucet-btn">Get devnet funds</button>
         <button class="btn-ghost btn-small" id="lock-btn">Lock wallet</button>
       </div>
-      <div id="dash-message"></div>
     </div>
   `;
+
+  document.getElementById("stake-btn").addEventListener("click", async () => {
+    const minValue = BigInt(document.getElementById("stake-min").value || "1");
+    const messageEl = document.getElementById("stake-message");
+
+    try {
+      const storeBytes = loadWalletStoreBytes();
+      const requestJson = build_stake_request(sessionKeystoreBytes, storeBytes, minValue);
+
+      const res = await fetch(API_BASE + "/v1/stake", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: requestJson,
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        messageEl.innerHTML = `<div class="message error">Node rejected stake: ${text}</div>`;
+        return;
+      }
+
+      messageEl.innerHTML = `<div class="message success">Registered as a validator. It'll show up in the explorer's validator count. It won't actually propose blocks until you run a node with its key - see below.</div>`;
+    } catch (e) {
+      messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+    }
+  });
+
+  document.getElementById("reveal-key-link").addEventListener("click", () => {
+    const minValue = BigInt(document.getElementById("stake-min").value || "1");
+    const messageEl = document.getElementById("stake-message");
+    try {
+      const storeBytes = loadWalletStoreBytes();
+      const hex = reveal_stake_blinding_hex(sessionKeystoreBytes, storeBytes, minValue);
+      document.getElementById("reveal-key-text").value = hex;
+      document.getElementById("reveal-key-output").style.display = "";
+    } catch (e) {
+      messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+    }
+  });
 
   // Requests funds from the node's own repeatable faucet (see src/api/faucet.rs)
   // - unlike the old single-use claim-genesis output, this can be used as many

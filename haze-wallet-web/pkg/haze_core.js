@@ -416,6 +416,38 @@ export class WasmSendPlan {
 if (Symbol.dispose) WasmSendPlan.prototype[Symbol.dispose] = WasmSendPlan.prototype.free;
 
 /**
+ * Builds a POST /v1/stake request body by staking the wallet's single
+ * largest confirmed output. Fails if there is no confirmed output at least
+ * `min_value`. Does not touch the store - staking doesn't spend anything.
+ * @param {Uint8Array} keystore_bytes
+ * @param {Uint8Array} store_bytes
+ * @param {bigint} min_value
+ * @returns {string}
+ */
+export function build_stake_request(keystore_bytes, store_bytes, min_value) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passArray8ToWasm0(keystore_bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(store_bytes, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.build_stake_request(ptr0, len0, ptr1, len1, min_value);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
  * Seeds the store with the well-known devnet genesis output (1,000,000,
  * blinding=42) - devnet-only convenience for funding a fresh web wallet,
  * mirrors the CLI's --claim-genesis. Only one wallet instance should do this.
@@ -632,6 +664,41 @@ export function respond_to_slate(keystore_bytes, slate_json) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return WasmRespondResult.__wrap(ret[0]);
+}
+
+/**
+ * Reveals the raw blinding factor (as hex) for the wallet's single largest
+ * confirmed output - the private key needed to actually run a node as the
+ * proposer for that staked output (`haze node --stake-key <hex>`). This is
+ * sensitive: it's the spending key for that output, not just a view key.
+ * Only exposed so a wallet holder can run their own validator; never sent
+ * anywhere except directly into the user's own node process.
+ * @param {Uint8Array} keystore_bytes
+ * @param {Uint8Array} store_bytes
+ * @param {bigint} min_value
+ * @returns {string}
+ */
+export function reveal_stake_blinding_hex(keystore_bytes, store_bytes, min_value) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passArray8ToWasm0(keystore_bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(store_bytes, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.reveal_stake_blinding_hex(ptr0, len0, ptr1, len1, min_value);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
 }
 
 /**

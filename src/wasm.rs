@@ -293,3 +293,58 @@ pub fn commit_slate_send(store_bytes: Vec<u8>, spent_commitments_hex: Vec<String
 
     Ok(store.to_bytes())
 }
+
+// ---------- validator staking ----------
+// Registering as a validator (POST /v1/stake) doesn't spend the output - it
+// just proves ownership by revealing the output's blinding factor to the
+// node, so the wallet's own store needs no update afterward (the staked
+// output stays Confirmed and still spendable). This does mean the blinding
+// travels over the wire to the node, same tradeoff the CLI's `haze stake`
+// already has - not something new introduced here.
+
+#[derive(serde::Serialize)]
+struct StakeRequestJson {
+    commitment: Commitment,
+    value: u64,
+    blinding: Scalar,
+}
+
+/// Builds a POST /v1/stake request body by staking the wallet's single
+/// largest confirmed output. Fails if there is no confirmed output at least
+/// `min_value`. Does not touch the store - staking doesn't spend anything.
+#[wasm_bindgen]
+pub fn build_stake_request(keystore_bytes: Vec<u8>, store_bytes: Vec<u8>, min_value: u64) -> Result<String, JsValue> {
+    let keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
+    let store = WalletStore::from_bytes(&store_bytes).ok_or_else(|| js_err("invalid wallet store bytes"))?;
+
+    let largest = store.spendable().into_iter().next()
+        .ok_or_else(|| js_err("no confirmed balance available to stake"))?;
+    if largest.value < min_value {
+        return Err(js_err(format!("largest owned output ({}) is below the requested minimum stake ({})", largest.value, min_value)));
+    }
+
+    let blinding = planner::blinding_for(&keystore, largest.index);
+    let req = StakeRequestJson { commitment: largest.commitment, value: largest.value, blinding };
+    serde_json::to_string(&req).map_err(|_| js_err("failed to serialize stake request"))
+}
+
+/// Reveals the raw blinding factor (as hex) for the wallet's single largest
+/// confirmed output - the private key needed to actually run a node as the
+/// proposer for that staked output (`haze node --stake-key <hex>`). This is
+/// sensitive: it's the spending key for that output, not just a view key.
+/// Only exposed so a wallet holder can run their own validator; never sent
+/// anywhere except directly into the user's own node process.
+#[wasm_bindgen]
+pub fn reveal_stake_blinding_hex(keystore_bytes: Vec<u8>, store_bytes: Vec<u8>, min_value: u64) -> Result<String, JsValue> {
+    let keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
+    let store = WalletStore::from_bytes(&store_bytes).ok_or_else(|| js_err("invalid wallet store bytes"))?;
+
+    let largest = store.spendable().into_iter().next()
+        .ok_or_else(|| js_err("no confirmed balance available to stake"))?;
+    if largest.value < min_value {
+        return Err(js_err(format!("largest owned output ({}) is below the requested minimum stake ({})", largest.value, min_value)));
+    }
+
+    let blinding = planner::blinding_for(&keystore, largest.index);
+    Ok(blinding.to_bytes().iter().map(|b| format!("{:02x}", b)).collect())
+}

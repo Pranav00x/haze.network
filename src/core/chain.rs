@@ -94,6 +94,28 @@ impl ChainState {
         true
     }
 
+    /// Adopts a validator entry learned from a peer (via GetValidators/
+    /// ValidatorsList), rather than a fresh registration - so it only checks
+    /// that the commitment matches a UTXO we actually have (proving it's a
+    /// real, still-unspent output), without requiring the blinding factor
+    /// again. The peer already proved ownership once when it was first
+    /// registered; this just lets a syncing/reconnecting node catch up on
+    /// state that isn't otherwise part of block history.
+    pub fn adopt_validator(&mut self, commitment: Commitment, value: u64) -> bool {
+        if !self.utxos.contains(&commitment) {
+            return false;
+        }
+        if let Some(pos) = self.active_validators.iter().position(|v| v.commitment == commitment) {
+            if self.active_validators[pos].value == value {
+                return false;
+            }
+            self.active_validators[pos].value = value;
+        } else {
+            self.active_validators.push(Validator { commitment, value });
+        }
+        true
+    }
+
     /// Deterministically selects the block proposer for a given height and previous hash.
     pub fn select_proposer(&self, height: u64, prev_hash: [u8; 32]) -> Commitment {
         if self.active_validators.is_empty() {

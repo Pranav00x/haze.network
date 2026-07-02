@@ -10,6 +10,24 @@ use haze_core::p2p::server::P2pServer;
 use haze_core::api::server::ApiServer;
 use haze_core::wallet::cli::{Cli, Commands, Wallet};
 
+/// Accepts either a plain decimal (e.g. the well-known devnet keys 42/43) or
+/// a 64-char hex-encoded scalar (the raw blinding revealed by the web
+/// wallet's "reveal stake key" flow) - a wallet-derived blinding is a full
+/// 256-bit scalar, not representable as a small decimal.
+fn parse_stake_key(s: &str) -> curve25519_dalek_ng::scalar::Scalar {
+    use curve25519_dalek_ng::scalar::Scalar;
+    if s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+        let mut bytes = [0u8; 32];
+        for i in 0..32 {
+            bytes[i] = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16)
+                .expect("Staking key hex must be valid");
+        }
+        Scalar::from_bits(bytes)
+    } else {
+        Scalar::from(s.parse::<u64>().expect("Staking key must be a decimal number or a 64-char hex string"))
+    }
+}
+
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let cli = Cli::parse();
@@ -35,9 +53,7 @@ async fn main() -> std::io::Result<()> {
             let chain = Arc::new(Mutex::new(state));
             let mempool = Arc::new(Mutex::new(Mempool::new()));
 
-            let key = stake_key.as_ref().map(|s| {
-                curve25519_dalek_ng::scalar::Scalar::from(s.parse::<u64>().expect("Staking key must be a valid decimal number"))
-            });
+            let key = stake_key.as_ref().map(|s| parse_stake_key(s));
 
             let server = Arc::new(P2pServer::new(Arc::clone(&mempool), Arc::clone(&chain), Arc::clone(&storage)));
             let proposer = Arc::new(Proposer::new(Arc::clone(&mempool), Arc::clone(&chain), Arc::clone(&storage), key));
