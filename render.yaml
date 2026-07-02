@@ -3,8 +3,18 @@ services:
     name: haze-l1-devnet
     runtime: docker
     dockerfilePath: ./Dockerfile
+    # Persistent disks require a paid plan (Render's free tier has no disk
+    # support at all) - bump this to "starter" or higher in the Render
+    # dashboard, or here, once you're ready to pay for it. Until then this
+    # disk block is inert: Render won't attach it to a free-plan service.
     plan: free
     healthCheckPath: /v1/status
+    disk:
+      name: haze-data
+      mountPath: /app/haze_data
+      sizeGB: 1
     envVars:
       - key: PORT
         value: 8332
+      - key: HAZE_DATA_DIR
+        value: /app/haze_data

@@ -6,7 +6,7 @@ use crate::core::transaction::TxKernel;
 use super::chain::{ChainState, Validator, AppliedDelta, RollbackDelta};
 use super::block::Block;
 
-const DB_PATH: &str = "haze_data/db";
+const DEFAULT_DATA_DIR: &str = "haze_data";
 
 const META_HEIGHT_KEY: &[u8] = b"height";
 const META_TIP_KEY: &[u8] = b"tip";
@@ -21,8 +21,12 @@ pub struct Storage {
 }
 
 impl Storage {
+    /// Opens the db under `$HAZE_DATA_DIR/db` if set (e.g. a mounted persistent
+    /// disk on a hosting platform), otherwise `haze_data/db` relative to the
+    /// process's cwd - same default as before this env var existed.
     pub fn open() -> Self {
-        Self::open_at(DB_PATH)
+        let data_dir = std::env::var("HAZE_DATA_DIR").unwrap_or_else(|_| DEFAULT_DATA_DIR.to_string());
+        Self::open_at(&format!("{}/db", data_dir.trim_end_matches('/')))
     }
 
     /// Opens (or creates) a sled database at a specific path. Exposed mainly so
