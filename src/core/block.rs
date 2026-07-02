@@ -1,7 +1,7 @@
 use crate::crypto::pedersen::Commitment;
 use crate::crypto::schnorr::Signature;
 use super::transaction::Transaction;
-use super::registry::RegisterNameOp;
+use super::registry::{RegisterNameOp, TransferNameOp};
 use serde::{Serialize, Deserialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -52,6 +52,10 @@ pub struct Block {
     /// small fee-paying transaction each (see RegisterNameOp).
     #[serde(default)]
     pub name_ops: Vec<RegisterNameOp>,
+    /// Name ownership transfers included in this block (see TransferNameOp) -
+    /// kept separate from name_ops since they have no fee-payment sub-transaction.
+    #[serde(default)]
+    pub transfer_ops: Vec<TransferNameOp>,
 }
 
 impl Block {

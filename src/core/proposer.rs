@@ -141,9 +141,43 @@ impl Proposer {
                         });
                         name_ops.push(op);
                     }
+                    // Pull pending name transfers, filtering the same way: must target a
+                    // name that already existed BEFORE this block (not one freshly
+                    // registered above), can't collide with a name_op or another transfer
+                    // in this same block, and must carry a valid signature from that
+                    // name's current owner.
+                    let candidate_transfer_ops = {
+                        let mut mp = self.mempool.lock().unwrap();
+                        mp.take_transfer_ops()
+                    };
+                    let original_registry = {
+                        let c = self.chain.lock().unwrap();
+                        c.name_registry.clone()
+                    };
+                    let mut names_touched: std::collections::HashSet<String> = name_ops.iter().map(|op| op.name.clone()).collect();
+                    let mut transfer_ops = Vec::new();
+                    for op in candidate_transfer_ops {
+                        if names_touched.contains(&op.name) {
+                            continue;
+                        }
+                        let Some(current) = original_registry.get(&op.name) else { continue };
+                        let msg = crate::core::registry::TransferNameOp::signing_message(&op.name, &op.new_owner_pubkey, &op.new_resolves_to);
+                        if !op.signature.verify(&msg, &current.owner_pubkey) {
+                            continue;
+                        }
+                        names_touched.insert(op.name.clone());
+                        name_registry_snapshot.insert(op.name.clone(), crate::core::registry::NameRecord {
+                            name: op.name.clone(),
+                            owner_pubkey: op.new_owner_pubkey,
+                            resolves_to: op.new_resolves_to,
+                            registered_at_block: current.registered_at_block,
+                        });
+                        transfer_ops.push(op);
+                    }
+
                     let name_registry_root = crate::core::registry::compute_registry_root(&name_registry_snapshot);
 
-                    println!("We are chosen proposer for block #{}! Proposing block with {} user transactions, {} name registrations...", next_height, tx.kernels.len(), name_ops.len());
+                    println!("We are chosen proposer for block #{}! Proposing block with {} user transactions, {} name registrations, {} name transfers...", next_height, tx.kernels.len(), name_ops.len(), transfer_ops.len());
                     
                     // 1. Calculate total fees and coinbase value
                     let total_fees: u64 = tx.kernels.iter().map(|k| k.fee).sum();
@@ -199,6 +233,7 @@ impl Proposer {
                         header,
                         body: tx,
                         name_ops,
+                        transfer_ops,
                     };
 
                     // Apply locally

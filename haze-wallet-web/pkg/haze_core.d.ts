@@ -90,6 +90,16 @@ export function build_register_name_request(keystore_bytes: Uint8Array, store_by
 export function build_stake_request(keystore_bytes: Uint8Array, store_bytes: Uint8Array, min_value: bigint): string;
 
 /**
+ * Builds a TransferNameOp handing a name this wallet currently owns to a
+ * new owner/resolution target, signed with this wallet's identity key. No
+ * fee, no UTXO involved - the server rejects it if the signature doesn't
+ * actually match the name's current on-chain owner. `new_resolves_to_hex`
+ * is usually the same as `new_owner_pubkey_hex`, but kept separate to match
+ * the underlying protocol (they're allowed to differ).
+ */
+export function build_transfer_name_request(keystore_bytes: Uint8Array, name: string, new_owner_pubkey_hex: string, new_resolves_to_hex: string): string;
+
+/**
  * Seeds the store with the well-known devnet genesis output (1,000,000,
  * blinding=42) - devnet-only convenience for funding a fresh web wallet,
  * mirrors the CLI's --claim-genesis. Only one wallet instance should do this.
@@ -242,6 +252,7 @@ export interface InitOutput {
     readonly __wbg_wasmsendplan_free: (a: number, b: number) => void;
     readonly build_register_name_request: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly build_stake_request: (a: number, b: number, c: number, d: number, e: bigint) => [number, number, number, number];
+    readonly build_transfer_name_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
     readonly claim_genesis: (a: number, b: number) => [number, number, number, number];
     readonly commit_receive: (a: number, b: number, c: number) => [number, number, number, number];
     readonly commit_register_name: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];

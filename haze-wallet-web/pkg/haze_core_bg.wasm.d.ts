@@ -41,6 +41,7 @@ export const __wbg_wasmrespondresult_free: (a: number, b: number) => void;
 export const __wbg_wasmsendplan_free: (a: number, b: number) => void;
 export const build_register_name_request: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
 export const build_stake_request: (a: number, b: number, c: number, d: number, e: bigint) => [number, number, number, number];
+export const build_transfer_name_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
 export const claim_genesis: (a: number, b: number) => [number, number, number, number];
 export const commit_receive: (a: number, b: number, c: number) => [number, number, number, number];
 export const commit_register_name: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];

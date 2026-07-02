@@ -31,6 +31,10 @@ pub struct ChainState {
     /// The Haze Naming Registry - name -> record, committed into consensus
     /// state via BlockHeader::name_registry_root (see core::registry).
     pub name_registry: HashMap<String, NameRecord>,
+    /// Pre-transfer NameRecord for each name transferred at a given height -
+    /// same purpose as validator_snapshots: apply_linear_block populates it,
+    /// rollback_block consumes it to restore the exact prior record.
+    pub transfer_snapshots: HashMap<u64, Vec<(String, NameRecord)>>,
 }
 
 /// Describes exactly what changed when a block was successfully applied, so storage can
@@ -47,6 +51,9 @@ pub struct AppliedDelta {
     pub active_validators_after: Vec<Validator>,
     /// Names registered by this block (empty for most blocks).
     pub new_names: Vec<(String, NameRecord)>,
+    /// Names transferred by this block, paired with their PRE-transfer
+    /// record so a rollback can restore it exactly.
+    pub transferred_names: Vec<(String, NameRecord)>,
     pub height: u64,
     pub tip_hash: [u8; 32],
 }
@@ -301,6 +308,31 @@ impl ChainState {
                 registered_at_block: block.header.height,
             });
         }
+
+        // 4c. Validate name transfers. Each must target an already-registered
+        // name (from a prior block - not one freshly registered earlier in
+        // this same block, which names_this_block also guards against) and
+        // be signed by that name's CURRENT owner.
+        for op in &block.transfer_ops {
+            if !names_this_block.insert(op.name.as_str()) {
+                return None;
+            }
+            let current = match self.name_registry.get(&op.name) {
+                Some(r) => r,
+                None => return None,
+            };
+            let msg = super::registry::TransferNameOp::signing_message(&op.name, &op.new_owner_pubkey, &op.new_resolves_to);
+            if !op.signature.verify(&msg, &current.owner_pubkey) {
+                return None;
+            }
+            candidate_registry.insert(op.name.clone(), NameRecord {
+                name: op.name.clone(),
+                owner_pubkey: op.new_owner_pubkey,
+                resolves_to: op.new_resolves_to,
+                registered_at_block: current.registered_at_block,
+            });
+        }
+
         if compute_registry_root(&candidate_registry) != block.header.name_registry_root {
             return None;
         }
@@ -340,6 +372,19 @@ impl ChainState {
             new_names.push((op.name.clone(), record));
         }
 
+        // 7c. Apply transfers, remembering the pre-transfer record so a
+        // rollback can restore it exactly.
+        let mut transferred_names = Vec::new();
+        for op in &block.transfer_ops {
+            let old_record = self.name_registry[&op.name].clone();
+            let new_record = candidate_registry[&op.name].clone();
+            self.name_registry.insert(op.name.clone(), new_record);
+            transferred_names.push((op.name.clone(), old_record));
+        }
+        if !transferred_names.is_empty() {
+            self.transfer_snapshots.insert(block.header.height, transferred_names.clone());
+        }
+
         // 8. Save the kernels forever
         for kernel in &block.body.kernels {
             self.kernels.push(kernel.clone());
@@ -360,6 +405,7 @@ impl ChainState {
             new_outputs: block.body.outputs.clone(),
             new_kernels: block.body.kernels.clone(),
             new_names,
+            transferred_names,
             validator_snapshot,
             active_validators_after: self.active_validators.clone(),
             height: self.current_height,
@@ -416,6 +462,13 @@ impl ChainState {
             }
             self.name_registry.remove(&op.name);
             removed_names.push(op.name.clone());
+        }
+
+        // 3c. Revert each transfer back to its pre-transfer record.
+        if let Some(pre_transfer) = self.transfer_snapshots.remove(&self.current_height) {
+            for (name, old_record) in pre_transfer {
+                self.name_registry.insert(name, old_record);
+            }
         }
 
         // 4. Restore active validator registry snapshot from height H-1

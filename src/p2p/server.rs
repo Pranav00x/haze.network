@@ -408,6 +408,10 @@ async fn handle_peer_connection(
                                     let registered_names: Vec<String> = block.name_ops.iter().map(|op| op.name.clone()).collect();
                                     let spent: Vec<Commitment> = block.name_ops.iter().flat_map(|op| op.fee_payment.inputs.iter().map(|i| i.commitment)).collect();
                                     mp.clear_stale_name_ops(&registered_names, &spent);
+                                    let touched_names: Vec<String> = registered_names.iter().cloned()
+                                        .chain(block.transfer_ops.iter().map(|op| op.name.clone()))
+                                        .collect();
+                                    mp.clear_stale_transfer_ops(&touched_names);
                                 }
                                 // Propagate block
                                 pm.broadcast(&P2pMessage::NewBlock(block)).await;
@@ -439,6 +443,17 @@ async fn handle_peer_connection(
                             if added {
                                 println!("P2P: Queued name registration '{}' from {}, propagating.", name, peer_addr);
                                 pm.broadcast(&P2pMessage::NewNameOp(op)).await;
+                            }
+                        }
+                        P2pMessage::NewTransferOp(op) => {
+                            let name = op.name.clone();
+                            let added = {
+                                let mut mp = mempool.lock().unwrap();
+                                mp.add_transfer_op(op.clone())
+                            };
+                            if added {
+                                println!("P2P: Queued name transfer '{}' from {}, propagating.", name, peer_addr);
+                                pm.broadcast(&P2pMessage::NewTransferOp(op)).await;
                             }
                         }
                         P2pMessage::ChainInfo { height, tip_hash } => {
@@ -480,6 +495,10 @@ async fn handle_peer_connection(
                                     let registered_names: Vec<String> = block.name_ops.iter().map(|op| op.name.clone()).collect();
                                     let spent: Vec<Commitment> = block.name_ops.iter().flat_map(|op| op.fee_payment.inputs.iter().map(|i| i.commitment)).collect();
                                     mp.clear_stale_name_ops(&registered_names, &spent);
+                                    let touched_names: Vec<String> = registered_names.iter().cloned()
+                                        .chain(block.transfer_ops.iter().map(|op| op.name.clone()))
+                                        .collect();
+                                    mp.clear_stale_transfer_ops(&touched_names);
                                 } else {
                                     println!("P2P: Sync block #{} failed to apply, stopping sync from {}", block.header.height, peer_addr);
                                     break;

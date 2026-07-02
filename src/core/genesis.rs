@@ -61,5 +61,6 @@ pub fn genesis_block() -> Block {
         },
         body,
         name_ops: vec![],
+        transfer_ops: vec![],
     }
 }

@@ -1,14 +1,17 @@
 use super::transaction::Transaction;
 use super::cut_through::aggregate_and_cut_through;
-use super::registry::RegisterNameOp;
+use super::registry::{RegisterNameOp, TransferNameOp};
 
-/// Caps how many name registrations can land in a single block, bounding
-/// block size the same way SYNC_BATCH_SIZE bounds a sync batch elsewhere.
+/// Caps how many name registrations/transfers can land in a single block,
+/// bounding block size the same way SYNC_BATCH_SIZE bounds a sync batch
+/// elsewhere.
 pub const MAX_NAME_OPS_PER_BLOCK: usize = 10;
+pub const MAX_TRANSFER_OPS_PER_BLOCK: usize = 10;
 
 pub struct Mempool {
     pending_txs: Vec<Transaction>,
     pending_name_ops: Vec<RegisterNameOp>,
+    pending_transfer_ops: Vec<TransferNameOp>,
 }
 
 impl Mempool {
@@ -16,6 +19,7 @@ impl Mempool {
         Self {
             pending_txs: Vec::new(),
             pending_name_ops: Vec::new(),
+            pending_transfer_ops: Vec::new(),
         }
     }
 
@@ -89,5 +93,35 @@ impl Mempool {
             !names.contains(&op.name)
                 && op.fee_payment.inputs.iter().all(|i| !spent.contains(&i.commitment))
         });
+    }
+
+    /// Queues a name transfer. Unlike add_name_op there's no useful standalone
+    /// check (the signature can only be verified against the name's current
+    /// owner, which requires chain state) - that happens again at block-
+    /// assembly/apply time, same pattern as everything else here.
+    pub fn add_transfer_op(&mut self, op: TransferNameOp) -> bool {
+        if self.pending_transfer_ops.iter().any(|o| o.name == op.name) {
+            return false;
+        }
+        self.pending_transfer_ops.push(op);
+        true
+    }
+
+    /// Drains up to MAX_TRANSFER_OPS_PER_BLOCK pending transfer ops for
+    /// inclusion in the next block.
+    pub fn take_transfer_ops(&mut self) -> Vec<TransferNameOp> {
+        let n = self.pending_transfer_ops.len().min(MAX_TRANSFER_OPS_PER_BLOCK);
+        self.pending_transfer_ops.drain(0..n).collect()
+    }
+
+    /// Drops any still-pending transfer ops targeting a name that a
+    /// just-applied block already touched (registered, transferred, or
+    /// re-transferred) - it's stale either way, since the current owner
+    /// (and thus valid signer) has changed or the target no longer exists
+    /// the way this op assumed.
+    pub fn clear_stale_transfer_ops(&mut self, touched_names: &[String]) {
+        use std::collections::HashSet;
+        let touched: HashSet<&String> = touched_names.iter().collect();
+        self.pending_transfer_ops.retain(|op| !touched.contains(&op.name));
     }
 }

@@ -8,7 +8,7 @@ use warp::http::StatusCode;
 
 use crate::core::chain::ChainState;
 use crate::core::mempool::Mempool;
-use crate::core::registry::{RegisterNameOp, NameRecord};
+use crate::core::registry::{RegisterNameOp, TransferNameOp, NameRecord};
 use crate::p2p::server::P2pServer;
 use crate::p2p::message::P2pMessage;
 
@@ -59,6 +59,41 @@ pub async fn handle_register_name(
     let pm = Arc::clone(&p2p_server.peer_manager);
     tokio::spawn(async move {
         pm.broadcast(&P2pMessage::NewNameOp(op)).await;
+    });
+
+    Ok(Box::new(warp::reply::json(&RegisterResponse { status: "queued".to_string() })))
+}
+
+pub async fn handle_transfer_name(
+    op: TransferNameOp,
+    mempool: Arc<Mutex<Mempool>>,
+    p2p_server: Arc<P2pServer>,
+    chain: Arc<Mutex<ChainState>>,
+) -> Result<Box<dyn warp::Reply>, std::convert::Infallible> {
+    let current = {
+        let c = chain.lock().unwrap();
+        c.name_registry.get(&op.name).cloned()
+    };
+    let Some(current) = current else {
+        return Ok(error_reply(StatusCode::NOT_FOUND, format!("name '{}' is not registered", op.name)));
+    };
+
+    let msg = TransferNameOp::signing_message(&op.name, &op.new_owner_pubkey, &op.new_resolves_to);
+    if !op.signature.verify(&msg, &current.owner_pubkey) {
+        return Ok(error_reply(StatusCode::FORBIDDEN, "signature does not match the name's current owner"));
+    }
+
+    let added = {
+        let mut mp = mempool.lock().unwrap();
+        mp.add_transfer_op(op.clone())
+    };
+    if !added {
+        return Ok(error_reply(StatusCode::BAD_REQUEST, "name already has a pending transfer"));
+    }
+
+    let pm = Arc::clone(&p2p_server.peer_manager);
+    tokio::spawn(async move {
+        pm.broadcast(&P2pMessage::NewTransferOp(op)).await;
     });
 
     Ok(Box::new(warp::reply::json(&RegisterResponse { status: "queued".to_string() })))

@@ -197,6 +197,7 @@ mod tests {
             header,
             body: block_body,
             name_ops: vec![],
+            transfer_ops: vec![],
         };
 
         // Apply the block to the chain state
@@ -423,7 +424,7 @@ mod tests {
             let msg = header.hash();
             header.validator_signature = Signature::sign(&msg, &private_key);
 
-            Block { header, body, name_ops: vec![] }
+            Block { header, body, name_ops: vec![], transfer_ops: vec![] }
         }
 
         let mut chain_state = ChainState::new();
@@ -560,7 +561,7 @@ mod tests {
         let msg = header.hash();
         header.validator_signature = Signature::sign(&msg, &private_key);
 
-        let block = Block { header, body, name_ops: vec![op] };
+        let block = Block { header, body, name_ops: vec![op], transfer_ops: vec![] };
 
         assert!(chain_state.apply_block(&block).is_applied(), "block with name registration must apply");
         assert!(chain_state.name_registry.contains_key("pranav"));
@@ -651,9 +652,224 @@ mod tests {
         let msg = header.hash();
         header.validator_signature = Signature::sign(&msg, &private_key);
 
-        let block = Block { header, body, name_ops: vec![op1, op2] };
+        let block = Block { header, body, name_ops: vec![op1, op2], transfer_ops: vec![] };
 
         assert!(!chain_state.apply_block(&block).is_applied(), "block registering the same name twice must be rejected");
+    }
+
+    fn build_coinbase_only_body(rng: &mut OsRng) -> (Transaction, Scalar) {
+        let coinbase_r = Scalar::random(rng);
+        let coinbase_output = Output {
+            commitment: Commitment::new(60, coinbase_r),
+            proof: RangeProof::prove(60, &coinbase_r),
+        };
+        let coinbase_excess_r = Scalar::zero() - coinbase_r;
+        let body = Transaction {
+            inputs: vec![],
+            outputs: vec![coinbase_output],
+            kernels: vec![TxKernel {
+                excess: Commitment::new(0, coinbase_excess_r),
+                fee: 0,
+                signature: Signature::sign(&0u64.to_le_bytes(), &coinbase_excess_r),
+            }],
+        };
+        (body, coinbase_r)
+    }
+
+    #[test]
+    fn test_name_transfer_applies_and_rolls_back() {
+        use crate::core::registry::{RegisterNameOp, TransferNameOp, NAME_REGISTRATION_FEE, NameRecord, compute_registry_root};
+        use bulletproofs::PedersenGens;
+
+        let mut rng = OsRng;
+        let mut chain_state = ChainState::new();
+        let genesis_block = crate::core::genesis::genesis_block();
+        let genesis_hash = genesis_block.header.hash();
+        assert!(chain_state.apply_block(&genesis_block).is_applied());
+
+        let gens = PedersenGens::default();
+        let private_key = Scalar::from(42u64);
+
+        // --- Block 1: register "pranav" ---
+        let r_in = Scalar::random(&mut rng);
+        let input_commitment = Commitment::new(NAME_REGISTRATION_FEE, r_in);
+        chain_state.utxos.insert(input_commitment);
+        let fee_payment = Transaction {
+            inputs: vec![Input { commitment: input_commitment }],
+            outputs: vec![],
+            kernels: vec![TxKernel {
+                excess: Commitment::new(0, r_in),
+                fee: NAME_REGISTRATION_FEE,
+                signature: Signature::sign(&NAME_REGISTRATION_FEE.to_le_bytes(), &r_in),
+            }],
+        };
+        let original_secret = Scalar::random(&mut rng);
+        let original_pubkey = Commitment(original_secret * gens.B_blinding);
+        let register_op = RegisterNameOp {
+            name: "pranav".to_string(),
+            owner_pubkey: original_pubkey,
+            resolves_to: original_pubkey,
+            signature: RegisterNameOp::sign("pranav", &original_secret),
+            fee_payment,
+        };
+
+        let mut registry_after_block1 = std::collections::HashMap::new();
+        registry_after_block1.insert("pranav".to_string(), NameRecord {
+            name: "pranav".to_string(),
+            owner_pubkey: original_pubkey,
+            resolves_to: original_pubkey,
+            registered_at_block: 1,
+        });
+
+        let (body1, _) = build_coinbase_only_body(&mut rng);
+        let mut header1 = BlockHeader {
+            height: 1,
+            prev_hash: genesis_hash,
+            total_kernel_offset: Scalar::zero(),
+            nonce: 0,
+            timestamp: 0,
+            validator_commitment: Commitment::new(1_000_000, private_key),
+            validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root: compute_registry_root(&registry_after_block1),
+        };
+        header1.validator_signature = Signature::sign(&header1.hash(), &private_key);
+        let block1 = Block { header: header1, body: body1, name_ops: vec![register_op], transfer_ops: vec![] };
+        assert!(chain_state.apply_block(&block1).is_applied());
+        let block1_hash = chain_state.last_block_hash;
+
+        // --- Block 2: transfer "pranav" to a new owner, signed by the original owner ---
+        let new_secret = Scalar::random(&mut rng);
+        let new_pubkey = Commitment(new_secret * gens.B_blinding);
+        let transfer_signature = TransferNameOp::sign("pranav", &new_pubkey, &new_pubkey, &original_secret);
+        let transfer_op = TransferNameOp {
+            name: "pranav".to_string(),
+            new_owner_pubkey: new_pubkey,
+            new_resolves_to: new_pubkey,
+            signature: transfer_signature,
+        };
+
+        let mut registry_after_block2 = registry_after_block1.clone();
+        registry_after_block2.insert("pranav".to_string(), NameRecord {
+            name: "pranav".to_string(),
+            owner_pubkey: new_pubkey,
+            resolves_to: new_pubkey,
+            registered_at_block: 1, // unchanged - original registration height
+        });
+
+        let (body2, _) = build_coinbase_only_body(&mut rng);
+        let mut header2 = BlockHeader {
+            height: 2,
+            prev_hash: block1_hash,
+            total_kernel_offset: Scalar::zero(),
+            nonce: 0,
+            timestamp: 0,
+            validator_commitment: Commitment::new(1_000_000, private_key),
+            validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root: compute_registry_root(&registry_after_block2),
+        };
+        header2.validator_signature = Signature::sign(&header2.hash(), &private_key);
+        let block2 = Block { header: header2, body: body2, name_ops: vec![], transfer_ops: vec![transfer_op] };
+
+        assert!(chain_state.apply_block(&block2).is_applied(), "valid transfer must apply");
+        assert_eq!(chain_state.name_registry["pranav"].owner_pubkey, new_pubkey);
+        assert_eq!(chain_state.name_registry["pranav"].registered_at_block, 1, "transfer must not reset the original registration height");
+
+        assert!(chain_state.rollback_block().is_some());
+        assert_eq!(chain_state.name_registry["pranav"].owner_pubkey, original_pubkey, "rollback must restore the pre-transfer owner");
+    }
+
+    #[test]
+    fn test_name_transfer_with_wrong_signer_is_rejected() {
+        use crate::core::registry::{RegisterNameOp, TransferNameOp, NAME_REGISTRATION_FEE, NameRecord, compute_registry_root};
+        use bulletproofs::PedersenGens;
+
+        let mut rng = OsRng;
+        let mut chain_state = ChainState::new();
+        let genesis_block = crate::core::genesis::genesis_block();
+        let genesis_hash = genesis_block.header.hash();
+        assert!(chain_state.apply_block(&genesis_block).is_applied());
+
+        let gens = PedersenGens::default();
+        let private_key = Scalar::from(42u64);
+
+        let r_in = Scalar::random(&mut rng);
+        let input_commitment = Commitment::new(NAME_REGISTRATION_FEE, r_in);
+        chain_state.utxos.insert(input_commitment);
+        let fee_payment = Transaction {
+            inputs: vec![Input { commitment: input_commitment }],
+            outputs: vec![],
+            kernels: vec![TxKernel {
+                excess: Commitment::new(0, r_in),
+                fee: NAME_REGISTRATION_FEE,
+                signature: Signature::sign(&NAME_REGISTRATION_FEE.to_le_bytes(), &r_in),
+            }],
+        };
+        let original_secret = Scalar::random(&mut rng);
+        let original_pubkey = Commitment(original_secret * gens.B_blinding);
+        let register_op = RegisterNameOp {
+            name: "pranav".to_string(),
+            owner_pubkey: original_pubkey,
+            resolves_to: original_pubkey,
+            signature: RegisterNameOp::sign("pranav", &original_secret),
+            fee_payment,
+        };
+        let mut registry_after_block1 = std::collections::HashMap::new();
+        registry_after_block1.insert("pranav".to_string(), NameRecord {
+            name: "pranav".to_string(),
+            owner_pubkey: original_pubkey,
+            resolves_to: original_pubkey,
+            registered_at_block: 1,
+        });
+        let (body1, _) = build_coinbase_only_body(&mut rng);
+        let mut header1 = BlockHeader {
+            height: 1,
+            prev_hash: genesis_hash,
+            total_kernel_offset: Scalar::zero(),
+            nonce: 0,
+            timestamp: 0,
+            validator_commitment: Commitment::new(1_000_000, private_key),
+            validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root: compute_registry_root(&registry_after_block1),
+        };
+        header1.validator_signature = Signature::sign(&header1.hash(), &private_key);
+        let block1 = Block { header: header1, body: body1, name_ops: vec![register_op], transfer_ops: vec![] };
+        assert!(chain_state.apply_block(&block1).is_applied());
+        let block1_hash = chain_state.last_block_hash;
+
+        // Attacker (not the real owner) tries to transfer "pranav" to themselves.
+        let attacker_secret = Scalar::random(&mut rng);
+        let attacker_pubkey = Commitment(attacker_secret * gens.B_blinding);
+        let forged_signature = TransferNameOp::sign("pranav", &attacker_pubkey, &attacker_pubkey, &attacker_secret);
+        let transfer_op = TransferNameOp {
+            name: "pranav".to_string(),
+            new_owner_pubkey: attacker_pubkey,
+            new_resolves_to: attacker_pubkey,
+            signature: forged_signature,
+        };
+
+        let mut registry_after_block2 = registry_after_block1.clone();
+        registry_after_block2.insert("pranav".to_string(), NameRecord {
+            name: "pranav".to_string(),
+            owner_pubkey: attacker_pubkey,
+            resolves_to: attacker_pubkey,
+            registered_at_block: 1,
+        });
+        let (body2, _) = build_coinbase_only_body(&mut rng);
+        let mut header2 = BlockHeader {
+            height: 2,
+            prev_hash: block1_hash,
+            total_kernel_offset: Scalar::zero(),
+            nonce: 0,
+            timestamp: 0,
+            validator_commitment: Commitment::new(1_000_000, private_key),
+            validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root: compute_registry_root(&registry_after_block2),
+        };
+        header2.validator_signature = Signature::sign(&header2.hash(), &private_key);
+        let block2 = Block { header: header2, body: body2, name_ops: vec![], transfer_ops: vec![transfer_op] };
+
+        assert!(!chain_state.apply_block(&block2).is_applied(), "transfer signed by a non-owner must be rejected");
+        assert_eq!(chain_state.name_registry["pranav"].owner_pubkey, original_pubkey, "ownership must be unchanged");
     }
 }
 

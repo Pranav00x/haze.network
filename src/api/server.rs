@@ -33,7 +33,9 @@ impl ApiServer {
         let faucet_filter_2 = faucet_filter.clone();
         let mempool_filter_3 = mempool_filter.clone();
         let mempool_filter_4 = mempool_filter.clone();
+        let mempool_filter_5 = mempool_filter.clone();
         let p2p_filter_2 = p2p_filter.clone();
+        let p2p_filter_3 = p2p_filter.clone();
 
         // Caps request body size for the two write endpoints - now that this
         // API is meant to be internet-facing, an unbounded body from an
@@ -143,6 +145,17 @@ impl ApiServer {
             .and(chain_filter.clone())
             .and_then(names::handle_register_name);
 
+        // POST /v1/names/transfer - queues a name ownership transfer, signed
+        // by the name's current owner (see api/names.rs).
+        let transfer_name_route = warp::post()
+            .and(warp::path!("v1" / "names" / "transfer"))
+            .and(warp::body::content_length_limit(MAX_BODY_SIZE))
+            .and(warp::body::json())
+            .and(mempool_filter_5)
+            .and(p2p_filter_3)
+            .and(chain_filter.clone())
+            .and_then(names::handle_transfer_name);
+
         // GET /v1/names/:name - resolves a single registered name.
         let resolve_name_route = warp::get()
             .and(warp::path!("v1" / "names" / String))
@@ -169,6 +182,7 @@ impl ApiServer {
             .or(faucet_request_route)
             .or(faucet_complete_route)
             .or(register_name_route)
+            .or(transfer_name_route)
             .or(resolve_name_route)
             .or(list_names_route)
             .with(

@@ -1,7 +1,7 @@
 use serde::{Serialize, Deserialize};
 use crate::core::transaction::Transaction;
 use crate::core::block::Block;
-use crate::core::registry::RegisterNameOp;
+use crate::core::registry::{RegisterNameOp, TransferNameOp};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum P2pMessage {
@@ -33,4 +33,6 @@ pub enum P2pMessage {
     /// intentionally public, so there's no privacy benefit to routing it
     /// through the stem phase).
     NewNameOp(RegisterNameOp),
+    /// A pending name transfer, gossiped the same way (no Dandelion).
+    NewTransferOp(TransferNameOp),
 }

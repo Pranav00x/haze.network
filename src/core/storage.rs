@@ -116,15 +116,30 @@ impl Storage {
             }
         }
 
-        // Rebuild the name registry by replaying name_ops from blocks on the
-        // ACTIVE chain only (walking back from the tip via prev_hash) - no
-        // separate sled tree needed, since full blocks (including name_ops)
-        // are already persisted above. Must not include orphaned/rolled-back
-        // blocks, which stay in `state.blocks` forever for potential reorgs
-        // but shouldn't count toward current registry state.
+        // Rebuild the name registry by replaying name_ops/transfer_ops from
+        // blocks on the ACTIVE chain only - no separate sled tree needed,
+        // since full blocks are already persisted above. Two passes:
+        // 1) walk back from the tip via prev_hash (must not include
+        //    orphaned/rolled-back blocks, which stay in `state.blocks`
+        //    forever for potential reorgs but shouldn't count here),
+        // 2) reverse to chronological (genesis-first) order before
+        //    replaying, since a transfer must apply *after* the register
+        //    it targets, not in arbitrary hash-map order.
+        let mut active_chain_blocks = Vec::new();
         let mut cursor = state.last_block_hash;
         while cursor != [0u8; 32] {
             let Some(block) = state.blocks.get(&cursor) else { break };
+            let height = block.header.height;
+            let prev = block.header.prev_hash;
+            active_chain_blocks.push(block.clone());
+            cursor = prev;
+            if height == 0 {
+                break;
+            }
+        }
+        active_chain_blocks.reverse();
+
+        for block in &active_chain_blocks {
             for op in &block.name_ops {
                 state.name_registry.insert(op.name.clone(), super::registry::NameRecord {
                     name: op.name.clone(),
@@ -133,10 +148,16 @@ impl Storage {
                     registered_at_block: block.header.height,
                 });
             }
-            let height = block.header.height;
-            cursor = block.header.prev_hash;
-            if height == 0 {
-                break;
+            for op in &block.transfer_ops {
+                if let Some(existing) = state.name_registry.get(&op.name) {
+                    let updated = super::registry::NameRecord {
+                        name: op.name.clone(),
+                        owner_pubkey: op.new_owner_pubkey,
+                        resolves_to: op.new_resolves_to,
+                        registered_at_block: existing.registered_at_block,
+                    };
+                    state.name_registry.insert(op.name.clone(), updated);
+                }
             }
         }
 

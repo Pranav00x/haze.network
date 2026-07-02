@@ -15,7 +15,7 @@ use crate::crypto::pedersen::Commitment;
 use crate::crypto::range_proof::RangeProof;
 use crate::crypto::schnorr::Signature;
 use crate::core::transaction::{Transaction, Input, Output, TxKernel};
-use crate::core::registry::{RegisterNameOp, NAME_REGISTRATION_FEE, validate_name};
+use crate::core::registry::{RegisterNameOp, TransferNameOp, NAME_REGISTRATION_FEE, validate_name};
 use crate::wallet::keystore::Keystore;
 use crate::wallet::store::{WalletStore, OutputStatus, GENESIS_INDEX};
 use crate::wallet::planner::{self, PlanError};
@@ -473,4 +473,23 @@ pub fn wallet_identity_pubkey_hex(keystore_bytes: Vec<u8>) -> Result<String, JsV
     let gens = bulletproofs::PedersenGens::default();
     let pubkey = Commitment(keystore.identity_key() * gens.B_blinding);
     Ok(pubkey.to_hex())
+}
+
+/// Builds a TransferNameOp handing a name this wallet currently owns to a
+/// new owner/resolution target, signed with this wallet's identity key. No
+/// fee, no UTXO involved - the server rejects it if the signature doesn't
+/// actually match the name's current on-chain owner. `new_resolves_to_hex`
+/// is usually the same as `new_owner_pubkey_hex`, but kept separate to match
+/// the underlying protocol (they're allowed to differ).
+#[wasm_bindgen]
+pub fn build_transfer_name_request(keystore_bytes: Vec<u8>, name: String, new_owner_pubkey_hex: String, new_resolves_to_hex: String) -> Result<String, JsValue> {
+    let keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
+    let new_owner_pubkey = Commitment::from_hex(&new_owner_pubkey_hex).ok_or_else(|| js_err("invalid new owner pubkey hex"))?;
+    let new_resolves_to = Commitment::from_hex(&new_resolves_to_hex).ok_or_else(|| js_err("invalid new resolves-to pubkey hex"))?;
+
+    let current_owner_secret = keystore.identity_key();
+    let signature = TransferNameOp::sign(&name, &new_owner_pubkey, &new_resolves_to, &current_owner_secret);
+
+    let op = TransferNameOp { name, new_owner_pubkey, new_resolves_to, signature };
+    serde_json::to_string(&op).map_err(|_| js_err("failed to serialize transfer"))
 }

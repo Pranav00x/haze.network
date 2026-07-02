@@ -115,6 +115,42 @@ impl RegisterNameOp {
     }
 }
 
+/// Hands ownership of an already-registered name to a new owner/resolution
+/// target. No fee, no spendable UTXO involved - just a signature proving
+/// control of the name's *current* owner_pubkey, which only chain state
+/// knows (see ChainState::apply_linear_block), so unlike RegisterNameOp
+/// there's no useful "validate_standalone" - every real check needs the
+/// current NameRecord.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TransferNameOp {
+    pub name: String,
+    pub new_owner_pubkey: Commitment,
+    pub new_resolves_to: Commitment,
+    /// Signed by the *current* owner's secret key - verified against
+    /// whatever NameRecord.owner_pubkey currently is, not anything in this
+    /// struct, so a stale/forged transfer can't just supply its own key.
+    pub signature: Signature,
+}
+
+impl TransferNameOp {
+    /// Domain-separated from RegisterNameOp::signing_message (distinct
+    /// prefix) so a registration signature can never be replayed as a
+    /// transfer signature or vice versa, and binds in the new owner/resolves
+    /// pubkeys so a transfer can't be redirected to a different destination
+    /// after the fact.
+    pub fn signing_message(name: &str, new_owner_pubkey: &Commitment, new_resolves_to: &Commitment) -> Vec<u8> {
+        let mut msg = b"HazeNameTransfer:".to_vec();
+        msg.extend_from_slice(name.as_bytes());
+        msg.extend_from_slice(new_owner_pubkey.as_point().compress().as_bytes());
+        msg.extend_from_slice(new_resolves_to.as_point().compress().as_bytes());
+        msg
+    }
+
+    pub fn sign(name: &str, new_owner_pubkey: &Commitment, new_resolves_to: &Commitment, current_owner_secret: &Scalar) -> Signature {
+        Signature::sign(&Self::signing_message(name, new_owner_pubkey, new_resolves_to), current_owner_secret)
+    }
+}
+
 /// A simple (not Merkle) commitment to the full registry state: sorted by
 /// name for determinism, then hashed. Enough for every node to verify a
 /// block's claimed registry state matches what they compute themselves from

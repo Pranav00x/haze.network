@@ -570,6 +570,46 @@ export function build_stake_request(keystore_bytes, store_bytes, min_value) {
 }
 
 /**
+ * Builds a TransferNameOp handing a name this wallet currently owns to a
+ * new owner/resolution target, signed with this wallet's identity key. No
+ * fee, no UTXO involved - the server rejects it if the signature doesn't
+ * actually match the name's current on-chain owner. `new_resolves_to_hex`
+ * is usually the same as `new_owner_pubkey_hex`, but kept separate to match
+ * the underlying protocol (they're allowed to differ).
+ * @param {Uint8Array} keystore_bytes
+ * @param {string} name
+ * @param {string} new_owner_pubkey_hex
+ * @param {string} new_resolves_to_hex
+ * @returns {string}
+ */
+export function build_transfer_name_request(keystore_bytes, name, new_owner_pubkey_hex, new_resolves_to_hex) {
+    let deferred6_0;
+    let deferred6_1;
+    try {
+        const ptr0 = passArray8ToWasm0(keystore_bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(new_owner_pubkey_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passStringToWasm0(new_resolves_to_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len3 = WASM_VECTOR_LEN;
+        const ret = wasm.build_transfer_name_request(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+        var ptr5 = ret[0];
+        var len5 = ret[1];
+        if (ret[3]) {
+            ptr5 = 0; len5 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred6_0 = ptr5;
+        deferred6_1 = len5;
+        return getStringFromWasm0(ptr5, len5);
+    } finally {
+        wasm.__wbindgen_free(deferred6_0, deferred6_1, 1);
+    }
+}
+
+/**
  * Seeds the store with the well-known devnet genesis output (1,000,000,
  * blinding=42) - devnet-only convenience for funding a fresh web wallet,
  * mirrors the CLI's --claim-genesis. Only one wallet instance should do this.

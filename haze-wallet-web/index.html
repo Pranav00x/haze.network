@@ -167,7 +167,8 @@ import init, {
   wallet_balance, wallet_pending_balance, plan_send, commit_send,
   create_send_slate, respond_to_slate, finalize_slate, commit_receive, commit_slate_send,
   build_stake_request, reveal_stake_blinding_hex,
-  build_register_name_request, commit_register_name, wallet_identity_pubkey_hex
+  build_register_name_request, commit_register_name, wallet_identity_pubkey_hex,
+  build_transfer_name_request
 } from './pkg/haze_core.js';
 
 // ---------- Node API base (same convention as the explorer) ----------
@@ -475,6 +476,17 @@ function renderDashboard() {
         <div id="lookup-name-result"></div>
       </div>
 
+      <div class="panel">
+        <h2>Transfer a name</h2>
+        <div class="sub">Hands ownership of a name you currently own to someone else's identity pubkey. No fee - just proves you're the current owner. The recipient needs to share their identity pubkey with you first (shown on their own wallet's dashboard).</div>
+        <label>Name</label>
+        <input type="text" id="transfer-name-input" placeholder="e.g. pranav" autocomplete="off" />
+        <label>New owner's identity pubkey</label>
+        <input type="text" id="transfer-new-owner-input" placeholder="hex pubkey" autocomplete="off" />
+        <button class="btn-primary" id="transfer-name-btn">Transfer</button>
+        <div id="transfer-name-message"></div>
+      </div>
+
       <div class="action-row">
         <button class="btn-ghost btn-small" id="lock-btn">Lock wallet</button>
       </div>
@@ -583,6 +595,38 @@ function renderDashboard() {
       resultEl.innerHTML = `<div class="message success">Resolves to <span class="keystore-note">${resolvesHex}</span> (registered at block ${record.registered_at_block})</div>`;
     } catch (e) {
       resultEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+    }
+  });
+
+  document.getElementById("transfer-name-btn").addEventListener("click", async () => {
+    const name = document.getElementById("transfer-name-input").value.trim();
+    const newOwnerHex = document.getElementById("transfer-new-owner-input").value.trim();
+    const messageEl = document.getElementById("transfer-name-message");
+    if (!name || !newOwnerHex) {
+      messageEl.innerHTML = `<div class="message error">Enter both a name and the new owner's pubkey.</div>`;
+      return;
+    }
+
+    try {
+      const opJson = build_transfer_name_request(sessionKeystoreBytes, name, newOwnerHex, newOwnerHex);
+
+      const res = await fetch(API_BASE + "/v1/names/transfer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: opJson,
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        messageEl.innerHTML = `<div class="message error">Node rejected transfer: ${errJson.error || res.status}</div>`;
+        return;
+      }
+
+      messageEl.innerHTML = `<div class="message success">Queued transfer of "${name}". It'll take effect once mined.</div>`;
+      document.getElementById("transfer-name-input").value = "";
+      document.getElementById("transfer-new-owner-input").value = "";
+    } catch (e) {
+      messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
     }
   });
 
