@@ -1,0 +1,38 @@
+/* tslint:disable */
+/* eslint-disable */
+export const memory: WebAssembly.Memory;
+export const __wbg_get_wasmownedoutput_commitment_hex: (a: number) => [number, number];
+export const __wbg_get_wasmownedoutput_index: (a: number) => number;
+export const __wbg_get_wasmownedoutput_value: (a: number) => bigint;
+export const __wbg_get_wasmsendplan_change: (a: number) => number;
+export const __wbg_get_wasmsendplan_dest: (a: number) => number;
+export const __wbg_get_wasmsendplan_spent_commitments_hex: (a: number) => [number, number];
+export const __wbg_get_wasmsendplan_transaction_json: (a: number) => [number, number];
+export const __wbg_get_wasmsendplan_updated_keystore_bytes: (a: number) => [number, number];
+export const __wbg_set_wasmownedoutput_commitment_hex: (a: number, b: number, c: number) => void;
+export const __wbg_set_wasmownedoutput_index: (a: number, b: number) => void;
+export const __wbg_set_wasmownedoutput_value: (a: number, b: bigint) => void;
+export const __wbg_set_wasmsendplan_change: (a: number, b: number) => void;
+export const __wbg_set_wasmsendplan_dest: (a: number, b: number) => void;
+export const __wbg_set_wasmsendplan_spent_commitments_hex: (a: number, b: number, c: number) => void;
+export const __wbg_set_wasmsendplan_transaction_json: (a: number, b: number, c: number) => void;
+export const __wbg_set_wasmsendplan_updated_keystore_bytes: (a: number, b: number, c: number) => void;
+export const __wbg_wasmownedoutput_free: (a: number, b: number) => void;
+export const __wbg_wasmsendplan_free: (a: number, b: number) => void;
+export const claim_genesis: (a: number, b: number) => [number, number, number, number];
+export const commit_send: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
+export const generate_keystore: () => [number, number];
+export const plan_send: (a: number, b: number, c: number, d: number, e: bigint, f: bigint) => [number, number, number];
+export const reconcile_wallet_store: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+export const wallet_balance: (a: number, b: number) => [bigint, number, number];
+export const wallet_pending_balance: (a: number, b: number) => [bigint, number, number];
+export const wallet_store_new: () => [number, number];
+export const __wbindgen_malloc: (a: number, b: number) => number;
+export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+export const __wbindgen_exn_store: (a: number) => void;
+export const __externref_table_alloc: () => number;
+export const __wbindgen_externrefs: WebAssembly.Table;
+export const __externref_table_dealloc: (a: number) => void;
+export const __wbindgen_free: (a: number, b: number, c: number) => void;
+export const __externref_drop_slice: (a: number, b: number) => void;
+export const __wbindgen_start: () => void;

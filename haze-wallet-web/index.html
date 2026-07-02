@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Haze &mdash; Wallet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,340..600&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    color-scheme: dark;
+    --fog-0: oklch(0.15 0.014 292);
+    --fog-1: oklch(0.19 0.016 292);
+    --fog-2: oklch(0.24 0.018 292);
+    --fog-3: oklch(0.32 0.02 292);
+    --mist: oklch(0.68 0.05 285);
+    --ink: oklch(0.93 0.012 90);
+    --ink-dim: oklch(0.93 0.012 90 / 0.62);
+    --ink-faint: oklch(0.93 0.012 90 / 0.34);
+    --amber: oklch(0.78 0.15 70);
+    --amber-dim: oklch(0.78 0.15 70 / 0.16);
+    --ok: oklch(0.75 0.14 155);
+    --danger: oklch(0.7 0.16 25);
+    --font-display: "Fraunces", serif;
+    --font-body: "Public Sans", sans-serif;
+    --font-mono: "IBM Plex Mono", monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background:
+      radial-gradient(ellipse 900px 500px at 12% -10%, oklch(0.26 0.03 296 / 0.55), transparent),
+      radial-gradient(ellipse 700px 500px at 100% 10%, oklch(0.22 0.03 70 / 0.12), transparent),
+      var(--fog-0);
+    color: var(--ink);
+    font-family: var(--font-body);
+    margin: 0;
+    min-height: 100vh;
+    padding: clamp(16px, 4vw, 44px) clamp(16px, 5vw, 64px) 80px;
+  }
+
+  .topbar {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 32px;
+    flex-wrap: wrap;
+    margin-bottom: clamp(28px, 4vw, 48px);
+  }
+  .brand { display: flex; align-items: baseline; gap: 12px; }
+  .brand-mark { font-family: var(--font-display); font-size: 30px; font-style: italic; font-weight: 480; color: var(--amber); }
+  .brand-name { font-family: var(--font-display); font-optical-sizing: auto; font-weight: 460; font-size: clamp(26px, 3vw, 34px); letter-spacing: -0.01em; }
+  .brand-tag { font-size: 12.5px; color: var(--ink-faint); text-transform: uppercase; letter-spacing: 0.16em; align-self: center; padding-left: 4px; border-left: 1px solid var(--fog-3); margin-left: 2px; }
+
+  .node-indicator {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    background: var(--fog-1);
+    border: 1px solid var(--fog-3);
+    border-radius: 3px;
+    padding: 7px 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .node-indicator .node-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-faint); flex-shrink: 0; }
+  .node-indicator .node-dot.online { background: var(--ok); box-shadow: 0 0 0 3px oklch(0.75 0.14 155 / 0.15); }
+  .node-indicator .node-dot.offline { background: var(--danger); box-shadow: 0 0 0 3px oklch(0.7 0.16 25 / 0.15); }
+
+  .panel {
+    max-width: 480px;
+    background: var(--fog-1);
+    border: 1px solid var(--fog-3);
+    border-radius: 6px;
+    padding: clamp(24px, 4vw, 36px);
+  }
+  .panel h2 { font-family: var(--font-display); font-weight: 460; font-size: 22px; margin: 0 0 6px; }
+  .panel .sub { color: var(--ink-faint); font-size: 13.5px; margin-bottom: 22px; line-height: 1.5; }
+
+  label { display: block; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-faint); margin: 16px 0 6px; }
+  label:first-of-type { margin-top: 0; }
+  input {
+    width: 100%;
+    background: var(--fog-2);
+    border: 1px solid var(--fog-3);
+    color: var(--ink);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    border-radius: 3px;
+    padding: 12px 14px;
+    outline: none;
+  }
+  input:focus { border-color: var(--mist); }
+
+  button {
+    font-family: var(--font-body);
+    font-weight: 600;
+    font-size: 14px;
+    border-radius: 3px;
+    padding: 12px 20px;
+    border: none;
+    cursor: pointer;
+    margin-top: 18px;
+  }
+  .btn-primary { background: var(--amber); color: var(--fog-0); width: 100%; }
+  .btn-primary:hover { filter: brightness(1.08); }
+  .btn-ghost { background: transparent; color: var(--ink-dim); border: 1px solid var(--fog-3); }
+  .btn-ghost:hover { color: var(--ink); border-color: var(--mist); }
+  .btn-small { padding: 8px 14px; font-size: 12.5px; margin-top: 0; }
+
+  .toggle-link { color: var(--mist); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; font-size: 13px; margin-top: 14px; display: inline-block; }
+
+  .message { font-size: 13px; padding: 10px 14px; border-radius: 3px; margin-top: 14px; }
+  .message.error { background: oklch(0.7 0.16 25 / 0.12); color: oklch(0.85 0.1 25); border: 1px solid oklch(0.7 0.16 25 / 0.3); }
+  .message.success { background: oklch(0.75 0.14 155 / 0.12); color: oklch(0.85 0.1 155); border: 1px solid oklch(0.75 0.14 155 / 0.3); }
+
+  .dashboard { display: grid; gap: 24px; max-width: 620px; }
+  .stat-row { display: flex; gap: clamp(24px, 4vw, 52px); flex-wrap: wrap; padding-bottom: 20px; border-bottom: 1px solid var(--fog-2); }
+  .stat-item .stat-label { font-size: 11.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 6px; }
+  .stat-item .stat-value { font-family: var(--font-display); font-size: 36px; font-weight: 460; font-variant-numeric: tabular-nums; }
+  .stat-item .stat-value.accent { color: var(--amber); }
+
+  .action-row { display: flex; gap: 12px; flex-wrap: wrap; }
+
+  .keystore-note { font-family: var(--font-mono); font-size: 11px; color: var(--ink-faint); word-break: break-all; margin-top: 4px; }
+
+  ::selection { background: var(--amber-dim); }
+</style>
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">&#9686;</span>
+      <span class="brand-name">Haze</span>
+      <span class="brand-tag">wallet</span>
+    </div>
+    <div class="node-indicator" id="node-indicator" title="Click to change the Haze node this wallet talks to">
+      <span class="node-dot" id="node-dot"></span>
+      <span id="node-label">&mdash;</span>
+    </div>
+  </header>
+
+  <main id="app"></main>
+
+<script type="module">
+import init, {
+  generate_keystore, wallet_store_new, claim_genesis, reconcile_wallet_store,
+  wallet_balance, wallet_pending_balance, plan_send, commit_send
+} from './pkg/haze_core.js';
+
+// ---------- Node API base (same convention as the explorer) ----------
+const DEFAULT_API_BASE = "http://localhost:8332";
+const API_STORAGE_KEY = "hazeApiBase";
+
+function resolveApiBase() {
+  const params = new URLSearchParams(window.location.search);
+  const fromQuery = params.get("api");
+  if (fromQuery) {
+    localStorage.setItem(API_STORAGE_KEY, fromQuery);
+    return fromQuery.replace(/\/+$/, "");
+  }
+  const saved = localStorage.getItem(API_STORAGE_KEY);
+  if (saved) return saved.replace(/\/+$/, "");
+  return DEFAULT_API_BASE;
+}
+let API_BASE = resolveApiBase();
+
+function renderNodeIndicator(online) {
+  document.getElementById("node-label").textContent = API_BASE;
+  document.getElementById("node-dot").className = "node-dot " + (online ? "online" : "offline");
+}
+document.getElementById("node-indicator").addEventListener("click", () => {
+  const next = window.prompt("Haze node API URL:", API_BASE);
+  if (next && next.trim()) {
+    API_BASE = next.trim().replace(/\/+$/, "");
+    localStorage.setItem(API_STORAGE_KEY, API_BASE);
+    renderNodeIndicator(false);
+    refreshBalance();
+  }
+});
+
+// ---------- base64 helpers ----------
+const toB64 = (bytes) => btoa(String.fromCharCode(...bytes));
+const fromB64 = (b64) => Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+
+// ---------- client-side keystore encryption (Web Crypto: PBKDF2 + AES-GCM) ----------
+// The keystore holds the wallet's real secret seed. It is only ever decrypted
+// into memory for the current session - never persisted in plaintext.
+async function deriveKey(password, salt) {
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveKey"]
+  );
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt, iterations: 250000, hash: "SHA-256" },
+    keyMaterial,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+async function encryptKeystore(password, bytes) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveKey(password, salt);
+  const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, bytes));
+  return { salt: toB64(salt), iv: toB64(iv), ciphertext: toB64(ciphertext) };
+}
+
+async function decryptKeystore(password, encrypted) {
+  const salt = fromB64(encrypted.salt);
+  const iv = fromB64(encrypted.iv);
+  const ciphertext = fromB64(encrypted.ciphertext);
+  const key = await deriveKey(password, salt);
+  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
+  return new Uint8Array(plain);
+}
+
+const KEYSTORE_STORAGE_KEY = "hazeEncryptedKeystore";
+const STORE_STORAGE_KEY = "hazeWalletStoreBytes";
+
+function hasWallet() { return localStorage.getItem(KEYSTORE_STORAGE_KEY) !== null; }
+function loadWalletStoreBytes() {
+  const b64 = localStorage.getItem(STORE_STORAGE_KEY);
+  return b64 ? fromB64(b64) : wallet_store_new();
+}
+function saveWalletStoreBytes(bytes) {
+  localStorage.setItem(STORE_STORAGE_KEY, toB64(bytes));
+}
+
+// In-memory only for this session - never written back to localStorage in plaintext.
+let sessionKeystoreBytes = null;
+
+async function fetchJson(path, opts) {
+  const res = await fetch(API_BASE + path, opts);
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return res.json();
+}
+
+// ---------- UI: lock screen ----------
+function renderLockScreen() {
+  const app = document.getElementById("app");
+  const exists = hasWallet();
+
+  app.innerHTML = `
+    <div class="panel">
+      <h2>${exists ? "Unlock Wallet" : "Create Wallet"}</h2>
+      <div class="sub">${exists
+        ? "Enter your password to unlock the wallet stored in this browser."
+        : "Generates a real keystore (via the browser's secure RNG) and encrypts it with your password before storing it in this browser."}</div>
+      <label>Password</label>
+      <input type="password" id="pw-input" autocomplete="${exists ? "current-password" : "new-password"}" />
+      ${exists ? "" : `<label>Confirm password</label><input type="password" id="pw-confirm-input" autocomplete="new-password" />`}
+      <button class="btn-primary" id="submit-btn">${exists ? "Unlock" : "Create Wallet"}</button>
+      <div id="lock-message"></div>
+      ${exists ? `<span class="toggle-link" id="reset-link">Wrong browser / start fresh instead?</span>` : ""}
+    </div>
+  `;
+
+  const message = (text, cls) => {
+    document.getElementById("lock-message").innerHTML = `<div class="message ${cls}">${text}</div>`;
+  };
+
+  document.getElementById("submit-btn").addEventListener("click", async () => {
+    const password = document.getElementById("pw-input").value;
+    if (!password) { message("Enter a password.", "error"); return; }
+
+    if (exists) {
+      try {
+        const encrypted = JSON.parse(localStorage.getItem(KEYSTORE_STORAGE_KEY));
+        sessionKeystoreBytes = await decryptKeystore(password, encrypted);
+        renderDashboard();
+      } catch (e) {
+        message("Incorrect password.", "error");
+      }
+    } else {
+      const confirm = document.getElementById("pw-confirm-input").value;
+      if (password !== confirm) { message("Passwords don't match.", "error"); return; }
+      if (password.length < 8) { message("Use at least 8 characters.", "error"); return; }
+
+      const keystoreBytes = generate_keystore();
+      const encrypted = await encryptKeystore(password, keystoreBytes);
+      localStorage.setItem(KEYSTORE_STORAGE_KEY, JSON.stringify(encrypted));
+      saveWalletStoreBytes(wallet_store_new());
+      sessionKeystoreBytes = keystoreBytes;
+      renderDashboard();
+    }
+  });
+
+  const resetLink = document.getElementById("reset-link");
+  if (resetLink) {
+    resetLink.addEventListener("click", () => {
+      if (window.confirm("This deletes the wallet stored in this browser. This cannot be undone. Continue?")) {
+        localStorage.removeItem(KEYSTORE_STORAGE_KEY);
+        localStorage.removeItem(STORE_STORAGE_KEY);
+        renderLockScreen();
+      }
+    });
+  }
+}
+
+// ---------- UI: dashboard ----------
+async function refreshBalance() {
+  try {
+    const utxos = await fetchJson("/v1/utxos");
+    const hexList = utxos.map(bytesToHex);
+    let storeBytes = loadWalletStoreBytes();
+    storeBytes = reconcile_wallet_store(storeBytes, hexList);
+    saveWalletStoreBytes(storeBytes);
+
+    const confirmed = wallet_balance(storeBytes);
+    const pending = wallet_pending_balance(storeBytes);
+    document.getElementById("stat-confirmed").textContent = confirmed.toString();
+    document.getElementById("stat-pending").textContent = pending.toString();
+    renderNodeIndicator(true);
+  } catch (e) {
+    renderNodeIndicator(false);
+  }
+}
+
+function bytesToHex(byteArray) {
+  return byteArray.map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+function renderDashboard() {
+  const app = document.getElementById("app");
+  app.innerHTML = `
+    <div class="dashboard">
+      <div class="stat-row">
+        <div class="stat-item">
+          <div class="stat-label">Confirmed</div>
+          <div class="stat-value" id="stat-confirmed">&mdash;</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Pending</div>
+          <div class="stat-value accent" id="stat-pending">&mdash;</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Send</h2>
+        <div class="sub">Splits/consolidates your own confirmed UTXOs (self-pay). Fee is fixed at 5.</div>
+        <label>Amount</label>
+        <input type="number" id="send-amount" min="1" />
+        <button class="btn-primary" id="send-btn">Send</button>
+        <div id="send-message"></div>
+      </div>
+
+      <div class="action-row">
+        <button class="btn-ghost btn-small" id="claim-genesis-btn">Claim genesis (devnet testing)</button>
+        <button class="btn-ghost btn-small" id="lock-btn">Lock wallet</button>
+      </div>
+      <div id="dash-message"></div>
+    </div>
+  `;
+
+  document.getElementById("claim-genesis-btn").addEventListener("click", async () => {
+    let storeBytes = loadWalletStoreBytes();
+    storeBytes = claim_genesis(storeBytes);
+    saveWalletStoreBytes(storeBytes);
+    document.getElementById("dash-message").innerHTML = `<div class="message success">Claimed genesis output. Refreshing balance&hellip;</div>`;
+    await refreshBalance();
+  });
+
+  document.getElementById("lock-btn").addEventListener("click", () => {
+    sessionKeystoreBytes = null;
+    renderLockScreen();
+  });
+
+  document.getElementById("send-btn").addEventListener("click", async () => {
+    const amountInput = document.getElementById("send-amount");
+    const amount = BigInt(amountInput.value || "0");
+    const messageEl = document.getElementById("send-message");
+    if (amount <= 0n) {
+      messageEl.innerHTML = `<div class="message error">Enter an amount.</div>`;
+      return;
+    }
+
+    try {
+      const storeBytes = loadWalletStoreBytes();
+      const plan = plan_send(sessionKeystoreBytes, storeBytes, amount, 5n);
+
+      const res = await fetch(API_BASE + "/v1/transactions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: plan.transaction_json,
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        messageEl.innerHTML = `<div class="message error">Node rejected transaction: ${text}</div>`;
+        return;
+      }
+
+      sessionKeystoreBytes = plan.updated_keystore_bytes;
+      const updatedStoreBytes = commit_send(storeBytes, plan.spent_commitments_hex, plan.dest, plan.change);
+      saveWalletStoreBytes(updatedStoreBytes);
+
+      messageEl.innerHTML = `<div class="message success">Broadcast successfully. Balance will update once mined.</div>`;
+      amountInput.value = "";
+      await refreshBalance();
+    } catch (e) {
+      messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+    }
+  });
+
+  refreshBalance();
+  setInterval(refreshBalance, 5000);
+}
+
+// ---------- boot ----------
+async function boot() {
+  await init();
+  renderNodeIndicator(false);
+  renderLockScreen();
+}
+boot();
+</script>
+</body>
+</html>
