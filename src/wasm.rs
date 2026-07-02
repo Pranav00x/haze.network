@@ -12,6 +12,10 @@ use wasm_bindgen::prelude::*;
 use curve25519_dalek_ng::scalar::Scalar;
 
 use crate::crypto::pedersen::Commitment;
+use crate::crypto::range_proof::RangeProof;
+use crate::crypto::schnorr::Signature;
+use crate::core::transaction::{Transaction, Input, Output, TxKernel};
+use crate::core::registry::{RegisterNameOp, NAME_REGISTRATION_FEE, validate_name};
 use crate::wallet::keystore::Keystore;
 use crate::wallet::store::{WalletStore, OutputStatus, GENESIS_INDEX};
 use crate::wallet::planner::{self, PlanError};
@@ -347,4 +351,126 @@ pub fn reveal_stake_blinding_hex(keystore_bytes: Vec<u8>, store_bytes: Vec<u8>, 
 
     let blinding = planner::blinding_for(&keystore, largest.index);
     Ok(blinding.to_bytes().iter().map(|b| format!("{:02x}", b)).collect())
+}
+
+// ---------- Haze Naming Registry ----------
+// Registration rides a normal, self-contained fee-paying transaction (see
+// core::registry::RegisterNameOp) reusing the same coin-selection logic as
+// plan_send - the only new piece is the name/signature/owner_pubkey, signed
+// with the wallet's stable identity key (Keystore::identity_key), not any
+// per-output blinding.
+
+#[wasm_bindgen(getter_with_clone)]
+pub struct WasmRegisterNameResult {
+    /// POST this to /v1/names/register.
+    pub op_json: String,
+    pub updated_keystore_bytes: Vec<u8>,
+    pub spent_commitments_hex: Vec<String>,
+    pub change: Option<WasmOwnedOutput>,
+}
+
+/// Builds a RegisterNameOp paying the registration fee from the wallet's own
+/// confirmed UTXOs, signed with this wallet's stable naming identity key
+/// (the same key every time - so `owner_pubkey` is consistent across
+/// registrations from this wallet). The caller must POST `op_json`
+/// themselves, then call `commit_register_name` only on success.
+#[wasm_bindgen]
+pub fn build_register_name_request(keystore_bytes: Vec<u8>, store_bytes: Vec<u8>, name: String) -> Result<WasmRegisterNameResult, JsValue> {
+    validate_name(&name).map_err(|e| js_err(format!("invalid name: {:?}", e)))?;
+
+    let mut keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
+    let store = WalletStore::from_bytes(&store_bytes).ok_or_else(|| js_err("invalid wallet store bytes"))?;
+
+    let selected = planner::select_spendable(&store, NAME_REGISTRATION_FEE)
+        .map_err(|e| match e {
+            PlanError::InsufficientBalance { have, need } => js_err(format!("insufficient balance: have {}, need {}", have, need)),
+        })?;
+    let selected_total: u64 = selected.iter().map(|(_, _, value)| value).sum();
+
+    let mut input_blindings: Vec<Scalar> = Vec::new();
+    let mut inputs: Vec<Input> = Vec::new();
+    let mut spent_commitments_hex: Vec<String> = Vec::new();
+    for (index, commitment, _value) in &selected {
+        input_blindings.push(planner::blinding_for(&keystore, *index));
+        inputs.push(Input { commitment: *commitment });
+        spent_commitments_hex.push(commitment.to_hex());
+    }
+
+    let change_value = selected_total - NAME_REGISTRATION_FEE;
+    let (outputs, change, change_blinding) = if change_value > 0 {
+        let change_index = keystore.allocate_index();
+        let change_blinding = keystore.derive_blinding(change_index);
+        let change_commitment = Commitment::new(change_value, change_blinding);
+        let change_proof = RangeProof::prove(change_value, &change_blinding);
+        let output = Output { commitment: change_commitment, proof: change_proof };
+        let change_info = WasmOwnedOutput { index: change_index, value: change_value, commitment_hex: change_commitment.to_hex() };
+        (vec![output], Some(change_info), change_blinding)
+    } else {
+        (vec![], None, Scalar::zero())
+    };
+
+    let sum_input_blinding: Scalar = input_blindings.iter().sum();
+    let excess_r = sum_input_blinding - change_blinding;
+    let fee_payment = Transaction {
+        inputs,
+        outputs,
+        kernels: vec![TxKernel {
+            excess: Commitment::new(0, excess_r),
+            fee: NAME_REGISTRATION_FEE,
+            signature: Signature::sign(&NAME_REGISTRATION_FEE.to_le_bytes(), &excess_r),
+        }],
+    };
+
+    let owner_secret = keystore.identity_key();
+    let gens = bulletproofs::PedersenGens::default();
+    let owner_pubkey = Commitment(owner_secret * gens.B_blinding);
+    let signature = RegisterNameOp::sign(&name, &owner_secret);
+
+    let op = RegisterNameOp {
+        name,
+        owner_pubkey,
+        resolves_to: owner_pubkey,
+        fee_payment,
+        signature,
+    };
+    let op_json = serde_json::to_string(&op).map_err(|_| js_err("failed to serialize registration"))?;
+
+    Ok(WasmRegisterNameResult {
+        op_json,
+        updated_keystore_bytes: keystore.to_bytes(),
+        spent_commitments_hex,
+        change,
+    })
+}
+
+/// Applies a previously-built name registration's effects (spent inputs,
+/// optional change) to the store. Must only be called after the registration
+/// was successfully queued via POST /v1/names/register.
+#[wasm_bindgen]
+pub fn commit_register_name(store_bytes: Vec<u8>, spent_commitments_hex: Vec<String>, change: Option<WasmOwnedOutput>) -> Result<Vec<u8>, JsValue> {
+    let mut store = WalletStore::from_bytes(&store_bytes).ok_or_else(|| js_err("invalid wallet store bytes"))?;
+
+    for hex in &spent_commitments_hex {
+        let commitment = Commitment::from_hex(hex).ok_or_else(|| js_err(format!("invalid commitment hex: {}", hex)))?;
+        store.mark_spent(&commitment);
+    }
+
+    if let Some(change) = change {
+        let change_commitment = Commitment::from_hex(&change.commitment_hex)
+            .ok_or_else(|| js_err(format!("invalid commitment hex: {}", change.commitment_hex)))?;
+        store.add_output(change.index, change.value, change_commitment, OutputStatus::Pending);
+    }
+
+    Ok(store.to_bytes())
+}
+
+/// Derives this wallet's stable naming-registry identity pubkey (hex), so the
+/// UI can show "your names resolve to this pubkey" without needing a
+/// registration to already exist.
+#[wasm_bindgen]
+pub fn wallet_identity_pubkey_hex(keystore_bytes: Vec<u8>) -> Result<String, JsValue> {
+    let keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
+    let gens = bulletproofs::PedersenGens::default();
+    let pubkey = Commitment(keystore.identity_key() * gens.B_blinding);
+    Ok(pubkey.to_hex())
 }

@@ -14,6 +14,12 @@ mod tests {
     use std::time::Duration;
     use std::sync::Arc;
 
+    /// The registry root for a block that registers no names - matches what
+    /// ChainState::apply_linear_block computes when name_ops is empty.
+    fn empty_registry_root() -> [u8; 32] {
+        crate::core::registry::compute_registry_root(&std::collections::HashMap::new())
+    }
+
     #[test]
     fn test_full_transaction_lifecycle() {
         let mut rng = OsRng;
@@ -181,6 +187,7 @@ mod tests {
             timestamp: 0,
             validator_commitment: Commitment::new(1_000_000, private_key),
             validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root: empty_registry_root(),
         };
         let msg = header.hash();
         header.validator_signature = Signature::sign(&msg, &private_key);
@@ -189,6 +196,7 @@ mod tests {
         let block = Block {
             header,
             body: block_body,
+            name_ops: vec![],
         };
 
         // Apply the block to the chain state
@@ -410,11 +418,12 @@ mod tests {
                 timestamp: 0,
                 validator_commitment: Commitment::new(1_000_000, private_key),
                 validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+                name_registry_root: empty_registry_root(),
             };
             let msg = header.hash();
             header.validator_signature = Signature::sign(&msg, &private_key);
 
-            Block { header, body }
+            Block { header, body, name_ops: vec![] }
         }
 
         let mut chain_state = ChainState::new();
@@ -462,6 +471,189 @@ mod tests {
         assert!(chain_state.blocks.contains_key(&a2_hash));
         assert!(chain_state.blocks.contains_key(&b2_hash));
         assert!(chain_state.blocks.contains_key(&b3_hash));
+    }
+
+    #[test]
+    fn test_name_registration_applies_and_rolls_back() {
+        use crate::core::registry::{RegisterNameOp, NAME_REGISTRATION_FEE, NameRecord, compute_registry_root};
+        use bulletproofs::PedersenGens;
+
+        let mut rng = OsRng;
+        let mut chain_state = ChainState::new();
+        let genesis_block = crate::core::genesis::genesis_block();
+        let genesis_hash = genesis_block.header.hash();
+        assert!(chain_state.apply_block(&genesis_block).is_applied());
+
+        // Fund the registrant with a real UTXO: value 10, spending 5 as the
+        // registration fee and getting 5 back as change.
+        let r_in = Scalar::random(&mut rng);
+        let r_change = Scalar::random(&mut rng);
+        let input_commitment = Commitment::new(10, r_in);
+        chain_state.utxos.insert(input_commitment);
+
+        let change_output = Output {
+            commitment: Commitment::new(5, r_change),
+            proof: RangeProof::prove(5, &r_change),
+        };
+        let excess_r = r_in - r_change;
+        let fee_payment = Transaction {
+            inputs: vec![Input { commitment: input_commitment }],
+            outputs: vec![change_output.clone()],
+            kernels: vec![TxKernel {
+                excess: Commitment::new(0, excess_r),
+                fee: NAME_REGISTRATION_FEE,
+                signature: Signature::sign(&NAME_REGISTRATION_FEE.to_le_bytes(), &excess_r),
+            }],
+        };
+        assert!(fee_payment.validate(), "fee_payment must be a valid standalone transaction");
+
+        let gens = PedersenGens::default();
+        let owner_secret = Scalar::random(&mut rng);
+        let owner_pubkey = Commitment(owner_secret * gens.B_blinding);
+        let signature = RegisterNameOp::sign("pranav", &owner_secret);
+
+        let op = RegisterNameOp {
+            name: "pranav".to_string(),
+            owner_pubkey,
+            resolves_to: owner_pubkey,
+            fee_payment,
+            signature,
+        };
+        assert!(op.validate_standalone().is_ok());
+
+        let mut expected_registry = std::collections::HashMap::new();
+        expected_registry.insert(op.name.clone(), NameRecord {
+            name: op.name.clone(),
+            owner_pubkey: op.owner_pubkey,
+            resolves_to: op.resolves_to,
+            registered_at_block: 1,
+        });
+        let name_registry_root = compute_registry_root(&expected_registry);
+
+        let private_key = Scalar::from(42u64);
+        let coinbase_r = Scalar::random(&mut rng);
+        let coinbase_output = Output {
+            commitment: Commitment::new(60, coinbase_r),
+            proof: RangeProof::prove(60, &coinbase_r),
+        };
+        let coinbase_excess_r = Scalar::zero() - coinbase_r;
+        let body = Transaction {
+            inputs: vec![],
+            outputs: vec![coinbase_output],
+            kernels: vec![TxKernel {
+                excess: Commitment::new(0, coinbase_excess_r),
+                fee: 0,
+                signature: Signature::sign(&0u64.to_le_bytes(), &coinbase_excess_r),
+            }],
+        };
+
+        let mut header = BlockHeader {
+            height: 1,
+            prev_hash: genesis_hash,
+            total_kernel_offset: Scalar::zero(),
+            nonce: 0,
+            timestamp: 0,
+            validator_commitment: Commitment::new(1_000_000, private_key),
+            validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root,
+        };
+        let msg = header.hash();
+        header.validator_signature = Signature::sign(&msg, &private_key);
+
+        let block = Block { header, body, name_ops: vec![op] };
+
+        assert!(chain_state.apply_block(&block).is_applied(), "block with name registration must apply");
+        assert!(chain_state.name_registry.contains_key("pranav"));
+        assert_eq!(chain_state.name_registry["pranav"].resolves_to, owner_pubkey);
+        assert!(!chain_state.utxos.contains(&input_commitment), "fee-payment input must be spent");
+        assert!(chain_state.utxos.contains(&change_output.commitment), "fee-payment change must be in the UTXO set");
+
+        assert!(chain_state.rollback_block().is_some());
+        assert!(!chain_state.name_registry.contains_key("pranav"), "rollback must un-register the name");
+        assert!(chain_state.utxos.contains(&input_commitment), "rollback must restore the spent input");
+        assert!(!chain_state.utxos.contains(&change_output.commitment), "rollback must remove the change output");
+    }
+
+    #[test]
+    fn test_duplicate_name_registration_in_same_block_is_rejected() {
+        use crate::core::registry::{RegisterNameOp, NAME_REGISTRATION_FEE, NameRecord, compute_registry_root};
+        use bulletproofs::PedersenGens;
+
+        let mut rng = OsRng;
+        let mut chain_state = ChainState::new();
+        let genesis_block = crate::core::genesis::genesis_block();
+        let genesis_hash = genesis_block.header.hash();
+        assert!(chain_state.apply_block(&genesis_block).is_applied());
+
+        let gens = PedersenGens::default();
+
+        let make_op = |rng: &mut OsRng, chain_state: &mut ChainState| -> RegisterNameOp {
+            let r_in = Scalar::random(rng);
+            let input_commitment = Commitment::new(NAME_REGISTRATION_FEE, r_in);
+            chain_state.utxos.insert(input_commitment);
+            let fee_payment = Transaction {
+                inputs: vec![Input { commitment: input_commitment }],
+                outputs: vec![],
+                kernels: vec![TxKernel {
+                    excess: Commitment::new(0, r_in),
+                    fee: NAME_REGISTRATION_FEE,
+                    signature: Signature::sign(&NAME_REGISTRATION_FEE.to_le_bytes(), &r_in),
+                }],
+            };
+            let owner_secret = Scalar::random(rng);
+            let owner_pubkey = Commitment(owner_secret * gens.B_blinding);
+            RegisterNameOp {
+                name: "contested".to_string(),
+                owner_pubkey,
+                resolves_to: owner_pubkey,
+                signature: RegisterNameOp::sign("contested", &owner_secret),
+                fee_payment,
+            }
+        };
+
+        let op1 = make_op(&mut rng, &mut chain_state);
+        let op2 = make_op(&mut rng, &mut chain_state);
+
+        let mut registry = std::collections::HashMap::new();
+        registry.insert("contested".to_string(), NameRecord {
+            name: "contested".to_string(),
+            owner_pubkey: op1.owner_pubkey,
+            resolves_to: op1.resolves_to,
+            registered_at_block: 1,
+        });
+
+        let private_key = Scalar::from(42u64);
+        let coinbase_r = Scalar::random(&mut rng);
+        let coinbase_output = Output {
+            commitment: Commitment::new(60, coinbase_r),
+            proof: RangeProof::prove(60, &coinbase_r),
+        };
+        let coinbase_excess_r = Scalar::zero() - coinbase_r;
+        let body = Transaction {
+            inputs: vec![],
+            outputs: vec![coinbase_output],
+            kernels: vec![TxKernel {
+                excess: Commitment::new(0, coinbase_excess_r),
+                fee: 0,
+                signature: Signature::sign(&0u64.to_le_bytes(), &coinbase_excess_r),
+            }],
+        };
+        let mut header = BlockHeader {
+            height: 1,
+            prev_hash: genesis_hash,
+            total_kernel_offset: Scalar::zero(),
+            nonce: 0,
+            timestamp: 0,
+            validator_commitment: Commitment::new(1_000_000, private_key),
+            validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root: compute_registry_root(&registry),
+        };
+        let msg = header.hash();
+        header.validator_signature = Signature::sign(&msg, &private_key);
+
+        let block = Block { header, body, name_ops: vec![op1, op2] };
+
+        assert!(!chain_state.apply_block(&block).is_applied(), "block registering the same name twice must be rejected");
     }
 }
 

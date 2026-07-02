@@ -104,7 +104,46 @@ impl Proposer {
                         kernels: vec![],
                     });
 
-                    println!("We are chosen proposer for block #{}! Proposing block with {} user transactions...", next_height, tx.kernels.len());
+                    // Pull pending name registrations, filtering out any that would
+                    // already fail against current chain state (name taken, or a
+                    // fee-payment input already spent) - including one that would
+                    // fail here would get the WHOLE block rejected by apply_linear_block,
+                    // not just that one op.
+                    let candidate_name_ops = {
+                        let mut mp = self.mempool.lock().unwrap();
+                        mp.take_name_ops()
+                    };
+                    let mut spent_this_block: std::collections::HashSet<Commitment> =
+                        tx.inputs.iter().map(|i| i.commitment).collect();
+                    let mut name_registry_snapshot = {
+                        let c = self.chain.lock().unwrap();
+                        c.name_registry.clone()
+                    };
+                    let utxos_snapshot = {
+                        let c = self.chain.lock().unwrap();
+                        c.utxos.clone()
+                    };
+                    let mut name_ops = Vec::new();
+                    for op in candidate_name_ops {
+                        let inputs_ok = op.fee_payment.inputs.iter()
+                            .all(|i| utxos_snapshot.contains(&i.commitment) && !spent_this_block.contains(&i.commitment));
+                        if !inputs_ok || name_registry_snapshot.contains_key(&op.name) {
+                            continue;
+                        }
+                        for i in &op.fee_payment.inputs {
+                            spent_this_block.insert(i.commitment);
+                        }
+                        name_registry_snapshot.insert(op.name.clone(), crate::core::registry::NameRecord {
+                            name: op.name.clone(),
+                            owner_pubkey: op.owner_pubkey,
+                            resolves_to: op.resolves_to,
+                            registered_at_block: next_height,
+                        });
+                        name_ops.push(op);
+                    }
+                    let name_registry_root = crate::core::registry::compute_registry_root(&name_registry_snapshot);
+
+                    println!("We are chosen proposer for block #{}! Proposing block with {} user transactions, {} name registrations...", next_height, tx.kernels.len(), name_ops.len());
                     
                     // 1. Calculate total fees and coinbase value
                     let total_fees: u64 = tx.kernels.iter().map(|k| k.fee).sum();
@@ -149,6 +188,7 @@ impl Proposer {
                         timestamp: now,
                         validator_commitment: validator.commitment,
                         validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+                        name_registry_root,
                     };
 
                     // Sign the block header
@@ -158,6 +198,7 @@ impl Proposer {
                     let block = Block {
                         header,
                         body: tx,
+                        name_ops,
                     };
 
                     // Apply locally

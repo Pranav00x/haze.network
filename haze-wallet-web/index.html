@@ -166,7 +166,8 @@ import init, {
   generate_keystore, wallet_store_new, reconcile_wallet_store,
   wallet_balance, wallet_pending_balance, plan_send, commit_send,
   create_send_slate, respond_to_slate, finalize_slate, commit_receive, commit_slate_send,
-  build_stake_request, reveal_stake_blinding_hex
+  build_stake_request, reveal_stake_blinding_hex,
+  build_register_name_request, commit_register_name, wallet_identity_pubkey_hex
 } from './pkg/haze_core.js';
 
 // ---------- Node API base (same convention as the explorer) ----------
@@ -455,6 +456,25 @@ function renderDashboard() {
         </div>
       </div>
 
+      <div class="panel">
+        <h2>Haze Naming Registry</h2>
+        <div class="sub">Register a permanent, first-come-first-served name that resolves to your wallet's identity pubkey - lowercase letters/digits/-/_, 3-32 characters. One-time fee, no expiry. A name currently only resolves to a bare pubkey - there's no way yet for someone to reach you with it to exchange a payment slate.</div>
+        <label>Name</label>
+        <input type="text" id="name-input" placeholder="e.g. pranav" autocomplete="off" />
+        <button class="btn-primary" id="register-name-btn">Register name</button>
+        <div id="register-name-message"></div>
+        <div class="keystore-note" id="identity-pubkey-note"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Look up a name</h2>
+        <div class="sub">Resolves a registered name to its owner and identity pubkey.</div>
+        <label>Name</label>
+        <input type="text" id="lookup-name-input" placeholder="e.g. pranav" autocomplete="off" />
+        <button class="btn-primary" id="lookup-name-btn">Look up</button>
+        <div id="lookup-name-result"></div>
+      </div>
+
       <div class="action-row">
         <button class="btn-ghost btn-small" id="lock-btn">Lock wallet</button>
       </div>
@@ -497,6 +517,72 @@ function renderDashboard() {
       document.getElementById("reveal-key-output").style.display = "";
     } catch (e) {
       messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+    }
+  });
+
+  // ---------- Haze Naming Registry ----------
+  try {
+    const pubkeyHex = wallet_identity_pubkey_hex(sessionKeystoreBytes);
+    document.getElementById("identity-pubkey-note").textContent = `Your identity pubkey: ${pubkeyHex}`;
+  } catch (e) {
+    // non-fatal, just skip the note
+  }
+
+  document.getElementById("register-name-btn").addEventListener("click", async () => {
+    const name = document.getElementById("name-input").value.trim();
+    const messageEl = document.getElementById("register-name-message");
+    if (!name) {
+      messageEl.innerHTML = `<div class="message error">Enter a name.</div>`;
+      return;
+    }
+
+    try {
+      const storeBytes = loadWalletStoreBytes();
+      const result = build_register_name_request(sessionKeystoreBytes, storeBytes, name);
+
+      const res = await fetch(API_BASE + "/v1/names/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: result.op_json,
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        messageEl.innerHTML = `<div class="message error">Node rejected registration: ${errJson.error || res.status}</div>`;
+        return;
+      }
+
+      sessionKeystoreBytes = result.updated_keystore_bytes;
+      let storeBytes2 = commit_register_name(storeBytes, result.spent_commitments_hex, result.change);
+      saveWalletStoreBytes(storeBytes2);
+
+      messageEl.innerHTML = `<div class="message success">Queued "${name}" for registration. It'll be permanent once mined.</div>`;
+      document.getElementById("name-input").value = "";
+      await refreshBalance();
+    } catch (e) {
+      messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+    }
+  });
+
+  document.getElementById("lookup-name-btn").addEventListener("click", async () => {
+    const name = document.getElementById("lookup-name-input").value.trim();
+    const resultEl = document.getElementById("lookup-name-result");
+    if (!name) {
+      resultEl.innerHTML = `<div class="message error">Enter a name to look up.</div>`;
+      return;
+    }
+
+    try {
+      const res = await fetch(API_BASE + "/v1/names/" + encodeURIComponent(name));
+      if (!res.ok) {
+        resultEl.innerHTML = `<div class="message error">"${name}" is not registered.</div>`;
+        return;
+      }
+      const record = await res.json();
+      const resolvesHex = bytesToHex(record.resolves_to);
+      resultEl.innerHTML = `<div class="message success">Resolves to <span class="keystore-note">${resolvesHex}</span> (registered at block ${record.registered_at_block})</div>`;
+    } catch (e) {
+      resultEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
     }
   });
 

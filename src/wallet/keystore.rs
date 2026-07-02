@@ -82,6 +82,20 @@ impl Keystore {
         Scalar::from_bytes_mod_order_wide(&bytes)
     }
 
+    /// Deterministically derives this wallet's stable naming-registry identity
+    /// key - separate from any output's blinding (a different domain-separated
+    /// derivation, not tied to an index), since a NameRecord's owner/resolves-to
+    /// pubkey is a persistent identity, not a spendable output.
+    pub fn identity_key(&self) -> Scalar {
+        let mut hasher = Sha512::new();
+        hasher.update(b"Haze Wallet Naming Identity");
+        hasher.update(&self.seed);
+        let result = hasher.finalize();
+        let mut bytes = [0u8; 64];
+        bytes.copy_from_slice(&result);
+        Scalar::from_bytes_mod_order_wide(&bytes)
+    }
+
     /// Allocates a new output index, guaranteeing it is never reused within this
     /// Keystore value. Purely in-memory - does not touch disk. File-backed callers
     /// (the CLI wallet) must call save_to_file() themselves right after allocating,

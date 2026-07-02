@@ -228,6 +228,103 @@ export class WasmOwnedOutput {
 }
 if (Symbol.dispose) WasmOwnedOutput.prototype[Symbol.dispose] = WasmOwnedOutput.prototype.free;
 
+export class WasmRegisterNameResult {
+    static __wrap(ptr) {
+        const obj = Object.create(WasmRegisterNameResult.prototype);
+        obj.__wbg_ptr = ptr;
+        WasmRegisterNameResultFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmRegisterNameResultFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmregisternameresult_free(ptr, 0);
+    }
+    /**
+     * @returns {WasmOwnedOutput | undefined}
+     */
+    get change() {
+        const ret = wasm.__wbg_get_wasmregisternameresult_change(this.__wbg_ptr);
+        return ret === 0 ? undefined : WasmOwnedOutput.__wrap(ret);
+    }
+    /**
+     * POST this to /v1/names/register.
+     * @returns {string}
+     */
+    get op_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.__wbg_get_wasmregisternameresult_op_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string[]}
+     */
+    get spent_commitments_hex() {
+        const ret = wasm.__wbg_get_wasmregisternameresult_spent_commitments_hex(this.__wbg_ptr);
+        var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {Uint8Array}
+     */
+    get updated_keystore_bytes() {
+        const ret = wasm.__wbg_get_wasmregisternameresult_updated_keystore_bytes(this.__wbg_ptr);
+        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v1;
+    }
+    /**
+     * @param {WasmOwnedOutput | null} [arg0]
+     */
+    set change(arg0) {
+        let ptr0 = 0;
+        if (!isLikeNone(arg0)) {
+            _assertClass(arg0, WasmOwnedOutput);
+            ptr0 = arg0.__destroy_into_raw();
+        }
+        wasm.__wbg_set_wasmregisternameresult_change(this.__wbg_ptr, ptr0);
+    }
+    /**
+     * POST this to /v1/names/register.
+     * @param {string} arg0
+     */
+    set op_json(arg0) {
+        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_wasmregisternameresult_op_json(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * @param {string[]} arg0
+     */
+    set spent_commitments_hex(arg0) {
+        const ptr0 = passArrayJsValueToWasm0(arg0, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_wasmregisternameresult_spent_commitments_hex(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * @param {Uint8Array} arg0
+     */
+    set updated_keystore_bytes(arg0) {
+        const ptr0 = passArray8ToWasm0(arg0, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_wasmregisternameresult_updated_keystore_bytes(this.__wbg_ptr, ptr0, len0);
+    }
+}
+if (Symbol.dispose) WasmRegisterNameResult.prototype[Symbol.dispose] = WasmRegisterNameResult.prototype.free;
+
 export class WasmRespondResult {
     static __wrap(ptr) {
         const obj = Object.create(WasmRespondResult.prototype);
@@ -416,6 +513,31 @@ export class WasmSendPlan {
 if (Symbol.dispose) WasmSendPlan.prototype[Symbol.dispose] = WasmSendPlan.prototype.free;
 
 /**
+ * Builds a RegisterNameOp paying the registration fee from the wallet's own
+ * confirmed UTXOs, signed with this wallet's stable naming identity key
+ * (the same key every time - so `owner_pubkey` is consistent across
+ * registrations from this wallet). The caller must POST `op_json`
+ * themselves, then call `commit_register_name` only on success.
+ * @param {Uint8Array} keystore_bytes
+ * @param {Uint8Array} store_bytes
+ * @param {string} name
+ * @returns {WasmRegisterNameResult}
+ */
+export function build_register_name_request(keystore_bytes, store_bytes, name) {
+    const ptr0 = passArray8ToWasm0(keystore_bytes, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(store_bytes, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.build_register_name_request(ptr0, len0, ptr1, len1, ptr2, len2);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return WasmRegisterNameResult.__wrap(ret[0]);
+}
+
+/**
  * Builds a POST /v1/stake request body by staking the wallet's single
  * largest confirmed output. Fails if there is no confirmed output at least
  * `min_value`. Does not touch the store - staking doesn't spend anything.
@@ -487,6 +609,34 @@ export function commit_receive(store_bytes, output) {
     var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
     return v3;
+}
+
+/**
+ * Applies a previously-built name registration's effects (spent inputs,
+ * optional change) to the store. Must only be called after the registration
+ * was successfully queued via POST /v1/names/register.
+ * @param {Uint8Array} store_bytes
+ * @param {string[]} spent_commitments_hex
+ * @param {WasmOwnedOutput | null} [change]
+ * @returns {Uint8Array}
+ */
+export function commit_register_name(store_bytes, spent_commitments_hex, change) {
+    const ptr0 = passArray8ToWasm0(store_bytes, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArrayJsValueToWasm0(spent_commitments_hex, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    let ptr2 = 0;
+    if (!isLikeNone(change)) {
+        _assertClass(change, WasmOwnedOutput);
+        ptr2 = change.__destroy_into_raw();
+    }
+    const ret = wasm.commit_register_name(ptr0, len0, ptr1, len1, ptr2);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v4;
 }
 
 /**
@@ -717,6 +867,34 @@ export function wallet_balance(store_bytes) {
 }
 
 /**
+ * Derives this wallet's stable naming-registry identity pubkey (hex), so the
+ * UI can show "your names resolve to this pubkey" without needing a
+ * registration to already exist.
+ * @param {Uint8Array} keystore_bytes
+ * @returns {string}
+ */
+export function wallet_identity_pubkey_hex(keystore_bytes) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passArray8ToWasm0(keystore_bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wallet_identity_pubkey_hex(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Pending (unconfirmed) balance.
  * @param {Uint8Array} store_bytes
  * @returns {bigint}
@@ -872,6 +1050,9 @@ const WasmFinalizedTxFinalization = (typeof FinalizationRegistry === 'undefined'
 const WasmOwnedOutputFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmownedoutput_free(ptr, 1));
+const WasmRegisterNameResultFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmregisternameresult_free(ptr, 1));
 const WasmRespondResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmrespondresult_free(ptr, 1));

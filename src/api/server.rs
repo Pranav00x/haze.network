@@ -10,6 +10,7 @@ use crate::core::transaction::Transaction;
 use crate::p2p::server::P2pServer;
 use super::explorer;
 use super::faucet::{self, FaucetState};
+use super::names;
 
 pub struct ApiServer;
 
@@ -31,6 +32,8 @@ impl ApiServer {
         let faucet_filter = warp::any().map(move || Arc::clone(&faucet_state));
         let faucet_filter_2 = faucet_filter.clone();
         let mempool_filter_3 = mempool_filter.clone();
+        let mempool_filter_4 = mempool_filter.clone();
+        let p2p_filter_2 = p2p_filter.clone();
 
         // Caps request body size for the two write endpoints - now that this
         // API is meant to be internet-facing, an unbounded body from an
@@ -115,7 +118,7 @@ impl ApiServer {
             .and(warp::body::content_length_limit(MAX_BODY_SIZE))
             .and(warp::body::json())
             .and(faucet_filter)
-            .and(chain_filter)
+            .and(chain_filter.clone())
             .and_then(faucet::handle_faucet_request);
 
         // POST /v1/faucet/complete - step 2: server finalizes with the
@@ -127,6 +130,31 @@ impl ApiServer {
             .and(faucet_filter_2)
             .and(mempool_filter_3)
             .and_then(faucet::handle_faucet_complete);
+
+        // POST /v1/names/register - queues a name registration (see api/names.rs
+        // and core::registry) into the mempool and broadcasts it; it's only
+        // actually committed once a block including it is mined.
+        let register_name_route = warp::post()
+            .and(warp::path!("v1" / "names" / "register"))
+            .and(warp::body::content_length_limit(MAX_BODY_SIZE))
+            .and(warp::body::json())
+            .and(mempool_filter_4)
+            .and(p2p_filter_2)
+            .and(chain_filter.clone())
+            .and_then(names::handle_register_name);
+
+        // GET /v1/names/:name - resolves a single registered name.
+        let resolve_name_route = warp::get()
+            .and(warp::path!("v1" / "names" / String))
+            .and(chain_filter.clone())
+            .and_then(names::handle_resolve_name);
+
+        // GET /v1/names?limit=N - lists registered names, newest first.
+        let list_names_route = warp::get()
+            .and(warp::path!("v1" / "names"))
+            .and(warp::query::<names::NamesListQuery>())
+            .and(chain_filter)
+            .and_then(names::handle_list_names);
 
         let routes = tx_route
             .or(stake_route)
@@ -140,6 +168,9 @@ impl ApiServer {
             .or(search_route)
             .or(faucet_request_route)
             .or(faucet_complete_route)
+            .or(register_name_route)
+            .or(resolve_name_route)
+            .or(list_names_route)
             .with(
                 warp::cors()
                     .allow_any_origin()

@@ -57,7 +57,9 @@ pub fn genesis_block() -> Block {
             timestamp: 0,
             validator_commitment: Commitment::new(genesis_val, genesis_blinding),
             validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root: super::registry::compute_registry_root(&std::collections::HashMap::new()),
         },
         body,
+        name_ops: vec![],
     }
 }

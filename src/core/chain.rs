@@ -3,6 +3,7 @@ use crate::crypto::pedersen::Commitment;
 use crate::crypto::schnorr::Signature;
 use super::transaction::{TxKernel, Output};
 use super::block::Block;
+use super::registry::{NameRecord, compute_registry_root};
 use serde::{Serialize, Deserialize};
 use curve25519_dalek_ng::scalar::Scalar;
 use bulletproofs::PedersenGens;
@@ -27,6 +28,9 @@ pub struct ChainState {
     pub blocks: HashMap<[u8; 32], Block>,
     /// Snapshots of active validators at each block height
     pub validator_snapshots: HashMap<u64, Vec<Validator>>,
+    /// The Haze Naming Registry - name -> record, committed into consensus
+    /// state via BlockHeader::name_registry_root (see core::registry).
+    pub name_registry: HashMap<String, NameRecord>,
 }
 
 /// Describes exactly what changed when a block was successfully applied, so storage can
@@ -41,6 +45,8 @@ pub struct AppliedDelta {
     pub validator_snapshot: (u64, Vec<Validator>),
     /// Active validator set immediately after this block was applied.
     pub active_validators_after: Vec<Validator>,
+    /// Names registered by this block (empty for most blocks).
+    pub new_names: Vec<(String, NameRecord)>,
     pub height: u64,
     pub tip_hash: [u8; 32],
 }
@@ -53,6 +59,8 @@ pub struct RollbackDelta {
     pub removed_kernel_excesses: Vec<Commitment>,
     /// Active validator set immediately after this rollback.
     pub active_validators_after: Vec<Validator>,
+    /// Names un-registered by this rollback.
+    pub removed_names: Vec<String>,
     pub new_height: u64,
     pub new_tip: [u8; 32],
 }
@@ -264,6 +272,39 @@ impl ChainState {
             }
         }
 
+        // 4b. Validate name registrations (see core::registry). Each op is checked
+        // standalone (name rules, ownership signature, its own fee-payment balance),
+        // plus chain-state checks that can only happen here: the name isn't already
+        // taken (by prior blocks or an earlier op in this same block), it isn't
+        // registered twice within this block, and its fee-payment inputs are real,
+        // currently-unspent UTXOs not already consumed by body or an earlier op.
+        let mut spent_this_block: HashSet<Commitment> = block.body.inputs.iter().map(|i| i.commitment).collect();
+        let mut names_this_block: HashSet<&str> = HashSet::new();
+        let mut candidate_registry = self.name_registry.clone();
+        for op in &block.name_ops {
+            if op.validate_standalone().is_err() {
+                return None;
+            }
+            if self.name_registry.contains_key(&op.name) || !names_this_block.insert(op.name.as_str()) {
+                return None;
+            }
+            for input in &op.fee_payment.inputs {
+                if !self.utxos.contains(&input.commitment) || spent_this_block.contains(&input.commitment) {
+                    return None;
+                }
+                spent_this_block.insert(input.commitment);
+            }
+            candidate_registry.insert(op.name.clone(), NameRecord {
+                name: op.name.clone(),
+                owner_pubkey: op.owner_pubkey,
+                resolves_to: op.resolves_to,
+                registered_at_block: block.header.height,
+            });
+        }
+        if compute_registry_root(&candidate_registry) != block.header.name_registry_root {
+            return None;
+        }
+
         // 5. Save the snapshot of active validators BEFORE applying state transitions
         let validator_snapshot = (block.header.height, self.active_validators.clone());
         self.validator_snapshots.insert(validator_snapshot.0, validator_snapshot.1.clone());
@@ -283,9 +324,30 @@ impl ChainState {
             self.utxos.insert(output.commitment);
         }
 
+        // 7b. Apply each name op's fee-payment transaction (spend its inputs, add its
+        // change outputs) and commit the registry entry itself.
+        let mut new_names = Vec::new();
+        for op in &block.name_ops {
+            for input in &op.fee_payment.inputs {
+                self.utxos.remove(&input.commitment);
+                spent_commitments.push(input.commitment);
+            }
+            for output in &op.fee_payment.outputs {
+                self.utxos.insert(output.commitment);
+            }
+            let record = candidate_registry[&op.name].clone();
+            self.name_registry.insert(op.name.clone(), record.clone());
+            new_names.push((op.name.clone(), record));
+        }
+
         // 8. Save the kernels forever
         for kernel in &block.body.kernels {
             self.kernels.push(kernel.clone());
+        }
+        for op in &block.name_ops {
+            for kernel in &op.fee_payment.kernels {
+                self.kernels.push(kernel.clone());
+            }
         }
 
         self.current_height = block.header.height;
@@ -297,6 +359,7 @@ impl ChainState {
             spent_commitments,
             new_outputs: block.body.outputs.clone(),
             new_kernels: block.body.kernels.clone(),
+            new_names,
             validator_snapshot,
             active_validators_after: self.active_validators.clone(),
             height: self.current_height,
@@ -338,6 +401,23 @@ impl ChainState {
             removed_kernel_excesses.push(kernel.excess);
         }
 
+        // 3b. Revert each name op's fee-payment transaction and registry entry.
+        let mut removed_names = Vec::new();
+        for op in &tip_block.name_ops {
+            for output in &op.fee_payment.outputs {
+                self.utxos.remove(&output.commitment);
+            }
+            for input in &op.fee_payment.inputs {
+                self.utxos.insert(input.commitment);
+                restored_inputs.push(input.commitment);
+            }
+            for kernel in &op.fee_payment.kernels {
+                self.kernels.retain(|k| k.excess != kernel.excess);
+            }
+            self.name_registry.remove(&op.name);
+            removed_names.push(op.name.clone());
+        }
+
         // 4. Restore active validator registry snapshot from height H-1
         let prev_height = self.current_height - 1;
         self.active_validators = self.validator_snapshots.get(&prev_height).cloned().unwrap_or_default();
@@ -354,6 +434,7 @@ impl ChainState {
             restored_inputs,
             removed_kernel_excesses,
             active_validators_after: self.active_validators.clone(),
+            removed_names,
             new_height: self.current_height,
             new_tip: self.last_block_hash,
         })

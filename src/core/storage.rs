@@ -116,6 +116,30 @@ impl Storage {
             }
         }
 
+        // Rebuild the name registry by replaying name_ops from blocks on the
+        // ACTIVE chain only (walking back from the tip via prev_hash) - no
+        // separate sled tree needed, since full blocks (including name_ops)
+        // are already persisted above. Must not include orphaned/rolled-back
+        // blocks, which stay in `state.blocks` forever for potential reorgs
+        // but shouldn't count toward current registry state.
+        let mut cursor = state.last_block_hash;
+        while cursor != [0u8; 32] {
+            let Some(block) = state.blocks.get(&cursor) else { break };
+            for op in &block.name_ops {
+                state.name_registry.insert(op.name.clone(), super::registry::NameRecord {
+                    name: op.name.clone(),
+                    owner_pubkey: op.owner_pubkey,
+                    resolves_to: op.resolves_to,
+                    registered_at_block: block.header.height,
+                });
+            }
+            let height = block.header.height;
+            cursor = block.header.prev_hash;
+            if height == 0 {
+                break;
+            }
+        }
+
         state
     }
 

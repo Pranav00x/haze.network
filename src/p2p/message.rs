@@ -1,6 +1,7 @@
 use serde::{Serialize, Deserialize};
 use crate::core::transaction::Transaction;
 use crate::core::block::Block;
+use crate::core::registry::RegisterNameOp;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum P2pMessage {
@@ -27,4 +28,9 @@ pub enum P2pMessage {
     /// never learn about it.
     GetValidators,
     ValidatorsList(Vec<crate::core::chain::Validator>),
+    /// A pending name registration, gossiped directly (not via Dandelion
+    /// stem/fluff - unlike payment transactions, name ownership is
+    /// intentionally public, so there's no privacy benefit to routing it
+    /// through the stem phase).
+    NewNameOp(RegisterNameOp),
 }
