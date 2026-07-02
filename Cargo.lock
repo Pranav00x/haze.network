@@ -689,6 +689,7 @@ dependencies = [
  "bulletproofs",
  "clap",
  "curve25519-dalek-ng",
+ "getrandom 0.2.17",
  "merlin",
  "rand 0.8.6",
  "reqwest",
@@ -700,6 +701,7 @@ dependencies = [
  "tokio",
  "uniffi",
  "warp",
+ "wasm-bindgen",
 ]
 
 [[package]]

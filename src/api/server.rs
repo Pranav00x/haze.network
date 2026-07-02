@@ -111,7 +111,16 @@ impl ApiServer {
             .or(validators_route)
             .or(transactions_route)
             .or(search_route)
-            .with(warp::cors().allow_any_origin());
+            .with(
+                warp::cors()
+                    .allow_any_origin()
+                    // A plain GET never preflights, but a JSON POST always does
+                    // (application/json isn't a "simple" content-type) - without
+                    // these, the browser blocks the actual POST after the
+                    // preflight response fails to allow the method/header.
+                    .allow_methods(vec!["GET", "POST"])
+                    .allow_headers(vec!["content-type"]),
+            );
         
         // Binds all interfaces, not just loopback - required for this to be
         // reachable at all once deployed behind a cloud provider's proxy
