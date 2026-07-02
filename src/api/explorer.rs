@@ -514,6 +514,7 @@ const EXPLORER_HTML: &str = r#"<!DOCTYPE html>
   .detail-box .d-section { margin-bottom: 12px; }
   .detail-box .d-label { color: var(--ink-faint); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 5px; }
   .detail-box .d-hash { font-family: var(--font-mono); color: var(--violet); display: block; word-break: break-all; line-height: 1.6; }
+  .detail-box .d-hash.highlight { color: var(--amber); background: var(--amber-dim); border-radius: 3px; padding: 2px 6px; margin: -2px -6px; }
   .detail-box .d-empty { color: var(--ink-faint); font-style: italic; }
 
   ::selection { background: var(--amber-dim); }
@@ -620,20 +621,21 @@ function removeExpandedDetail() {
   if (existing) existing.remove();
 }
 
-function renderDetailBox(b) {
+function renderDetailBox(b, highlightHex) {
   const box = document.createElement("div");
   box.className = "detail-box";
   box.id = "detail-" + b.height;
 
+  const cls = (hash) => "d-hash" + (highlightHex && hash === highlightHex ? " highlight" : "");
   const list = (items) => items.length
-    ? items.map(i => `<span class="d-hash">${i}</span>`).join("")
+    ? items.map(i => `<span class="${cls(i)}">${i}</span>`).join("")
     : `<span class="d-empty">none</span>`;
   const kernelList = b.kernels.length
-    ? b.kernels.map(k => `<span class="d-hash">${k.excess} <span style="color:var(--amber)">(fee ${k.fee})</span></span>`).join("")
+    ? b.kernels.map(k => `<span class="${cls(k.excess)}">${k.excess} <span style="color:var(--amber)">(fee ${k.fee})</span></span>`).join("")
     : `<span class="d-empty">none</span>`;
 
   box.innerHTML = `
-    <div class="d-section"><div class="d-label">Full Hash</div><span class="d-hash">${b.hash}</span></div>
+    <div class="d-section"><div class="d-label">Full Hash</div><span class="${cls(b.hash)}">${b.hash}</span></div>
     <div class="d-section"><div class="d-label">Prev Hash</div><span class="d-hash">${b.prev_hash}</span></div>
     <div class="d-section"><div class="d-label">Nonce</div>${b.nonce}</div>
     <div class="d-section"><div class="d-label">Inputs (${b.inputs.length})</div>${list(b.inputs)}</div>
@@ -643,10 +645,11 @@ function renderDetailBox(b) {
   return box;
 }
 
-async function insertBlockDetail(height, rowEl) {
+async function insertBlockDetail(height, rowEl, highlightHex) {
   const b = await fetchJson(`/v1/blocks/${height}`);
-  const box = renderDetailBox(b);
+  const box = renderDetailBox(b, highlightHex);
   rowEl.after(box);
+  return box;
 }
 
 async function toggleBlockDetail(height, rowEl) {
@@ -744,10 +747,16 @@ async function runSearch(query) {
     const typeLabel = result.result_type === "block" ? "Block found"
       : result.result_type === "transaction" ? "Transaction found in block"
       : "Commitment found in block";
-    inner.innerHTML = `<div class="sr-label">${typeLabel}</div><div class="sr-empty">Height <span class="sr-link" id="sr-jump">#${result.height}</span> &mdash; click to view</div>`;
-    document.getElementById("sr-jump").addEventListener("click", async () => {
-      const b = await fetchJson(`/v1/blocks/${result.height}`);
-      inner.appendChild(renderDetailBox(b));
+    // Jumps straight to the matching block's detail (highlighting the
+    // specific kernel/commitment/hash that matched) instead of making the
+    // user click a second time - deep links (?q=...) should land on the
+    // actual thing being searched for, not one click short of it.
+    inner.innerHTML = `<div class="sr-label">${typeLabel}</div><div class="sr-empty">Height <span class="sr-link" id="sr-jump">#${result.height}</span></div>`;
+    const b = await fetchJson(`/v1/blocks/${result.height}`);
+    const highlightHex = result.result_type === "block" ? b.hash : query.trim();
+    inner.appendChild(renderDetailBox(b, highlightHex));
+    document.getElementById("sr-jump").addEventListener("click", () => {
+      document.getElementById("sr-jump").scrollIntoView({ behavior: "smooth", block: "center" });
     });
   }
   panel.classList.add("open");
