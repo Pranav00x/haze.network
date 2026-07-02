@@ -223,7 +223,7 @@ impl ChainState {
 
         // 3. Verify the block's internal cryptography
         let block_reward = if block.header.height == 0 {
-            1_000_000
+            super::genesis::GENESIS_TOTAL_MINTED
         } else {
             super::block::BLOCK_REWARD
         };

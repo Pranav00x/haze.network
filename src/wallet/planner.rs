@@ -5,7 +5,7 @@ use crate::crypto::range_proof::RangeProof;
 use crate::crypto::schnorr::Signature;
 use crate::core::transaction::{Transaction, Input, Output, TxKernel};
 use super::keystore::Keystore;
-use super::store::{WalletStore, GENESIS_INDEX};
+use super::store::{WalletStore, GENESIS_INDEX, FAUCET_INDEX};
 
 /// A single planned output: the wallet-local index that owns it, its commitment,
 /// and its plaintext value (known only to us - never appears on chain).
@@ -32,6 +32,8 @@ pub enum PlanError {
 pub(crate) fn blinding_for(keystore: &Keystore, index: u32) -> Scalar {
     if index == GENESIS_INDEX {
         Scalar::from(42u64)
+    } else if index == FAUCET_INDEX {
+        Scalar::from(crate::core::genesis::FAUCET_RESERVE_BLINDING)
     } else {
         keystore.derive_blinding(index)
     }

@@ -9,6 +9,7 @@ use crate::core::storage::Storage;
 use crate::core::transaction::Transaction;
 use crate::p2p::server::P2pServer;
 use super::explorer;
+use super::faucet::{self, FaucetState};
 
 pub struct ApiServer;
 
@@ -25,6 +26,11 @@ impl ApiServer {
         let p2p_filter = warp::any().map(move || Arc::clone(&p2p_server));
         let storage_filter = warp::any().map(move || Arc::clone(&storage));
         let mempool_filter_2 = mempool_filter.clone();
+
+        let faucet_state = Arc::new(FaucetState::new());
+        let faucet_filter = warp::any().map(move || Arc::clone(&faucet_state));
+        let faucet_filter_2 = faucet_filter.clone();
+        let mempool_filter_3 = mempool_filter.clone();
 
         // Caps request body size for the two write endpoints - now that this
         // API is meant to be internet-facing, an unbounded body from an
@@ -98,8 +104,29 @@ impl ApiServer {
         let search_route = warp::get()
             .and(warp::path!("v1" / "search"))
             .and(warp::query::<explorer::SearchQuery>())
-            .and(chain_filter)
+            .and(chain_filter.clone())
             .and_then(explorer::handle_search);
+
+        // POST /v1/faucet - devnet-only repeatable faucet (see api/faucet.rs),
+        // step 1: server builds a slate paying the requester from its own
+        // faucet reserve, hands back the slate JSON to respond to.
+        let faucet_request_route = warp::post()
+            .and(warp::path!("v1" / "faucet"))
+            .and(warp::body::content_length_limit(MAX_BODY_SIZE))
+            .and(warp::body::json())
+            .and(faucet_filter)
+            .and(chain_filter)
+            .and_then(faucet::handle_faucet_request);
+
+        // POST /v1/faucet/complete - step 2: server finalizes with the
+        // requester's response and broadcasts the resulting transaction.
+        let faucet_complete_route = warp::post()
+            .and(warp::path!("v1" / "faucet" / "complete"))
+            .and(warp::body::content_length_limit(MAX_BODY_SIZE))
+            .and(warp::body::json())
+            .and(faucet_filter_2)
+            .and(mempool_filter_3)
+            .and_then(faucet::handle_faucet_complete);
 
         let routes = tx_route
             .or(stake_route)
@@ -111,6 +138,8 @@ impl ApiServer {
             .or(validators_route)
             .or(transactions_route)
             .or(search_route)
+            .or(faucet_request_route)
+            .or(faucet_complete_route)
             .with(
                 warp::cors()
                     .allow_any_origin()

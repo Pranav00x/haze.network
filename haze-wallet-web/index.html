@@ -163,7 +163,7 @@
 
 <script type="module">
 import init, {
-  generate_keystore, wallet_store_new, claim_genesis, reconcile_wallet_store,
+  generate_keystore, wallet_store_new, reconcile_wallet_store,
   wallet_balance, wallet_pending_balance, plan_send, commit_send,
   create_send_slate, respond_to_slate, finalize_slate, commit_receive, commit_slate_send
 } from './pkg/haze_core.js';
@@ -435,19 +435,61 @@ function renderDashboard() {
       </div>
 
       <div class="action-row">
-        <button class="btn-ghost btn-small" id="claim-genesis-btn">Claim genesis (devnet testing)</button>
+        <button class="btn-ghost btn-small" id="faucet-btn">Get devnet funds</button>
         <button class="btn-ghost btn-small" id="lock-btn">Lock wallet</button>
       </div>
       <div id="dash-message"></div>
     </div>
   `;
 
-  document.getElementById("claim-genesis-btn").addEventListener("click", async () => {
-    let storeBytes = loadWalletStoreBytes();
-    storeBytes = claim_genesis(storeBytes);
-    saveWalletStoreBytes(storeBytes);
-    document.getElementById("dash-message").innerHTML = `<div class="message success">Claimed genesis output. Refreshing balance&hellip;</div>`;
-    await refreshBalance();
+  // Requests funds from the node's own repeatable faucet (see src/api/faucet.rs)
+  // - unlike the old single-use claim-genesis output, this can be used as many
+  // times as needed, capped per request server-side. Runs the same two-party
+  // slate protocol as a normal peer payment, just fully automated: the node
+  // plays sender, this wallet plays receiver, both steps happen in one click.
+  document.getElementById("faucet-btn").addEventListener("click", async () => {
+    const messageEl = document.getElementById("dash-message");
+    const btn = document.getElementById("faucet-btn");
+    btn.disabled = true;
+    messageEl.innerHTML = `<div class="message success">Requesting devnet funds&hellip;</div>`;
+
+    try {
+      const FAUCET_AMOUNT = 500n;
+      const reqRes = await fetch(API_BASE + "/v1/faucet", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: Number(FAUCET_AMOUNT) }),
+      });
+      const reqJson = await reqRes.json();
+      if (!reqRes.ok) {
+        messageEl.innerHTML = `<div class="message error">Faucet unavailable: ${reqJson.error || reqRes.status}</div>`;
+        return;
+      }
+
+      const responded = respond_to_slate(sessionKeystoreBytes, reqJson.slate_json);
+      sessionKeystoreBytes = responded.updated_keystore_bytes;
+      let storeBytes = loadWalletStoreBytes();
+      storeBytes = commit_receive(storeBytes, responded.receiver_output);
+      saveWalletStoreBytes(storeBytes);
+
+      const completeRes = await fetch(API_BASE + "/v1/faucet/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ response_slate_json: responded.response_slate_json }),
+      });
+      const completeJson = await completeRes.json();
+      if (!completeRes.ok) {
+        messageEl.innerHTML = `<div class="message error">Faucet failed to broadcast: ${completeJson.error || completeRes.status}</div>`;
+        return;
+      }
+
+      messageEl.innerHTML = `<div class="message success">Received ${FAUCET_AMOUNT}. Refreshing balance&hellip;</div>`;
+      await refreshBalance();
+    } catch (e) {
+      messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+    } finally {
+      btn.disabled = false;
+    }
   });
 
   document.getElementById("lock-btn").addEventListener("click", () => {

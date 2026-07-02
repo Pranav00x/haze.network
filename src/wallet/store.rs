@@ -12,6 +12,11 @@ const STORE_FILE: &str = "wallet_data/utxos.dat";
 /// Reserved index used for the well-known genesis output, never allocated by Keystore::allocate_index.
 pub const GENESIS_INDEX: u32 = u32::MAX;
 
+/// Reserved index used for the node's own faucet reserve output (see
+/// src/core/genesis.rs's FAUCET_RESERVE_BLINDING and src/api/faucet.rs) -
+/// distinct from GENESIS_INDEX so a keystore could in principle hold both.
+pub const FAUCET_INDEX: u32 = u32::MAX - 1;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OutputStatus {
     Pending,
