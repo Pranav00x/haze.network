@@ -764,6 +764,15 @@ async function refreshAll() {
 
 refreshAll();
 setInterval(refreshAll, 5000);
+
+// Deep-link support: ?q=<hex> runs the same search a user would type in by
+// hand, so other pages (e.g. the wallet, after broadcasting) can link
+// straight to a transaction/block/commitment instead of just saying "done".
+const deepLinkQuery = new URLSearchParams(window.location.search).get("q");
+if (deepLinkQuery) {
+  document.getElementById("search-input").value = deepLinkQuery;
+  runSearch(deepLinkQuery);
+}
 </script>
 </body>
 </html>

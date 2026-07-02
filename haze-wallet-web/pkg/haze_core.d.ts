@@ -1,6 +1,31 @@
 /* tslint:disable */
 /* eslint-disable */
 
+export class WasmCreateSlateResult {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * Keep this locally - never share it. Required by `finalize_slate` later.
+     */
+    pending_slate_bytes: Uint8Array;
+    /**
+     * Hand this to the recipient (out-of-band: chat, email, QR, etc).
+     */
+    slate_json: string;
+    updated_keystore_bytes: Uint8Array;
+}
+
+export class WasmFinalizedTx {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    get change(): WasmOwnedOutput | undefined;
+    set change(value: WasmOwnedOutput | null | undefined);
+    spent_commitments_hex: string[];
+    transaction_json: string;
+}
+
 export class WasmOwnedOutput {
     private constructor();
     free(): void;
@@ -8,6 +33,18 @@ export class WasmOwnedOutput {
     commitment_hex: string;
     index: number;
     value: bigint;
+}
+
+export class WasmRespondResult {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    receiver_output: WasmOwnedOutput;
+    /**
+     * Send this back to the original sender.
+     */
+    response_slate_json: string;
+    updated_keystore_bytes: Uint8Array;
 }
 
 export class WasmSendPlan {
@@ -30,10 +67,39 @@ export class WasmSendPlan {
 export function claim_genesis(store_bytes: Uint8Array): Uint8Array;
 
 /**
+ * Receiver-side commit: adds the output from `respond_to_slate` to the
+ * store as Pending. Optimistic (same tradeoff as the CLI) - there's no
+ * callback confirming the sender actually broadcasts, so this is applied
+ * right after responding rather than after on-chain confirmation.
+ */
+export function commit_receive(store_bytes: Uint8Array, output: WasmOwnedOutput): Uint8Array;
+
+/**
  * Applies a previously-built SendPlan's effects to the wallet store. Must only be
  * called after the transaction was successfully broadcast.
  */
 export function commit_send(store_bytes: Uint8Array, spent_commitments_hex: string[], dest: WasmOwnedOutput, change?: WasmOwnedOutput | null): Uint8Array;
+
+/**
+ * Sender-side commit: applies a finalized+broadcast slate payment's effects
+ * (spent inputs, optional change) to the store. Must only be called after
+ * the transaction was successfully broadcast.
+ */
+export function commit_slate_send(store_bytes: Uint8Array, spent_commitments_hex: string[], change?: WasmOwnedOutput | null): Uint8Array;
+
+/**
+ * Sender step 1: builds a slate paying a different wallet `amount`. Returns
+ * the slate JSON to hand to the recipient and the private pending-slate
+ * bytes to keep locally until `finalize_slate`.
+ */
+export function create_send_slate(keystore_bytes: Uint8Array, store_bytes: Uint8Array, amount: bigint, fee: bigint): WasmCreateSlateResult;
+
+/**
+ * Sender step 2 (final): combines the local pending slate with the
+ * recipient's response into the final Transaction. The caller must POST
+ * `transaction_json` itself, then call `commit_slate_send` only on success.
+ */
+export function finalize_slate(pending_slate_bytes: Uint8Array, response_slate_json: string): WasmFinalizedTx;
 
 /**
  * Generates a fresh keystore (random seed, via the browser's crypto.getRandomValues
@@ -57,6 +123,13 @@ export function plan_send(keystore_bytes: Uint8Array, store_bytes: Uint8Array, a
 export function reconcile_wallet_store(store_bytes: Uint8Array, chain_utxo_commitments_hex: string[]): Uint8Array;
 
 /**
+ * Receiver step: fills in a slate received from a sender. Returns the
+ * response JSON to send back, plus the output info the caller should add
+ * to its own store as Pending.
+ */
+export function respond_to_slate(keystore_bytes: Uint8Array, slate_json: string): WasmRespondResult;
+
+/**
  * Confirmed (safely spendable) balance.
  */
 export function wallet_balance(store_bytes: Uint8Array): bigint;
@@ -75,32 +148,58 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly __wbg_get_wasmcreateslateresult_pending_slate_bytes: (a: number) => [number, number];
+    readonly __wbg_get_wasmcreateslateresult_slate_json: (a: number) => [number, number];
+    readonly __wbg_get_wasmcreateslateresult_updated_keystore_bytes: (a: number) => [number, number];
+    readonly __wbg_get_wasmfinalizedtx_change: (a: number) => number;
+    readonly __wbg_get_wasmfinalizedtx_spent_commitments_hex: (a: number) => [number, number];
+    readonly __wbg_get_wasmfinalizedtx_transaction_json: (a: number) => [number, number];
     readonly __wbg_get_wasmownedoutput_commitment_hex: (a: number) => [number, number];
     readonly __wbg_get_wasmownedoutput_index: (a: number) => number;
     readonly __wbg_get_wasmownedoutput_value: (a: number) => bigint;
+    readonly __wbg_get_wasmrespondresult_receiver_output: (a: number) => number;
+    readonly __wbg_get_wasmrespondresult_updated_keystore_bytes: (a: number) => [number, number];
     readonly __wbg_get_wasmsendplan_change: (a: number) => number;
-    readonly __wbg_get_wasmsendplan_dest: (a: number) => number;
     readonly __wbg_get_wasmsendplan_spent_commitments_hex: (a: number) => [number, number];
     readonly __wbg_get_wasmsendplan_transaction_json: (a: number) => [number, number];
     readonly __wbg_get_wasmsendplan_updated_keystore_bytes: (a: number) => [number, number];
+    readonly __wbg_set_wasmcreateslateresult_pending_slate_bytes: (a: number, b: number, c: number) => void;
+    readonly __wbg_set_wasmcreateslateresult_slate_json: (a: number, b: number, c: number) => void;
+    readonly __wbg_set_wasmcreateslateresult_updated_keystore_bytes: (a: number, b: number, c: number) => void;
+    readonly __wbg_set_wasmfinalizedtx_change: (a: number, b: number) => void;
+    readonly __wbg_set_wasmfinalizedtx_spent_commitments_hex: (a: number, b: number, c: number) => void;
+    readonly __wbg_set_wasmfinalizedtx_transaction_json: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmownedoutput_commitment_hex: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmownedoutput_index: (a: number, b: number) => void;
     readonly __wbg_set_wasmownedoutput_value: (a: number, b: bigint) => void;
+    readonly __wbg_set_wasmrespondresult_receiver_output: (a: number, b: number) => void;
+    readonly __wbg_set_wasmrespondresult_updated_keystore_bytes: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmsendplan_change: (a: number, b: number) => void;
-    readonly __wbg_set_wasmsendplan_dest: (a: number, b: number) => void;
     readonly __wbg_set_wasmsendplan_spent_commitments_hex: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmsendplan_transaction_json: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmsendplan_updated_keystore_bytes: (a: number, b: number, c: number) => void;
+    readonly __wbg_wasmcreateslateresult_free: (a: number, b: number) => void;
+    readonly __wbg_wasmfinalizedtx_free: (a: number, b: number) => void;
     readonly __wbg_wasmownedoutput_free: (a: number, b: number) => void;
+    readonly __wbg_wasmrespondresult_free: (a: number, b: number) => void;
     readonly __wbg_wasmsendplan_free: (a: number, b: number) => void;
     readonly claim_genesis: (a: number, b: number) => [number, number, number, number];
+    readonly commit_receive: (a: number, b: number, c: number) => [number, number, number, number];
     readonly commit_send: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
+    readonly commit_slate_send: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly create_send_slate: (a: number, b: number, c: number, d: number, e: bigint, f: bigint) => [number, number, number];
+    readonly finalize_slate: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly generate_keystore: () => [number, number];
     readonly plan_send: (a: number, b: number, c: number, d: number, e: bigint, f: bigint) => [number, number, number];
     readonly reconcile_wallet_store: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly respond_to_slate: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly wallet_balance: (a: number, b: number) => [bigint, number, number];
     readonly wallet_pending_balance: (a: number, b: number) => [bigint, number, number];
     readonly wallet_store_new: () => [number, number];
+    readonly __wbg_get_wasmsendplan_dest: (a: number) => number;
+    readonly __wbg_set_wasmrespondresult_response_slate_json: (a: number, b: number, c: number) => void;
+    readonly __wbg_get_wasmrespondresult_response_slate_json: (a: number) => [number, number];
+    readonly __wbg_set_wasmsendplan_dest: (a: number, b: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;

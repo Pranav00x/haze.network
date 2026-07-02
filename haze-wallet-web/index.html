@@ -95,6 +95,20 @@
     outline: none;
   }
   input:focus { border-color: var(--mist); }
+  textarea {
+    width: 100%;
+    background: var(--fog-2);
+    border: 1px solid var(--fog-3);
+    color: var(--ink);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    border-radius: 3px;
+    padding: 12px 14px;
+    outline: none;
+    resize: vertical;
+    min-height: 84px;
+  }
+  textarea:focus { border-color: var(--mist); }
 
   button {
     font-family: var(--font-body);
@@ -150,7 +164,8 @@
 <script type="module">
 import init, {
   generate_keystore, wallet_store_new, claim_genesis, reconcile_wallet_store,
-  wallet_balance, wallet_pending_balance, plan_send, commit_send
+  wallet_balance, wallet_pending_balance, plan_send, commit_send,
+  create_send_slate, respond_to_slate, finalize_slate, commit_receive, commit_slate_send
 } from './pkg/haze_core.js';
 
 // ---------- Node API base (same convention as the explorer) ----------
@@ -233,6 +248,26 @@ function saveWalletStoreBytes(bytes) {
   localStorage.setItem(STORE_STORAGE_KEY, toB64(bytes));
 }
 
+// ---------- pending outgoing slate (two-party payments) ----------
+// Only one in-flight outgoing slate at a time, same convention as the CLI
+// (create_slate/finalize_slate are a matched pair - starting a second
+// payment before finishing the first would orphan the first's change
+// output). PendingSlate itself carries no amount, so it's stored alongside.
+const PENDING_SLATE_STORAGE_KEY = "hazePendingSlate";
+
+function savePendingSlate(bytes, amount) {
+  localStorage.setItem(PENDING_SLATE_STORAGE_KEY, JSON.stringify({ bytes: toB64(bytes), amount: amount.toString() }));
+}
+function loadPendingSlate() {
+  const raw = localStorage.getItem(PENDING_SLATE_STORAGE_KEY);
+  if (!raw) return null;
+  const parsed = JSON.parse(raw);
+  return { bytes: fromB64(parsed.bytes), amount: parsed.amount };
+}
+function clearPendingSlate() {
+  localStorage.removeItem(PENDING_SLATE_STORAGE_KEY);
+}
+
 // In-memory only for this session - never written back to localStorage in plaintext.
 let sessionKeystoreBytes = null;
 
@@ -298,6 +333,7 @@ function renderLockScreen() {
       if (window.confirm("This deletes the wallet stored in this browser. This cannot be undone. Continue?")) {
         localStorage.removeItem(KEYSTORE_STORAGE_KEY);
         localStorage.removeItem(STORE_STORAGE_KEY);
+        clearPendingSlate();
         renderLockScreen();
       }
     });
@@ -327,6 +363,15 @@ function bytesToHex(byteArray) {
   return byteArray.map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
+// Links straight to the broadcast tx's kernel in the node's embedded
+// explorer (served at the node's own root), instead of leaving the user
+// with just a "broadcast successfully" message and no way to see it.
+function explorerLinkForTx(transactionJson) {
+  const tx = JSON.parse(transactionJson);
+  const excessHex = bytesToHex(tx.kernels[0].excess);
+  return `${API_BASE}/?q=${excessHex}`;
+}
+
 function renderDashboard() {
   const app = document.getElementById("app");
   app.innerHTML = `
@@ -349,6 +394,44 @@ function renderDashboard() {
         <input type="number" id="send-amount" min="1" />
         <button class="btn-primary" id="send-btn">Send</button>
         <div id="send-message"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Pay someone</h2>
+        <div class="sub">Builds a payment slate for another wallet. Send them the text below (chat, email, anywhere) - they respond, then you paste their response into "Complete a payment" to broadcast it. Fee is fixed at 5.</div>
+        <label>Amount</label>
+        <input type="number" id="pay-amount" min="1" />
+        <button class="btn-primary" id="pay-btn">Create payment slate</button>
+        <div id="pay-message"></div>
+        <div id="pay-output" style="display:none;">
+          <label>Slate to send</label>
+          <textarea id="pay-slate-out" readonly></textarea>
+          <button class="btn-ghost btn-small" id="pay-copy-btn" style="margin-top:10px;">Copy</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Receive a payment</h2>
+        <div class="sub">Paste the slate someone sent you. This builds your response - send it back to them so they can complete and broadcast the payment.</div>
+        <label>Incoming slate</label>
+        <textarea id="receive-slate-in" placeholder="Paste the slate JSON here"></textarea>
+        <button class="btn-primary" id="receive-btn">Respond</button>
+        <div id="receive-message"></div>
+        <div id="receive-output" style="display:none;">
+          <label>Response to send back</label>
+          <textarea id="receive-slate-out" readonly></textarea>
+          <button class="btn-ghost btn-small" id="receive-copy-btn" style="margin-top:10px;">Copy</button>
+        </div>
+      </div>
+
+      <div class="panel" id="complete-panel" style="display:none;">
+        <h2>Complete a payment</h2>
+        <div class="sub" id="complete-sub"></div>
+        <label>Their response</label>
+        <textarea id="complete-slate-in" placeholder="Paste their response slate JSON here"></textarea>
+        <button class="btn-primary" id="complete-btn">Finalize &amp; broadcast</button>
+        <div id="complete-message"></div>
+        <span class="toggle-link" id="discard-pending-link">Discard this pending payment</span>
       </div>
 
       <div class="action-row">
@@ -401,11 +484,144 @@ function renderDashboard() {
       const updatedStoreBytes = commit_send(storeBytes, plan.spent_commitments_hex, plan.dest, plan.change);
       saveWalletStoreBytes(updatedStoreBytes);
 
-      messageEl.innerHTML = `<div class="message success">Broadcast successfully. Balance will update once mined.</div>`;
+      const link = explorerLinkForTx(plan.transaction_json);
+      messageEl.innerHTML = `<div class="message success">Broadcast successfully. Balance will update once mined. <a href="${link}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">View on explorer &rarr;</a></div>`;
       amountInput.value = "";
       await refreshBalance();
     } catch (e) {
       messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+    }
+  });
+
+  // ---------- two-party payments ----------
+  function renderCompletePanel() {
+    const pending = loadPendingSlate();
+    const panel = document.getElementById("complete-panel");
+    if (!pending) {
+      panel.style.display = "none";
+      return;
+    }
+    panel.style.display = "";
+    document.getElementById("complete-sub").textContent =
+      `You have a pending outgoing payment of ${pending.amount}, waiting on the recipient's response.`;
+  }
+  renderCompletePanel();
+
+  document.getElementById("pay-btn").addEventListener("click", () => {
+    const amountInput = document.getElementById("pay-amount");
+    const amount = BigInt(amountInput.value || "0");
+    const messageEl = document.getElementById("pay-message");
+    if (amount <= 0n) {
+      messageEl.innerHTML = `<div class="message error">Enter an amount.</div>`;
+      return;
+    }
+    if (loadPendingSlate()) {
+      messageEl.innerHTML = `<div class="message error">You already have a pending payment awaiting a response. Complete or discard it first.</div>`;
+      return;
+    }
+
+    try {
+      const storeBytes = loadWalletStoreBytes();
+      const result = create_send_slate(sessionKeystoreBytes, storeBytes, amount, 5n);
+
+      sessionKeystoreBytes = result.updated_keystore_bytes;
+      savePendingSlate(result.pending_slate_bytes, amount);
+
+      document.getElementById("pay-slate-out").value = result.slate_json;
+      document.getElementById("pay-output").style.display = "";
+      messageEl.innerHTML = `<div class="message success">Slate created. Send the text below to the recipient, then use "Complete a payment" once they respond.</div>`;
+      amountInput.value = "";
+      renderCompletePanel();
+    } catch (e) {
+      messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+    }
+  });
+
+  document.getElementById("pay-copy-btn").addEventListener("click", async () => {
+    await navigator.clipboard.writeText(document.getElementById("pay-slate-out").value);
+    document.getElementById("pay-copy-btn").textContent = "Copied!";
+    setTimeout(() => { document.getElementById("pay-copy-btn").textContent = "Copy"; }, 1500);
+  });
+
+  document.getElementById("receive-btn").addEventListener("click", () => {
+    const input = document.getElementById("receive-slate-in").value.trim();
+    const messageEl = document.getElementById("receive-message");
+    if (!input) {
+      messageEl.innerHTML = `<div class="message error">Paste the incoming slate first.</div>`;
+      return;
+    }
+
+    try {
+      const result = respond_to_slate(sessionKeystoreBytes, input);
+
+      sessionKeystoreBytes = result.updated_keystore_bytes;
+      let storeBytes = loadWalletStoreBytes();
+      storeBytes = commit_receive(storeBytes, result.receiver_output);
+      saveWalletStoreBytes(storeBytes);
+
+      document.getElementById("receive-slate-out").value = result.response_slate_json;
+      document.getElementById("receive-output").style.display = "";
+      messageEl.innerHTML = `<div class="message success">Received ${result.receiver_output.value}. Send the response below back to the sender.</div>`;
+      document.getElementById("receive-slate-in").value = "";
+      refreshBalance();
+    } catch (e) {
+      messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+    }
+  });
+
+  document.getElementById("receive-copy-btn").addEventListener("click", async () => {
+    await navigator.clipboard.writeText(document.getElementById("receive-slate-out").value);
+    document.getElementById("receive-copy-btn").textContent = "Copied!";
+    setTimeout(() => { document.getElementById("receive-copy-btn").textContent = "Copy"; }, 1500);
+  });
+
+  document.getElementById("complete-btn").addEventListener("click", async () => {
+    const input = document.getElementById("complete-slate-in").value.trim();
+    const messageEl = document.getElementById("complete-message");
+    const pending = loadPendingSlate();
+    if (!pending) {
+      messageEl.innerHTML = `<div class="message error">No pending payment found.</div>`;
+      return;
+    }
+    if (!input) {
+      messageEl.innerHTML = `<div class="message error">Paste the recipient's response first.</div>`;
+      return;
+    }
+
+    try {
+      const finalized = finalize_slate(pending.bytes, input);
+
+      const res = await fetch(API_BASE + "/v1/transactions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: finalized.transaction_json,
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        messageEl.innerHTML = `<div class="message error">Node rejected transaction: ${text}</div>`;
+        return;
+      }
+
+      let storeBytes = loadWalletStoreBytes();
+      storeBytes = commit_slate_send(storeBytes, finalized.spent_commitments_hex, finalized.change);
+      saveWalletStoreBytes(storeBytes);
+      clearPendingSlate();
+
+      const link = explorerLinkForTx(finalized.transaction_json);
+      messageEl.innerHTML = `<div class="message success">Broadcast successfully. Balance will update once mined. <a href="${link}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">View on explorer &rarr;</a></div>`;
+      document.getElementById("complete-slate-in").value = "";
+      renderCompletePanel();
+      await refreshBalance();
+    } catch (e) {
+      messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+    }
+  });
+
+  document.getElementById("discard-pending-link").addEventListener("click", () => {
+    if (window.confirm("Discard this pending payment? The recipient's response (if they've already sent one) will no longer be usable.")) {
+      clearPendingSlate();
+      renderCompletePanel();
     }
   });
 

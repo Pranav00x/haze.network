@@ -15,6 +15,7 @@ use crate::crypto::pedersen::Commitment;
 use crate::wallet::keystore::Keystore;
 use crate::wallet::store::{WalletStore, OutputStatus, GENESIS_INDEX};
 use crate::wallet::planner::{self, PlanError};
+use crate::wallet::slate::{self, PendingSlate, Slate};
 
 #[wasm_bindgen(getter_with_clone)]
 #[derive(Clone)]
@@ -149,6 +150,140 @@ pub fn commit_send(
     let dest_commitment = Commitment::from_hex(&dest.commitment_hex)
         .ok_or_else(|| js_err(format!("invalid commitment hex: {}", dest.commitment_hex)))?;
     store.add_output(dest.index, dest.value, dest_commitment, OutputStatus::Pending);
+
+    if let Some(change) = change {
+        let change_commitment = Commitment::from_hex(&change.commitment_hex)
+            .ok_or_else(|| js_err(format!("invalid commitment hex: {}", change.commitment_hex)))?;
+        store.add_output(change.index, change.value, change_commitment, OutputStatus::Pending);
+    }
+
+    Ok(store.to_bytes())
+}
+
+// ---------- two-party ("slate") payments, mirroring src/wallet/cli.rs's
+// pay/receive/complete - see src/wallet/slate.rs for the protocol itself.
+// Slates cross the JS boundary as JSON (to hand to the other party, out of
+// band); PendingSlate crosses as opaque bytes (JS persists it locally, same
+// pattern as Keystore/WalletStore, until `finalize_slate` consumes it).
+
+#[wasm_bindgen(getter_with_clone)]
+pub struct WasmCreateSlateResult {
+    /// Hand this to the recipient (out-of-band: chat, email, QR, etc).
+    pub slate_json: String,
+    /// Keep this locally - never share it. Required by `finalize_slate` later.
+    pub pending_slate_bytes: Vec<u8>,
+    pub updated_keystore_bytes: Vec<u8>,
+}
+
+#[wasm_bindgen(getter_with_clone)]
+pub struct WasmRespondResult {
+    /// Send this back to the original sender.
+    pub response_slate_json: String,
+    pub receiver_output: WasmOwnedOutput,
+    pub updated_keystore_bytes: Vec<u8>,
+}
+
+#[wasm_bindgen(getter_with_clone)]
+pub struct WasmFinalizedTx {
+    pub transaction_json: String,
+    pub spent_commitments_hex: Vec<String>,
+    pub change: Option<WasmOwnedOutput>,
+}
+
+/// Sender step 1: builds a slate paying a different wallet `amount`. Returns
+/// the slate JSON to hand to the recipient and the private pending-slate
+/// bytes to keep locally until `finalize_slate`.
+#[wasm_bindgen]
+pub fn create_send_slate(keystore_bytes: Vec<u8>, store_bytes: Vec<u8>, amount: u64, fee: u64) -> Result<WasmCreateSlateResult, JsValue> {
+    let mut keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
+    let store = WalletStore::from_bytes(&store_bytes).ok_or_else(|| js_err("invalid wallet store bytes"))?;
+
+    let (built_slate, pending) = slate::create_slate(&mut keystore, &store, amount, fee)
+        .map_err(|e| match e {
+            PlanError::InsufficientBalance { have, need } => {
+                js_err(format!("insufficient balance: have {}, need {}", have, need))
+            }
+        })?;
+
+    let slate_json = serde_json::to_string(&built_slate).map_err(|_| js_err("failed to serialize slate"))?;
+    let pending_slate_bytes = bincode::serialize(&pending).map_err(|_| js_err("failed to serialize pending slate"))?;
+
+    Ok(WasmCreateSlateResult {
+        slate_json,
+        pending_slate_bytes,
+        updated_keystore_bytes: keystore.to_bytes(),
+    })
+}
+
+/// Receiver step: fills in a slate received from a sender. Returns the
+/// response JSON to send back, plus the output info the caller should add
+/// to its own store as Pending.
+#[wasm_bindgen]
+pub fn respond_to_slate(keystore_bytes: Vec<u8>, slate_json: String) -> Result<WasmRespondResult, JsValue> {
+    let mut keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
+    let incoming: Slate = serde_json::from_str(&slate_json).map_err(|_| js_err("invalid slate JSON"))?;
+
+    let (response, owned_output) = slate::respond_to_slate(&mut keystore, &incoming);
+    let response_slate_json = serde_json::to_string(&response).map_err(|_| js_err("failed to serialize response slate"))?;
+    let receiver_output = WasmOwnedOutput {
+        index: owned_output.index,
+        value: owned_output.value,
+        commitment_hex: owned_output.commitment.to_hex(),
+    };
+
+    Ok(WasmRespondResult {
+        response_slate_json,
+        receiver_output,
+        updated_keystore_bytes: keystore.to_bytes(),
+    })
+}
+
+/// Sender step 2 (final): combines the local pending slate with the
+/// recipient's response into the final Transaction. The caller must POST
+/// `transaction_json` itself, then call `commit_slate_send` only on success.
+#[wasm_bindgen]
+pub fn finalize_slate(pending_slate_bytes: Vec<u8>, response_slate_json: String) -> Result<WasmFinalizedTx, JsValue> {
+    let pending: PendingSlate = bincode::deserialize(&pending_slate_bytes).map_err(|_| js_err("invalid pending slate bytes"))?;
+    let response: Slate = serde_json::from_str(&response_slate_json).map_err(|_| js_err("invalid response slate JSON"))?;
+
+    let transaction = slate::finalize_slate(&pending, &response)
+        .map_err(|_| js_err("incomplete response - has the recipient responded to this slate yet?"))?;
+    let transaction_json = serde_json::to_string(&transaction).map_err(|_| js_err("failed to serialize transaction"))?;
+
+    let spent_commitments_hex = pending.spent_commitments.iter().map(|c| c.to_hex()).collect();
+    let change = pending.change.as_ref().map(|c| WasmOwnedOutput {
+        index: c.index,
+        value: c.value,
+        commitment_hex: c.output.commitment.to_hex(),
+    });
+
+    Ok(WasmFinalizedTx { transaction_json, spent_commitments_hex, change })
+}
+
+/// Receiver-side commit: adds the output from `respond_to_slate` to the
+/// store as Pending. Optimistic (same tradeoff as the CLI) - there's no
+/// callback confirming the sender actually broadcasts, so this is applied
+/// right after responding rather than after on-chain confirmation.
+#[wasm_bindgen]
+pub fn commit_receive(store_bytes: Vec<u8>, output: WasmOwnedOutput) -> Result<Vec<u8>, JsValue> {
+    let mut store = WalletStore::from_bytes(&store_bytes).ok_or_else(|| js_err("invalid wallet store bytes"))?;
+    let commitment = Commitment::from_hex(&output.commitment_hex)
+        .ok_or_else(|| js_err(format!("invalid commitment hex: {}", output.commitment_hex)))?;
+    store.add_output(output.index, output.value, commitment, OutputStatus::Pending);
+    Ok(store.to_bytes())
+}
+
+/// Sender-side commit: applies a finalized+broadcast slate payment's effects
+/// (spent inputs, optional change) to the store. Must only be called after
+/// the transaction was successfully broadcast.
+#[wasm_bindgen]
+pub fn commit_slate_send(store_bytes: Vec<u8>, spent_commitments_hex: Vec<String>, change: Option<WasmOwnedOutput>) -> Result<Vec<u8>, JsValue> {
+    let mut store = WalletStore::from_bytes(&store_bytes).ok_or_else(|| js_err("invalid wallet store bytes"))?;
+
+    for hex in &spent_commitments_hex {
+        let commitment = Commitment::from_hex(hex).ok_or_else(|| js_err(format!("invalid commitment hex: {}", hex)))?;
+        store.mark_spent(&commitment);
+    }
 
     if let Some(change) = change {
         let change_commitment = Commitment::from_hex(&change.commitment_hex)

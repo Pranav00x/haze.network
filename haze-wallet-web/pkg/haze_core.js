@@ -1,5 +1,164 @@
 /* @ts-self-types="./haze_core.d.ts" */
 
+export class WasmCreateSlateResult {
+    static __wrap(ptr) {
+        const obj = Object.create(WasmCreateSlateResult.prototype);
+        obj.__wbg_ptr = ptr;
+        WasmCreateSlateResultFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmCreateSlateResultFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmcreateslateresult_free(ptr, 0);
+    }
+    /**
+     * Keep this locally - never share it. Required by `finalize_slate` later.
+     * @returns {Uint8Array}
+     */
+    get pending_slate_bytes() {
+        const ret = wasm.__wbg_get_wasmcreateslateresult_pending_slate_bytes(this.__wbg_ptr);
+        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v1;
+    }
+    /**
+     * Hand this to the recipient (out-of-band: chat, email, QR, etc).
+     * @returns {string}
+     */
+    get slate_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.__wbg_get_wasmcreateslateresult_slate_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {Uint8Array}
+     */
+    get updated_keystore_bytes() {
+        const ret = wasm.__wbg_get_wasmcreateslateresult_updated_keystore_bytes(this.__wbg_ptr);
+        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v1;
+    }
+    /**
+     * Keep this locally - never share it. Required by `finalize_slate` later.
+     * @param {Uint8Array} arg0
+     */
+    set pending_slate_bytes(arg0) {
+        const ptr0 = passArray8ToWasm0(arg0, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_wasmcreateslateresult_pending_slate_bytes(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * Hand this to the recipient (out-of-band: chat, email, QR, etc).
+     * @param {string} arg0
+     */
+    set slate_json(arg0) {
+        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_wasmcreateslateresult_slate_json(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * @param {Uint8Array} arg0
+     */
+    set updated_keystore_bytes(arg0) {
+        const ptr0 = passArray8ToWasm0(arg0, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_wasmcreateslateresult_updated_keystore_bytes(this.__wbg_ptr, ptr0, len0);
+    }
+}
+if (Symbol.dispose) WasmCreateSlateResult.prototype[Symbol.dispose] = WasmCreateSlateResult.prototype.free;
+
+export class WasmFinalizedTx {
+    static __wrap(ptr) {
+        const obj = Object.create(WasmFinalizedTx.prototype);
+        obj.__wbg_ptr = ptr;
+        WasmFinalizedTxFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmFinalizedTxFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmfinalizedtx_free(ptr, 0);
+    }
+    /**
+     * @returns {WasmOwnedOutput | undefined}
+     */
+    get change() {
+        const ret = wasm.__wbg_get_wasmfinalizedtx_change(this.__wbg_ptr);
+        return ret === 0 ? undefined : WasmOwnedOutput.__wrap(ret);
+    }
+    /**
+     * @returns {string[]}
+     */
+    get spent_commitments_hex() {
+        const ret = wasm.__wbg_get_wasmfinalizedtx_spent_commitments_hex(this.__wbg_ptr);
+        var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {string}
+     */
+    get transaction_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.__wbg_get_wasmfinalizedtx_transaction_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @param {WasmOwnedOutput | null} [arg0]
+     */
+    set change(arg0) {
+        let ptr0 = 0;
+        if (!isLikeNone(arg0)) {
+            _assertClass(arg0, WasmOwnedOutput);
+            ptr0 = arg0.__destroy_into_raw();
+        }
+        wasm.__wbg_set_wasmfinalizedtx_change(this.__wbg_ptr, ptr0);
+    }
+    /**
+     * @param {string[]} arg0
+     */
+    set spent_commitments_hex(arg0) {
+        const ptr0 = passArrayJsValueToWasm0(arg0, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_wasmfinalizedtx_spent_commitments_hex(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * @param {string} arg0
+     */
+    set transaction_json(arg0) {
+        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_wasmfinalizedtx_transaction_json(this.__wbg_ptr, ptr0, len0);
+    }
+}
+if (Symbol.dispose) WasmFinalizedTx.prototype[Symbol.dispose] = WasmFinalizedTx.prototype.free;
+
 export class WasmOwnedOutput {
     static __wrap(ptr) {
         const obj = Object.create(WasmOwnedOutput.prototype);
@@ -68,6 +227,83 @@ export class WasmOwnedOutput {
     }
 }
 if (Symbol.dispose) WasmOwnedOutput.prototype[Symbol.dispose] = WasmOwnedOutput.prototype.free;
+
+export class WasmRespondResult {
+    static __wrap(ptr) {
+        const obj = Object.create(WasmRespondResult.prototype);
+        obj.__wbg_ptr = ptr;
+        WasmRespondResultFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmRespondResultFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmrespondresult_free(ptr, 0);
+    }
+    /**
+     * @returns {WasmOwnedOutput}
+     */
+    get receiver_output() {
+        const ret = wasm.__wbg_get_wasmrespondresult_receiver_output(this.__wbg_ptr);
+        return WasmOwnedOutput.__wrap(ret);
+    }
+    /**
+     * Send this back to the original sender.
+     * @returns {string}
+     */
+    get response_slate_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.__wbg_get_wasmrespondresult_response_slate_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {Uint8Array}
+     */
+    get updated_keystore_bytes() {
+        const ret = wasm.__wbg_get_wasmrespondresult_updated_keystore_bytes(this.__wbg_ptr);
+        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v1;
+    }
+    /**
+     * @param {WasmOwnedOutput} arg0
+     */
+    set receiver_output(arg0) {
+        _assertClass(arg0, WasmOwnedOutput);
+        var ptr0 = arg0.__destroy_into_raw();
+        wasm.__wbg_set_wasmrespondresult_receiver_output(this.__wbg_ptr, ptr0);
+    }
+    /**
+     * Send this back to the original sender.
+     * @param {string} arg0
+     */
+    set response_slate_json(arg0) {
+        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_wasmrespondresult_response_slate_json(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * @param {Uint8Array} arg0
+     */
+    set updated_keystore_bytes(arg0) {
+        const ptr0 = passArray8ToWasm0(arg0, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_wasmrespondresult_updated_keystore_bytes(this.__wbg_ptr, ptr0, len0);
+    }
+}
+if (Symbol.dispose) WasmRespondResult.prototype[Symbol.dispose] = WasmRespondResult.prototype.free;
 
 export class WasmSendPlan {
     static __wrap(ptr) {
@@ -199,6 +435,29 @@ export function claim_genesis(store_bytes) {
 }
 
 /**
+ * Receiver-side commit: adds the output from `respond_to_slate` to the
+ * store as Pending. Optimistic (same tradeoff as the CLI) - there's no
+ * callback confirming the sender actually broadcasts, so this is applied
+ * right after responding rather than after on-chain confirmation.
+ * @param {Uint8Array} store_bytes
+ * @param {WasmOwnedOutput} output
+ * @returns {Uint8Array}
+ */
+export function commit_receive(store_bytes, output) {
+    const ptr0 = passArray8ToWasm0(store_bytes, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    _assertClass(output, WasmOwnedOutput);
+    var ptr1 = output.__destroy_into_raw();
+    const ret = wasm.commit_receive(ptr0, len0, ptr1);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v3;
+}
+
+/**
  * Applies a previously-built SendPlan's effects to the wallet store. Must only be
  * called after the transaction was successfully broadcast.
  * @param {Uint8Array} store_bytes
@@ -226,6 +485,76 @@ export function commit_send(store_bytes, spent_commitments_hex, dest, change) {
     var v5 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
     return v5;
+}
+
+/**
+ * Sender-side commit: applies a finalized+broadcast slate payment's effects
+ * (spent inputs, optional change) to the store. Must only be called after
+ * the transaction was successfully broadcast.
+ * @param {Uint8Array} store_bytes
+ * @param {string[]} spent_commitments_hex
+ * @param {WasmOwnedOutput | null} [change]
+ * @returns {Uint8Array}
+ */
+export function commit_slate_send(store_bytes, spent_commitments_hex, change) {
+    const ptr0 = passArray8ToWasm0(store_bytes, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArrayJsValueToWasm0(spent_commitments_hex, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    let ptr2 = 0;
+    if (!isLikeNone(change)) {
+        _assertClass(change, WasmOwnedOutput);
+        ptr2 = change.__destroy_into_raw();
+    }
+    const ret = wasm.commit_slate_send(ptr0, len0, ptr1, len1, ptr2);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v4;
+}
+
+/**
+ * Sender step 1: builds a slate paying a different wallet `amount`. Returns
+ * the slate JSON to hand to the recipient and the private pending-slate
+ * bytes to keep locally until `finalize_slate`.
+ * @param {Uint8Array} keystore_bytes
+ * @param {Uint8Array} store_bytes
+ * @param {bigint} amount
+ * @param {bigint} fee
+ * @returns {WasmCreateSlateResult}
+ */
+export function create_send_slate(keystore_bytes, store_bytes, amount, fee) {
+    const ptr0 = passArray8ToWasm0(keystore_bytes, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(store_bytes, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.create_send_slate(ptr0, len0, ptr1, len1, amount, fee);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return WasmCreateSlateResult.__wrap(ret[0]);
+}
+
+/**
+ * Sender step 2 (final): combines the local pending slate with the
+ * recipient's response into the final Transaction. The caller must POST
+ * `transaction_json` itself, then call `commit_slate_send` only on success.
+ * @param {Uint8Array} pending_slate_bytes
+ * @param {string} response_slate_json
+ * @returns {WasmFinalizedTx}
+ */
+export function finalize_slate(pending_slate_bytes, response_slate_json) {
+    const ptr0 = passArray8ToWasm0(pending_slate_bytes, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(response_slate_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.finalize_slate(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return WasmFinalizedTx.__wrap(ret[0]);
 }
 
 /**
@@ -283,6 +612,26 @@ export function reconcile_wallet_store(store_bytes, chain_utxo_commitments_hex) 
     var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
     return v3;
+}
+
+/**
+ * Receiver step: fills in a slate received from a sender. Returns the
+ * response JSON to send back, plus the output info the caller should add
+ * to its own store as Pending.
+ * @param {Uint8Array} keystore_bytes
+ * @param {string} slate_json
+ * @returns {WasmRespondResult}
+ */
+export function respond_to_slate(keystore_bytes, slate_json) {
+    const ptr0 = passArray8ToWasm0(keystore_bytes, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(slate_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.respond_to_slate(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return WasmRespondResult.__wrap(ret[0]);
 }
 
 /**
@@ -447,9 +796,18 @@ function __wbg_get_imports() {
     };
 }
 
+const WasmCreateSlateResultFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmcreateslateresult_free(ptr, 1));
+const WasmFinalizedTxFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmfinalizedtx_free(ptr, 1));
 const WasmOwnedOutputFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmownedoutput_free(ptr, 1));
+const WasmRespondResultFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmrespondresult_free(ptr, 1));
 const WasmSendPlanFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmsendplan_free(ptr, 1));
