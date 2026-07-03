@@ -373,7 +373,11 @@ let sessionKeystoreBytes = null;
 // Only one in-flight "send to a name" at a time, same convention as the
 // manual "Pay someone" flow's single PendingSlate.
 let pendingNameSend = null; // { toName, pendingSlateBytes, amount }
-let incomingRequests = []; // [{ from_pubkey_hex, kind, payload_json }]
+// A receipt log of payments this wallet auto-accepted, newest first - purely
+// a display convenience (the wallet store is the source of truth for
+// balance). Capped so it doesn't grow unbounded across a long session.
+let receivedReceipts = []; // [{ amount, from_pubkey_hex }]
+const MAX_RECEIVED_RECEIPTS = 20;
 
 async function fetchJson(path, opts) {
   const res = await fetch(API_BASE + path, opts);
@@ -592,6 +596,17 @@ function displayName(name) {
   return `${name}.haze`;
 }
 
+// Requires the ".haze" suffix on input (not just the bare name) so a typo'd
+// or copy-pasted raw pubkey/other-chain address can't be mistaken for a
+// Haze name - returns the bare on-chain name, or null if the suffix is
+// missing/malformed.
+function parseHazeAddress(input) {
+  const trimmed = input.trim().toLowerCase();
+  if (!trimmed.endsWith(".haze")) return null;
+  const bare = trimmed.slice(0, -".haze".length);
+  return bare.length > 0 ? bare : null;
+}
+
 // Polls GET /v1/names/:name until it's actually mined (registered_at_block
 // present), instead of leaving a static "queued" message forever - blocks
 // take real time here (~1s), same as every other action in this wallet, but
@@ -652,7 +667,8 @@ function renderDashboard() {
           <h2>Send to a name</h2>
           <div class="sub">Sends directly to someone's registered .haze name - no copy-pasting slates. Resolves the name, drops the payment request in their inbox automatically, and completes it the moment they accept. Fee is fixed at 5.</div>
           <label>Recipient's name</label>
-          <input type="text" id="name-send-recipient" placeholder="e.g. harshit" autocomplete="off" />
+          <input type="text" id="name-send-recipient" placeholder="e.g. harshit.haze" autocomplete="off" />
+          <div id="name-send-lookup-status" class="keystore-note"></div>
           <label>Amount</label>
           <input type="number" id="name-send-amount" min="1" />
           <button class="btn-primary" id="name-send-btn">Send</button>
@@ -687,7 +703,7 @@ function renderDashboard() {
       <div class="tab-panel" data-tab="receive">
         <div class="panel" id="incoming-requests-panel" style="display:none;">
           <h2>Incoming payments</h2>
-          <div class="sub">Payment requests sent to your identity pubkey, waiting for you to accept.</div>
+          <div class="sub">Payments sent to your name are credited automatically the moment your wallet sees them - nothing to accept.</div>
           <div id="incoming-requests-list"></div>
         </div>
 
@@ -1171,13 +1187,41 @@ function renderDashboard() {
     }
   });
 
+  // Live-checks the recipient as the user types (debounced) so a typo or a
+  // not-yet-registered name is caught before the user even hits Send,
+  // instead of only failing after building a slate. Purely advisory - the
+  // Send handler below re-checks and is the actual gate.
+  let nameSendLookupTimer = null;
+  document.getElementById("name-send-recipient").addEventListener("input", () => {
+    const statusEl = document.getElementById("name-send-lookup-status");
+    const raw = document.getElementById("name-send-recipient").value;
+    clearTimeout(nameSendLookupTimer);
+    if (!raw.trim()) { statusEl.textContent = ""; return; }
+    const bare = parseHazeAddress(raw);
+    if (!bare) { statusEl.textContent = `Must end in ".haze", e.g. harshit.haze`; return; }
+    statusEl.textContent = "Looking up...";
+    nameSendLookupTimer = setTimeout(async () => {
+      try {
+        const res = await fetch(API_BASE + "/v1/names/" + encodeURIComponent(bare));
+        statusEl.textContent = res.ok ? `"${displayName(bare)}" found on-chain.` : `"${displayName(bare)}" is not registered.`;
+      } catch (e) {
+        statusEl.textContent = "Couldn't reach the node to look this up.";
+      }
+    }, 400);
+  });
+
   document.getElementById("name-send-btn").addEventListener("click", async () => {
-    const toName = document.getElementById("name-send-recipient").value.trim();
+    const rawInput = document.getElementById("name-send-recipient").value;
     const amount = BigInt(document.getElementById("name-send-amount").value || "0");
     const messageEl = document.getElementById("name-send-message");
 
-    if (!toName || amount <= 0n) {
-      messageEl.innerHTML = `<div class="message error">Enter a recipient name and an amount.</div>`;
+    const toName = parseHazeAddress(rawInput);
+    if (!toName) {
+      messageEl.innerHTML = `<div class="message error">Enter the recipient's full name including the ".haze" suffix, e.g. harshit.haze.</div>`;
+      return;
+    }
+    if (amount <= 0n) {
+      messageEl.innerHTML = `<div class="message error">Enter an amount.</div>`;
       return;
     }
     if (pendingNameSend) {
@@ -1221,52 +1265,47 @@ function renderDashboard() {
   function renderIncomingRequests() {
     const panel = document.getElementById("incoming-requests-panel");
     const list = document.getElementById("incoming-requests-list");
-    if (incomingRequests.length === 0) {
+    if (receivedReceipts.length === 0) {
       panel.style.display = "none";
       return;
     }
     panel.style.display = "";
     list.innerHTML = "";
-    incomingRequests.forEach((msg, idx) => {
-      let amount = "?";
-      try { amount = JSON.parse(msg.payload_json).amount; } catch (e) {}
+    receivedReceipts.forEach((receipt) => {
       const item = document.createElement("div");
       item.className = "inbox-item";
       item.innerHTML = `
         <div class="inbox-item-text">
-          Payment request for <strong>${amount}</strong><br>
-          <span class="inbox-item-from">from ${msg.from_pubkey_hex}</span>
+          Received <strong>${receipt.amount}</strong><br>
+          <span class="inbox-item-from">from ${receipt.from_pubkey_hex}</span>
         </div>
-        <button class="btn-primary btn-small" data-idx="${idx}">Accept</button>
       `;
-      item.querySelector("button").addEventListener("click", () => acceptIncomingRequest(idx));
       list.appendChild(item);
     });
   }
 
-  async function acceptIncomingRequest(idx) {
-    const msg = incomingRequests[idx];
-    if (!msg) return;
-    try {
-      const responded = respond_to_slate(sessionKeystoreBytes, msg.payload_json);
-      sessionKeystoreBytes = responded.updated_keystore_bytes;
+  // Crypto-necessary step, not a user decision: the receiver still has to
+  // locally compute their output's blinding factor and send back a partial
+  // signature (that's what makes it a two-party Mimblewimble payment rather
+  // than an account balance the sender could just edit) - but there's no
+  // reason a person needs to click a button to make that happen. The wallet
+  // does it the instant it sees the request during its normal inbox poll.
+  async function autoAcceptIncomingRequest(msg) {
+    const responded = respond_to_slate(sessionKeystoreBytes, msg.payload_json);
+    sessionKeystoreBytes = responded.updated_keystore_bytes;
 
-      let storeBytes = loadWalletStoreBytes();
-      storeBytes = commit_receive(storeBytes, responded.receiver_output);
-      saveWalletStoreBytes(storeBytes);
+    let storeBytes = loadWalletStoreBytes();
+    storeBytes = commit_receive(storeBytes, responded.receiver_output);
+    saveWalletStoreBytes(storeBytes);
 
-      await fetch(API_BASE + "/v1/inbox/" + msg.from_pubkey_hex, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ from_pubkey_hex: wallet_identity_pubkey_hex(sessionKeystoreBytes), kind: "response", payload_json: responded.response_slate_json }),
-      });
+    await fetch(API_BASE + "/v1/inbox/" + msg.from_pubkey_hex, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ from_pubkey_hex: wallet_identity_pubkey_hex(sessionKeystoreBytes), kind: "response", payload_json: responded.response_slate_json }),
+    });
 
-      incomingRequests.splice(idx, 1);
-      renderIncomingRequests();
-      await refreshBalance();
-    } catch (e) {
-      alert("Failed to accept payment: " + (e.message || e));
-    }
+    receivedReceipts.unshift({ amount: responded.receiver_output.value.toString(), from_pubkey_hex: msg.from_pubkey_hex });
+    receivedReceipts.length = Math.min(receivedReceipts.length, MAX_RECEIVED_RECEIPTS);
   }
 
   async function pollInbox() {
@@ -1305,10 +1344,17 @@ function renderDashboard() {
             pendingNameSend = null;
           }
         } else if (msg.kind === "request") {
-          incomingRequests.push(msg);
+          try {
+            await autoAcceptIncomingRequest(msg);
+          } catch (e) {
+            // This message is lost (already drained from the inbox by the
+            // GET above) - next poll just continues with whatever else is
+            // pending, same as any other transient failure here.
+          }
         }
       }
       if (messages.some(m => m.kind === "request")) {
+        await refreshBalance();
         renderIncomingRequests();
       }
     } catch (e) {
