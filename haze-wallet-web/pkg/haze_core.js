@@ -658,6 +658,117 @@ export class WasmSendPlan {
 }
 if (Symbol.dispose) WasmSendPlan.prototype[Symbol.dispose] = WasmSendPlan.prototype.free;
 
+export class WasmSweepResult {
+    static __wrap(ptr) {
+        const obj = Object.create(WasmSweepResult.prototype);
+        obj.__wbg_ptr = ptr;
+        WasmSweepResultFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmSweepResultFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmsweepresult_free(ptr, 0);
+    }
+    /**
+     * Add this to the wallet's own store as Pending on success (reuse
+     * commit_send with an empty spent_commitments_hex and no change - the
+     * swept reward inputs were never part of this wallet's own store to
+     * begin with, only the destination output is new).
+     * @returns {WasmOwnedOutput}
+     */
+    get dest() {
+        const ret = wasm.__wbg_get_wasmsweepresult_dest(this.__wbg_ptr);
+        return WasmOwnedOutput.__wrap(ret);
+    }
+    /**
+     * @returns {number}
+     */
+    get swept_count() {
+        const ret = wasm.__wbg_get_wasmsweepresult_swept_count(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {bigint}
+     */
+    get swept_total() {
+        const ret = wasm.__wbg_get_wasmsweepresult_swept_total(this.__wbg_ptr);
+        return BigInt.asUintN(64, ret);
+    }
+    /**
+     * POST this to /v1/transactions.
+     * @returns {string}
+     */
+    get transaction_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.__wbg_get_wasmsweepresult_transaction_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {Uint8Array}
+     */
+    get updated_keystore_bytes() {
+        const ret = wasm.__wbg_get_wasmsweepresult_updated_keystore_bytes(this.__wbg_ptr);
+        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v1;
+    }
+    /**
+     * Add this to the wallet's own store as Pending on success (reuse
+     * commit_send with an empty spent_commitments_hex and no change - the
+     * swept reward inputs were never part of this wallet's own store to
+     * begin with, only the destination output is new).
+     * @param {WasmOwnedOutput} arg0
+     */
+    set dest(arg0) {
+        _assertClass(arg0, WasmOwnedOutput);
+        var ptr0 = arg0.__destroy_into_raw();
+        wasm.__wbg_set_wasmsweepresult_dest(this.__wbg_ptr, ptr0);
+    }
+    /**
+     * @param {number} arg0
+     */
+    set swept_count(arg0) {
+        wasm.__wbg_set_wasmsweepresult_swept_count(this.__wbg_ptr, arg0);
+    }
+    /**
+     * @param {bigint} arg0
+     */
+    set swept_total(arg0) {
+        wasm.__wbg_set_wasmsweepresult_swept_total(this.__wbg_ptr, arg0);
+    }
+    /**
+     * POST this to /v1/transactions.
+     * @param {string} arg0
+     */
+    set transaction_json(arg0) {
+        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_wasmsweepresult_transaction_json(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * @param {Uint8Array} arg0
+     */
+    set updated_keystore_bytes(arg0) {
+        const ptr0 = passArray8ToWasm0(arg0, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_wasmsweepresult_updated_keystore_bytes(this.__wbg_ptr, ptr0, len0);
+    }
+}
+if (Symbol.dispose) WasmSweepResult.prototype[Symbol.dispose] = WasmSweepResult.prototype.free;
+
 /**
  * Builds a RegisterNameOp paying `fee` (must be >= NAME_REGISTRATION_FEE,
  * the hard consensus floor - see its doc comment for why the floor itself
@@ -1136,6 +1247,39 @@ export function reveal_stake_blinding_hex(keystore_bytes, store_bytes, min_value
 }
 
 /**
+ * Finds every still-unspent block reward this validator has ever earned
+ * (see wallet::note::coinbase_blinding/coinbase_note_key and
+ * core::proposer, which now derives coinbase blindings from the staking
+ * secret instead of a discarded random one) and sweeps all of them into a
+ * single new output in this wallet's own keystore - turning "provably mine
+ * but nowhere to spend it from" into an ordinary, self-owned, spendable
+ * balance. `stake_key_hex` is the same secret reveal_stake_blinding_hex
+ * already exposes for running a validator node with. Errors if nothing
+ * unswept is found, or if the total found doesn't even cover `fee`.
+ * @param {string} stake_key_hex
+ * @param {string} scan_entries_json
+ * @param {string[]} chain_utxo_commitments_hex
+ * @param {Uint8Array} keystore_bytes
+ * @param {bigint} fee
+ * @returns {WasmSweepResult}
+ */
+export function sweep_validator_rewards(stake_key_hex, scan_entries_json, chain_utxo_commitments_hex, keystore_bytes, fee) {
+    const ptr0 = passStringToWasm0(stake_key_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(scan_entries_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArrayJsValueToWasm0(chain_utxo_commitments_hex, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ptr3 = passArray8ToWasm0(keystore_bytes, wasm.__wbindgen_malloc);
+    const len3 = WASM_VECTOR_LEN;
+    const ret = wasm.sweep_validator_rewards(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, fee);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return WasmSweepResult.__wrap(ret[0]);
+}
+
+/**
  * Confirmed (safely spendable) balance.
  * @param {Uint8Array} store_bytes
  * @returns {bigint}
@@ -1349,6 +1493,9 @@ const WasmRespondResultFinalization = (typeof FinalizationRegistry === 'undefine
 const WasmSendPlanFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmsendplan_free(ptr, 1));
+const WasmSweepResultFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmsweepresult_free(ptr, 1));
 
 function addToExternrefTable0(obj) {
     const idx = wasm.__externref_table_alloc();

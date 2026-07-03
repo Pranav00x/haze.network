@@ -194,23 +194,28 @@ impl Proposer {
                     let total_fees: u64 = tx.kernels.iter().map(|k| k.fee).sum();
                     let coinbase_value = super::block::BLOCK_REWARD + total_fees;
 
-                    // 2. Generate random blinding factor for coinbase output
-                    let mut rng = rand::thread_rng();
-                    let r_coinbase = Scalar::random(&mut rng);
+                    // 2. Derive this block's coinbase blinding from our own
+                    // staking secret (private_key) instead of a random,
+                    // immediately-discarded one - the old approach meant
+                    // NOBODY, not even the proposer who earned it, could ever
+                    // prove ownership of a block reward, permanently
+                    // "burning" every block's minted coins. private_key is
+                    // already a real secret this validator holds (see
+                    // reveal_stake_blinding_hex - it's literally the blinding
+                    // of whatever UTXO they staked), so no new key material
+                    // is needed, just a deterministic derivation instead of
+                    // Scalar::random.
+                    let r_coinbase = crate::wallet::note::coinbase_blinding(&private_key, next_height);
 
                     // 3. Create coinbase output and range proof
                     let coinbase_commitment = Commitment::new(coinbase_value, r_coinbase);
                     let coinbase_proof = crate::crypto::range_proof::RangeProof::prove(coinbase_value, &r_coinbase);
-                    // No note: the coinbase's blinding is randomly generated
-                    // and discarded right here, not derived from any
-                    // Keystore this proposer has access to - block rewards
-                    // aren't yet wired up to be claimable by a validator's
-                    // own wallet at all (a separate, pre-existing gap from
-                    // this note-recovery mechanism).
+                    let coinbase_note_key = crate::wallet::note::coinbase_note_key(&private_key);
+                    let coinbase_note = crate::wallet::note::seal(&coinbase_note_key, next_height as u32, coinbase_value);
                     let coinbase_output = crate::core::transaction::Output {
                         commitment: coinbase_commitment,
                         proof: coinbase_proof,
-                        note: vec![],
+                        note: coinbase_note,
                     };
 
                     // 4. Create coinbase kernel with additive inverse blinding factor: excess = -r_coinbase * H

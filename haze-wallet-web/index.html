@@ -301,7 +301,7 @@ import init, {
   build_sponsored_register_name_request,
   build_transfer_name_request,
   generate_keystore_with_mnemonic, restore_keystore_from_mnemonic,
-  recover_wallet_from_chain
+  recover_wallet_from_chain, sweep_validator_rewards
 } from './pkg/haze_core.js';
 
 // ---------- Node API base (same convention as the explorer) ----------
@@ -1021,6 +1021,13 @@ function renderDashboard() {
           </div>
         </div>
 
+        <div class="panel">
+          <h2>Recover validator rewards</h2>
+          <div class="sub">If you've run your own node with this wallet's staked key, block rewards it earned are sitting on-chain, provably yours but not yet in your spendable balance. This sweeps all of them into your wallet in one transaction.</div>
+          <button class="btn-primary" id="sweep-rewards-btn">Recover rewards</button>
+          <div id="sweep-rewards-message"></div>
+        </div>
+
         <div class="action-row">
           <button class="btn-ghost btn-small" id="lock-btn">Lock wallet</button>
         </div>
@@ -1115,6 +1122,57 @@ function renderDashboard() {
       document.getElementById("reveal-key-output").style.display = "";
     } catch (e) {
       messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+    }
+  });
+
+  // Block rewards are now recoverable (see wallet::note::coinbase_blinding) -
+  // this derives the same staking key reveal-key-link shows, uses it to scan
+  // for and sweep every unspent reward this wallet's validator identity has
+  // earned into a normal, spendable output in this same wallet.
+  document.getElementById("sweep-rewards-btn").addEventListener("click", async () => {
+    const messageEl = document.getElementById("sweep-rewards-message");
+    const btn = document.getElementById("sweep-rewards-btn");
+    btn.disabled = true;
+    messageEl.innerHTML = `<div class="message success">Scanning the chain for unswept rewards&hellip;</div>`;
+
+    try {
+      const storeBytes = loadWalletStoreBytes();
+      const stakeKeyHex = reveal_stake_blinding_hex(sessionKeystoreBytes, storeBytes, 1n);
+
+      const [scanRes, utxos, fee] = await Promise.all([
+        fetch(API_BASE + "/v1/scan-outputs"),
+        fetchJson("/v1/utxos"),
+        getSuggestedFee(),
+      ]);
+      if (!scanRes.ok) throw new Error("node rejected the scan request");
+      const scanEntriesJson = await scanRes.text();
+      const utxoHexList = utxos.map(bytesToHex);
+
+      const result = sweep_validator_rewards(stakeKeyHex, scanEntriesJson, utxoHexList, sessionKeystoreBytes, fee);
+
+      const res = await fetch(API_BASE + "/v1/transactions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: result.transaction_json,
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        messageEl.innerHTML = `<div class="message error">Node rejected transaction: ${text}</div>`;
+        return;
+      }
+
+      sessionKeystoreBytes = result.updated_keystore_bytes;
+      const updatedStoreBytes = commit_send(storeBytes, [], result.dest, null);
+      saveWalletStoreBytes(updatedStoreBytes);
+
+      const link = explorerLinkForTx(result.transaction_json);
+      messageEl.innerHTML = `<div class="message success">Recovered ${result.swept_count} reward(s) totaling ${result.swept_total}. Balance will update once mined. <a href="${link}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">View on explorer &rarr;</a></div>`;
+      pushActivity({ type: "received", title: `Recovered ${result.swept_total} in validator rewards`, detail: `${result.swept_count} block(s)` });
+      await refreshBalance();
+    } catch (e) {
+      messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+    } finally {
+      btn.disabled = false;
     }
   });
 

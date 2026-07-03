@@ -96,6 +96,26 @@ export class WasmSendPlan {
     updated_keystore_bytes: Uint8Array;
 }
 
+export class WasmSweepResult {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * Add this to the wallet's own store as Pending on success (reuse
+     * commit_send with an empty spent_commitments_hex and no change - the
+     * swept reward inputs were never part of this wallet's own store to
+     * begin with, only the destination output is new).
+     */
+    dest: WasmOwnedOutput;
+    swept_count: number;
+    swept_total: bigint;
+    /**
+     * POST this to /v1/transactions.
+     */
+    transaction_json: string;
+    updated_keystore_bytes: Uint8Array;
+}
+
 /**
  * Builds a RegisterNameOp paying `fee` (must be >= NAME_REGISTRATION_FEE,
  * the hard consensus floor - see its doc comment for why the floor itself
@@ -251,6 +271,19 @@ export function restore_keystore_from_mnemonic(phrase: string): Uint8Array;
 export function reveal_stake_blinding_hex(keystore_bytes: Uint8Array, store_bytes: Uint8Array, min_value: bigint): string;
 
 /**
+ * Finds every still-unspent block reward this validator has ever earned
+ * (see wallet::note::coinbase_blinding/coinbase_note_key and
+ * core::proposer, which now derives coinbase blindings from the staking
+ * secret instead of a discarded random one) and sweeps all of them into a
+ * single new output in this wallet's own keystore - turning "provably mine
+ * but nowhere to spend it from" into an ordinary, self-owned, spendable
+ * balance. `stake_key_hex` is the same secret reveal_stake_blinding_hex
+ * already exposes for running a validator node with. Errors if nothing
+ * unswept is found, or if the total found doesn't even cover `fee`.
+ */
+export function sweep_validator_rewards(stake_key_hex: string, scan_entries_json: string, chain_utxo_commitments_hex: string[], keystore_bytes: Uint8Array, fee: bigint): WasmSweepResult;
+
+/**
  * Confirmed (safely spendable) balance.
  */
 export function wallet_balance(store_bytes: Uint8Array): bigint;
@@ -294,6 +327,10 @@ export interface InitOutput {
     readonly __wbg_get_wasmsendplan_spent_commitments_hex: (a: number) => [number, number];
     readonly __wbg_get_wasmsendplan_transaction_json: (a: number) => [number, number];
     readonly __wbg_get_wasmsendplan_updated_keystore_bytes: (a: number) => [number, number];
+    readonly __wbg_get_wasmsweepresult_swept_count: (a: number) => number;
+    readonly __wbg_get_wasmsweepresult_swept_total: (a: number) => bigint;
+    readonly __wbg_get_wasmsweepresult_transaction_json: (a: number) => [number, number];
+    readonly __wbg_get_wasmsweepresult_updated_keystore_bytes: (a: number) => [number, number];
     readonly __wbg_set_wasmcreateslateresult_pending_slate_bytes: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmcreateslateresult_slate_json: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmcreateslateresult_updated_keystore_bytes: (a: number, b: number, c: number) => void;
@@ -311,6 +348,10 @@ export interface InitOutput {
     readonly __wbg_set_wasmsendplan_spent_commitments_hex: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmsendplan_transaction_json: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmsendplan_updated_keystore_bytes: (a: number, b: number, c: number) => void;
+    readonly __wbg_set_wasmsweepresult_swept_count: (a: number, b: number) => void;
+    readonly __wbg_set_wasmsweepresult_swept_total: (a: number, b: bigint) => void;
+    readonly __wbg_set_wasmsweepresult_transaction_json: (a: number, b: number, c: number) => void;
+    readonly __wbg_set_wasmsweepresult_updated_keystore_bytes: (a: number, b: number, c: number) => void;
     readonly __wbg_wasmcreateslateresult_free: (a: number, b: number) => void;
     readonly __wbg_wasmfinalizedtx_free: (a: number, b: number) => void;
     readonly __wbg_wasmkeystoreandmnemonic_free: (a: number, b: number) => void;
@@ -319,6 +360,7 @@ export interface InitOutput {
     readonly __wbg_wasmregisternameresult_free: (a: number, b: number) => void;
     readonly __wbg_wasmrespondresult_free: (a: number, b: number) => void;
     readonly __wbg_wasmsendplan_free: (a: number, b: number) => void;
+    readonly __wbg_wasmsweepresult_free: (a: number, b: number) => void;
     readonly build_register_name_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: bigint) => [number, number, number];
     readonly build_sponsored_register_name_request: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly build_stake_request: (a: number, b: number, c: number, d: number, e: bigint) => [number, number, number, number];
@@ -337,6 +379,7 @@ export interface InitOutput {
     readonly respond_to_slate: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly restore_keystore_from_mnemonic: (a: number, b: number) => [number, number, number, number];
     readonly reveal_stake_blinding_hex: (a: number, b: number, c: number, d: number, e: bigint) => [number, number, number, number];
+    readonly sweep_validator_rewards: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: bigint) => [number, number, number];
     readonly wallet_balance: (a: number, b: number) => [bigint, number, number];
     readonly wallet_identity_pubkey_hex: (a: number, b: number) => [number, number, number, number];
     readonly wallet_pending_balance: (a: number, b: number) => [bigint, number, number];
@@ -346,6 +389,7 @@ export interface InitOutput {
     readonly __wbg_set_wasmrecoveryresult_recovered_balance: (a: number, b: bigint) => void;
     readonly __wbg_set_wasmregisternameresult_change: (a: number, b: number) => void;
     readonly __wbg_get_wasmsendplan_dest: (a: number) => number;
+    readonly __wbg_get_wasmsweepresult_dest: (a: number) => number;
     readonly __wbg_set_wasmkeystoreandmnemonic_keystore_bytes: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmkeystoreandmnemonic_mnemonic: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmrecoveryresult_keystore_bytes: (a: number, b: number, c: number) => void;
@@ -360,6 +404,7 @@ export interface InitOutput {
     readonly __wbg_get_wasmregisternameresult_op_json: (a: number) => [number, number];
     readonly __wbg_get_wasmrespondresult_response_slate_json: (a: number) => [number, number];
     readonly __wbg_set_wasmsendplan_dest: (a: number, b: number) => void;
+    readonly __wbg_set_wasmsweepresult_dest: (a: number, b: number) => void;
     readonly commit_slate_send: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;

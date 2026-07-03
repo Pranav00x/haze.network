@@ -157,6 +157,111 @@ pub fn recover_wallet_from_chain(
     })
 }
 
+fn scalar_from_hex(hex: &str) -> Option<Scalar> {
+    let bytes = hex_decode(hex)?;
+    if bytes.len() != 32 {
+        return None;
+    }
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&bytes);
+    Some(Scalar::from_bits(arr))
+}
+
+#[wasm_bindgen(getter_with_clone)]
+pub struct WasmSweepResult {
+    /// POST this to /v1/transactions.
+    pub transaction_json: String,
+    pub updated_keystore_bytes: Vec<u8>,
+    /// Add this to the wallet's own store as Pending on success (reuse
+    /// commit_send with an empty spent_commitments_hex and no change - the
+    /// swept reward inputs were never part of this wallet's own store to
+    /// begin with, only the destination output is new).
+    pub dest: WasmOwnedOutput,
+    pub swept_count: u32,
+    pub swept_total: u64,
+}
+
+/// Finds every still-unspent block reward this validator has ever earned
+/// (see wallet::note::coinbase_blinding/coinbase_note_key and
+/// core::proposer, which now derives coinbase blindings from the staking
+/// secret instead of a discarded random one) and sweeps all of them into a
+/// single new output in this wallet's own keystore - turning "provably mine
+/// but nowhere to spend it from" into an ordinary, self-owned, spendable
+/// balance. `stake_key_hex` is the same secret reveal_stake_blinding_hex
+/// already exposes for running a validator node with. Errors if nothing
+/// unswept is found, or if the total found doesn't even cover `fee`.
+#[wasm_bindgen]
+pub fn sweep_validator_rewards(
+    stake_key_hex: String,
+    scan_entries_json: String,
+    chain_utxo_commitments_hex: Vec<String>,
+    keystore_bytes: Vec<u8>,
+    fee: u64,
+) -> Result<WasmSweepResult, JsValue> {
+    let stake_key = scalar_from_hex(&stake_key_hex).ok_or_else(|| js_err("invalid stake key hex"))?;
+    let mut keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
+    let entries: Vec<ScanEntry> = serde_json::from_str(&scan_entries_json).map_err(|_| js_err("invalid scan entries JSON"))?;
+    let utxo_set: HashSet<String> = chain_utxo_commitments_hex.into_iter().collect();
+    let note_key = crate::wallet::note::coinbase_note_key(&stake_key);
+
+    let mut inputs: Vec<Input> = Vec::new();
+    let mut input_blindings: Vec<Scalar> = Vec::new();
+    let mut swept_total: u64 = 0;
+
+    for entry in &entries {
+        let Some(note_bytes) = hex_decode(&entry.note_hex) else { continue };
+        let Some((height, value)) = crate::wallet::note::open(&note_key, &note_bytes) else { continue };
+        if !utxo_set.contains(&entry.commitment_hex) {
+            continue; // already spent (or somehow not ours) - nothing to sweep
+        }
+
+        let blinding = crate::wallet::note::coinbase_blinding(&stake_key, height as u64);
+        let commitment = Commitment::new(value, blinding);
+        if commitment.to_hex() != entry.commitment_hex {
+            continue; // sanity check failed - not a real match, skip it
+        }
+
+        inputs.push(Input { commitment });
+        input_blindings.push(blinding);
+        swept_total += value;
+    }
+
+    let swept_count = inputs.len() as u32;
+    if swept_count == 0 {
+        return Err(js_err("no unswept validator rewards found"));
+    }
+    if swept_total <= fee {
+        return Err(js_err(format!("found {} total rewards, which doesn't cover the fee ({})", swept_total, fee)));
+    }
+
+    let dest_value = swept_total - fee;
+    let dest_index = keystore.allocate_index();
+    let dest_blinding = keystore.derive_blinding(dest_index);
+    let dest_commitment = Commitment::new(dest_value, dest_blinding);
+    let dest_proof = RangeProof::prove(dest_value, &dest_blinding);
+    let dest_note = crate::wallet::note::seal(&keystore.note_key(), dest_index, dest_value);
+    let dest_output = Output { commitment: dest_commitment, proof: dest_proof, note: dest_note };
+
+    let sum_input_blinding: Scalar = input_blindings.iter().sum();
+    let excess_r = sum_input_blinding - dest_blinding;
+    let kernel = TxKernel {
+        excess: Commitment::new(0, excess_r),
+        fee,
+        signature: Signature::sign(&fee.to_le_bytes(), &excess_r),
+    };
+
+    let transaction = Transaction { inputs, outputs: vec![dest_output], kernels: vec![kernel] };
+    let transaction_json = serde_json::to_string(&transaction).map_err(|_| js_err("failed to serialize transaction"))?;
+
+    Ok(WasmSweepResult {
+        transaction_json,
+        updated_keystore_bytes: keystore.to_bytes(),
+        dest: WasmOwnedOutput { index: dest_index, value: dest_value, commitment_hex: dest_commitment.to_hex() },
+        swept_count,
+        swept_total,
+    })
+}
+
 /// Creates an empty wallet store and returns its serialized bytes.
 #[wasm_bindgen]
 pub fn wallet_store_new() -> Vec<u8> {

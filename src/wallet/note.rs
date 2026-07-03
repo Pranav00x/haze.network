@@ -11,11 +11,48 @@
 //! two-party slate responses, faucet payouts - the creator always has their
 //! own note_key on hand; no shared secret with a counterparty is needed.
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce, aead::{Aead, KeyInit}};
+use curve25519_dalek_ng::scalar::Scalar;
 use rand::RngCore;
 use rand::rngs::OsRng;
+use sha2::{Sha512, Digest};
 
 const PLAINTEXT_LEN: usize = 12; // u32 index + u64 value
 const NONCE_LEN: usize = 12;
+
+/// Deterministically derives a validator's coinbase blinding factor for a
+/// given block height, from their staking secret alone - a real fix, not
+/// just cosmetic: before this existed, the proposer generated a throwaway
+/// random blinding for every coinbase output and discarded it immediately,
+/// meaning nobody (not even the validator who "earned" it) could ever prove
+/// ownership of a block reward. Every block's minted coins were
+/// permanently unspendable. `stake_key` here is the same secret a validator
+/// already holds (it's literally the blinding factor of whatever UTXO they
+/// staked - see reveal_stake_blinding_hex), so this needs no new key
+/// material, just a fixed point to derive from instead of randomness.
+pub fn coinbase_blinding(stake_key: &Scalar, height: u64) -> Scalar {
+    let mut hasher = Sha512::new();
+    hasher.update(b"Haze Coinbase Blinding");
+    hasher.update(stake_key.as_bytes());
+    hasher.update(&height.to_le_bytes());
+    let result = hasher.finalize();
+    let mut bytes = [0u8; 64];
+    bytes.copy_from_slice(&result);
+    Scalar::from_bytes_mod_order_wide(&bytes)
+}
+
+/// Note-encryption key for a validator's own coinbase rewards, derived from
+/// their staking secret the same way Keystore::note_key derives one from a
+/// wallet seed - lets a validator scan the chain for every block they
+/// proposed and recover the reward value without any separate bookkeeping.
+pub fn coinbase_note_key(stake_key: &Scalar) -> [u8; 32] {
+    let mut hasher = Sha512::new();
+    hasher.update(b"Haze Coinbase Note Key");
+    hasher.update(stake_key.as_bytes());
+    let result = hasher.finalize();
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&result[0..32]);
+    key
+}
 
 /// Encrypts (index, value) into a self-contained note (nonce || ciphertext).
 pub fn seal(note_key: &[u8; 32], index: u32, value: u64) -> Vec<u8> {
@@ -78,5 +115,21 @@ mod tests {
     #[test]
     fn rejects_garbage() {
         assert_eq!(open(&[1u8; 32], b"not a real note"), None);
+    }
+
+    #[test]
+    fn coinbase_blinding_is_deterministic_and_height_separated() {
+        let stake_key = Scalar::from(42u64);
+        assert_eq!(coinbase_blinding(&stake_key, 5), coinbase_blinding(&stake_key, 5));
+        assert_ne!(coinbase_blinding(&stake_key, 5), coinbase_blinding(&stake_key, 6));
+        assert_ne!(coinbase_blinding(&stake_key, 5), coinbase_blinding(&Scalar::from(43u64), 5));
+    }
+
+    #[test]
+    fn coinbase_note_key_round_trips_through_seal_open() {
+        let stake_key = Scalar::from(99u64);
+        let key = coinbase_note_key(&stake_key);
+        let note = seal(&key, 10, 60);
+        assert_eq!(open(&key, &note), Some((10, 60)));
     }
 }
