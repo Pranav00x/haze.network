@@ -61,6 +61,27 @@ pub struct ValidatorInfo {
     pub value: u64,
 }
 
+// Name registrations (core::registry::RegisterNameOp) carry their own
+// fee-payment sub-transaction, separate from `block.body` - these helpers
+// fold both in so the explorer shows the full picture instead of silently
+// hiding registration transactions (and their kernels, which is what
+// /v1/search and the "View on explorer" links look up).
+fn all_kernels(block: &Block) -> Vec<&crate::core::transaction::TxKernel> {
+    block.body.kernels.iter()
+        .chain(block.name_ops.iter().flat_map(|op| op.fee_payment.kernels.iter()))
+        .collect()
+}
+fn all_inputs(block: &Block) -> Vec<&crate::core::transaction::Input> {
+    block.body.inputs.iter()
+        .chain(block.name_ops.iter().flat_map(|op| op.fee_payment.inputs.iter()))
+        .collect()
+}
+fn all_outputs(block: &Block) -> Vec<&crate::core::transaction::Output> {
+    block.body.outputs.iter()
+        .chain(block.name_ops.iter().flat_map(|op| op.fee_payment.outputs.iter()))
+        .collect()
+}
+
 fn to_summary(block: &Block) -> BlockSummary {
     BlockSummary {
         height: block.header.height,
@@ -68,9 +89,9 @@ fn to_summary(block: &Block) -> BlockSummary {
         prev_hash: to_hex(&block.header.prev_hash),
         timestamp: block.header.timestamp,
         proposer: commitment_hex(&block.header.validator_commitment),
-        num_inputs: block.body.inputs.len(),
-        num_outputs: block.body.outputs.len(),
-        num_kernels: block.body.kernels.len(),
+        num_inputs: all_inputs(block).len(),
+        num_outputs: all_outputs(block).len(),
+        num_kernels: all_kernels(block).len(),
     }
 }
 
@@ -82,9 +103,9 @@ fn to_detail(block: &Block) -> BlockDetail {
         timestamp: block.header.timestamp,
         nonce: block.header.nonce,
         proposer: commitment_hex(&block.header.validator_commitment),
-        inputs: block.body.inputs.iter().map(|i| commitment_hex(&i.commitment)).collect(),
-        outputs: block.body.outputs.iter().map(|o| commitment_hex(&o.commitment)).collect(),
-        kernels: block.body.kernels.iter().map(|k| KernelInfo {
+        inputs: all_inputs(block).iter().map(|i| commitment_hex(&i.commitment)).collect(),
+        outputs: all_outputs(block).iter().map(|o| commitment_hex(&o.commitment)).collect(),
+        kernels: all_kernels(block).iter().map(|k| KernelInfo {
             excess: commitment_hex(&k.excess),
             fee: k.fee,
         }).collect(),
@@ -194,7 +215,7 @@ pub async fn handle_transactions_list(
     let mut summaries: Vec<TransactionSummary> = Vec::new();
     for block in blocks.iter().rev() {
         let block_hash = to_hex(&block.header.hash());
-        for kernel in &block.body.kernels {
+        for kernel in all_kernels(block) {
             summaries.push(TransactionSummary {
                 block_height: block.header.height,
                 block_hash: block_hash.clone(),
@@ -263,13 +284,13 @@ pub async fn handle_search(
 
             let query_hex = q.to_lowercase();
             for block in c.blocks.values() {
-                if block.body.kernels.iter().any(|k| commitment_hex(&k.excess) == query_hex) {
+                if all_kernels(block).iter().any(|k| commitment_hex(&k.excess) == query_hex) {
                     return Ok(warp::reply::json(&SearchResult { result_type: "transaction".to_string(), height: Some(block.header.height) }));
                 }
             }
             for block in c.blocks.values() {
-                let matches_output = block.body.outputs.iter().any(|o| commitment_hex(&o.commitment) == query_hex);
-                let matches_input = block.body.inputs.iter().any(|i| commitment_hex(&i.commitment) == query_hex);
+                let matches_output = all_outputs(block).iter().any(|o| commitment_hex(&o.commitment) == query_hex);
+                let matches_input = all_inputs(block).iter().any(|i| commitment_hex(&i.commitment) == query_hex);
                 if matches_output || matches_input {
                     return Ok(warp::reply::json(&SearchResult { result_type: "commitment".to_string(), height: Some(block.header.height) }));
                 }

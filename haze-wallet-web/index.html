@@ -375,6 +375,44 @@ function explorerLinkForTx(transactionJson) {
   return `${API_BASE}/?q=${excessHex}`;
 }
 
+// A RegisterNameOp's "transaction" is its fee_payment sub-transaction - same
+// idea as explorerLinkForTx, just one level deeper into the op JSON.
+function explorerLinkForNameOp(opJson) {
+  const op = JSON.parse(opJson);
+  const excessHex = bytesToHex(op.fee_payment.kernels[0].excess);
+  return `${API_BASE}/?q=${excessHex}`;
+}
+
+// Haze names are displayed with a ".haze" suffix (like ENS's ".eth") - purely
+// cosmetic, the on-chain name itself has no dot (dots aren't in the allowed
+// character set for the underlying registry).
+function displayName(name) {
+  return `${name}.haze`;
+}
+
+// Polls GET /v1/names/:name until it's actually mined (registered_at_block
+// present), instead of leaving a static "queued" message forever - blocks
+// take real time here (~5s), same as every other action in this wallet, but
+// there's no reason not to surface confirmation the moment it lands.
+async function pollForNameConfirmation(name, onConfirmed, { intervalMs = 3000, timeoutMs = 60000, isConfirmed = () => true } = {}) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    await new Promise(r => setTimeout(r, intervalMs));
+    try {
+      const res = await fetch(API_BASE + "/v1/names/" + encodeURIComponent(name));
+      if (res.ok) {
+        const record = await res.json();
+        if (isConfirmed(record)) {
+          onConfirmed(record);
+          return;
+        }
+      }
+    } catch (e) {
+      // keep polling - a transient fetch failure shouldn't abort confirmation
+    }
+  }
+}
+
 function renderDashboard() {
   const app = document.getElementById("app");
   app.innerHTML = `
@@ -568,9 +606,14 @@ function renderDashboard() {
       let storeBytes2 = commit_register_name(storeBytes, result.spent_commitments_hex, result.change);
       saveWalletStoreBytes(storeBytes2);
 
-      messageEl.innerHTML = `<div class="message success">Queued "${name}" for registration. It'll be permanent once mined.</div>`;
+      messageEl.innerHTML = `<div class="message success">Queued "${displayName(name)}" for registration - waiting for it to be mined&hellip;</div>`;
       document.getElementById("name-input").value = "";
       await refreshBalance();
+
+      pollForNameConfirmation(name, (record) => {
+        const link = explorerLinkForNameOp(result.op_json);
+        messageEl.innerHTML = `<div class="message success">"${displayName(name)}" is registered! (block ${record.registered_at_block}) <a href="${link}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">View on explorer &rarr;</a></div>`;
+      });
     } catch (e) {
       messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
     }
@@ -587,12 +630,12 @@ function renderDashboard() {
     try {
       const res = await fetch(API_BASE + "/v1/names/" + encodeURIComponent(name));
       if (!res.ok) {
-        resultEl.innerHTML = `<div class="message error">"${name}" is not registered.</div>`;
+        resultEl.innerHTML = `<div class="message error">"${displayName(name)}" is not registered.</div>`;
         return;
       }
       const record = await res.json();
       const resolvesHex = bytesToHex(record.resolves_to);
-      resultEl.innerHTML = `<div class="message success">Resolves to <span class="keystore-note">${resolvesHex}</span> (registered at block ${record.registered_at_block})</div>`;
+      resultEl.innerHTML = `<div class="message success">"${displayName(name)}" resolves to <span class="keystore-note">${resolvesHex}</span> (registered at block ${record.registered_at_block})</div>`;
     } catch (e) {
       resultEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
     }
@@ -622,9 +665,13 @@ function renderDashboard() {
         return;
       }
 
-      messageEl.innerHTML = `<div class="message success">Queued transfer of "${name}". It'll take effect once mined.</div>`;
+      messageEl.innerHTML = `<div class="message success">Queued transfer of "${displayName(name)}" - waiting for it to be mined&hellip;</div>`;
       document.getElementById("transfer-name-input").value = "";
       document.getElementById("transfer-new-owner-input").value = "";
+
+      pollForNameConfirmation(name, () => {
+        messageEl.innerHTML = `<div class="message success">"${displayName(name)}" transfer complete.</div>`;
+      }, { isConfirmed: (record) => bytesToHex(record.owner_pubkey) === newOwnerHex.toLowerCase() });
     } catch (e) {
       messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
     }
