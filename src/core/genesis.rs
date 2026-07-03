@@ -27,13 +27,20 @@ use curve25519_dalek_ng::scalar::Scalar;
 // core::block::block_reward_at), 35% minted at genesis (13% team/advisors,
 // 13% investors, 6% airdrop, 3% treasury).
 //
-// KNOWN, DISCLOSED GAP: the team/advisor and investor allocations below are
-// minted as ordinary, IMMEDIATELY SPENDABLE genesis outputs, exactly like
-// every other output in this protocol - there is no timelock/vesting
-// primitive here. Shipping this to a real mainnet without real vesting
-// (either a protocol-level timelock feature, or a legal multisig/escrow
-// structure held outside the chain) is a known risk, not something this
-// code has solved. Do not treat this constant existing as "vesting handled."
+// Team and investor allocations vest via a protocol-level timelock (see
+// core::vesting): a 6-month cliff, then 7 quarterly tranches through 2
+// years total. Any block spending a tranche before its unlock height is
+// rejected by ChainState::apply_linear_block.
+//
+// KNOWN, DISCLOSED GAP the timelock does NOT solve: the blinding factors
+// backing every tranche (TEAM_BLINDING_TRANCHES / INVESTOR_BLINDING_TRANCHES
+// below) are small, hardcoded integers committed to this public repo - the
+// same devnet convention as the genesis claim blinding (=42), fine for
+// devnet/testnet, but a timelock on a publicly-known secret only delays a
+// theft until the unlock height, it doesn't prevent one. Before any of this
+// holds real value, those blindings must be replaced with genuinely random
+// secrets generated and held privately by whoever actually controls
+// team/investor funds - that's custody, not something this code can solve.
 pub const TOTAL_SUPPLY_TARGET: u64 = 21_000_000_000;
 
 /// Block-reward halving schedule (~65% of TOTAL_SUPPLY_TARGET, emitted over
@@ -69,10 +76,18 @@ pub const GENESIS_TOTAL_MINTED: u64 = 1_000_000
 
 /// Well-known devnet blinding secrets for each genesis allocation output -
 /// same convention as the untouched validator-stake output (blinding=42).
-pub const TEAM_BLINDING: u64 = 44;
-pub const INVESTOR_BLINDING: u64 = 45;
 pub const AIRDROP_BLINDING: u64 = 46;
 pub const TREASURY_BLINDING: u64 = 43; // same secret the old FAUCET_RESERVE_BLINDING used
+
+/// Team and investor allocations are each split into VESTING_TRANCHE_COUNT
+/// equal tranches, one per vesting unlock height (see core::vesting) -
+/// TEAM_ALLOCATION / INVESTOR_ALLOCATION both divide evenly by this count.
+pub const VESTING_TRANCHE_COUNT: usize = 7;
+pub const TEAM_TRANCHE_VALUE: u64 = TEAM_ALLOCATION / VESTING_TRANCHE_COUNT as u64;
+pub const INVESTOR_TRANCHE_VALUE: u64 = INVESTOR_ALLOCATION / VESTING_TRANCHE_COUNT as u64;
+
+pub const TEAM_BLINDING_TRANCHES: [u64; VESTING_TRANCHE_COUNT] = [100, 101, 102, 103, 104, 105, 106];
+pub const INVESTOR_BLINDING_TRANCHES: [u64; VESTING_TRANCHE_COUNT] = [110, 111, 112, 113, 114, 115, 116];
 
 // ---------------------------------------------------------------------------
 // Network identity - enforced in BlockHeader::hash() (see core::block) so
@@ -99,24 +114,43 @@ fn mint_output(value: u64, blinding: Scalar) -> (Output, TxKernel) {
     (output, kernel)
 }
 
-/// Computes and returns the hardcoded Genesis block for Haze. Mints five
+/// Computes and returns the hardcoded Genesis block for Haze. Mints 17
 /// known outputs: the validator stake / claim-genesis output (1,000,000,
-/// blinding=42, unchanged since before the tokenomics lock), and the four
-/// allocation outputs above (team, investor, airdrop, treasury).
+/// blinding=42, unchanged since before the tokenomics lock), 7 team vesting
+/// tranches, 7 investor vesting tranches (see core::vesting for the
+/// timelock enforcing when each can be spent), and the airdrop/treasury
+/// allocations (unlocked, see the module doc comment for why).
 pub fn genesis_block() -> Block {
     let genesis_val = 1_000_000u64;
     let genesis_blinding = Scalar::from(42u64);
 
     let (validator_output, validator_kernel) = mint_output(genesis_val, genesis_blinding);
-    let (team_output, team_kernel) = mint_output(TEAM_ALLOCATION, Scalar::from(TEAM_BLINDING));
-    let (investor_output, investor_kernel) = mint_output(INVESTOR_ALLOCATION, Scalar::from(INVESTOR_BLINDING));
+
+    let mut outputs = vec![validator_output];
+    let mut kernels = vec![validator_kernel];
+
+    for blinding in TEAM_BLINDING_TRANCHES {
+        let (output, kernel) = mint_output(TEAM_TRANCHE_VALUE, Scalar::from(blinding));
+        outputs.push(output);
+        kernels.push(kernel);
+    }
+    for blinding in INVESTOR_BLINDING_TRANCHES {
+        let (output, kernel) = mint_output(INVESTOR_TRANCHE_VALUE, Scalar::from(blinding));
+        outputs.push(output);
+        kernels.push(kernel);
+    }
+
     let (airdrop_output, airdrop_kernel) = mint_output(AIRDROP_ALLOCATION, Scalar::from(AIRDROP_BLINDING));
     let (treasury_output, treasury_kernel) = mint_output(TREASURY_ALLOCATION, Scalar::from(TREASURY_BLINDING));
+    outputs.push(airdrop_output);
+    kernels.push(airdrop_kernel);
+    outputs.push(treasury_output);
+    kernels.push(treasury_kernel);
 
     let body = Transaction {
         inputs: vec![],
-        outputs: vec![validator_output, team_output, investor_output, airdrop_output, treasury_output],
-        kernels: vec![validator_kernel, team_kernel, investor_kernel, airdrop_kernel, treasury_kernel],
+        outputs,
+        kernels,
     };
 
     Block {

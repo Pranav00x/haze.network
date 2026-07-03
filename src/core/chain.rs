@@ -282,6 +282,13 @@ impl ChainState {
             return None;
         }
 
+        // 3c. Reject any block that spends a team/investor vesting tranche
+        // before its unlock height - the timelock enforcing the 6-month
+        // cliff + 2-year quarterly vesting schedule (see core::vesting).
+        if super::vesting::spends_locked_output_early(&block.body.inputs, block.header.height) {
+            return None;
+        }
+
         // 4. Ensure all inputs exist in our UTXO set (no double spends, no fake inputs)
         // Skip input checks for genesis block (since it has no inputs)
         if block.header.height > 0 {

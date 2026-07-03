@@ -1114,7 +1114,7 @@ mod tests {
         // this balance-equation check would fail.
         assert!(genesis.body.validate_with_reward(GENESIS_TOTAL_MINTED), "genesis outputs must balance exactly against GENESIS_TOTAL_MINTED");
         assert!(!genesis.body.validate_with_reward(GENESIS_TOTAL_MINTED + 1), "genesis outputs must NOT balance against any other total - proves the check isn't vacuous");
-        assert_eq!(genesis.body.outputs.len(), 5, "expected exactly 5 genesis outputs: validator stake + team + investor + airdrop + treasury");
+        assert_eq!(genesis.body.outputs.len(), 17, "expected exactly 17 genesis outputs: validator stake + 7 team tranches + 7 investor tranches + airdrop + treasury");
     }
 
     /// A block whose chain_id doesn't match this network's must be rejected
@@ -1159,6 +1159,79 @@ mod tests {
         let block = Block { header, body, name_ops: vec![], transfer_ops: vec![] };
 
         assert!(!chain_state.apply_block(&block).is_applied(), "a block with a mismatched chain_id must be rejected");
+        assert_eq!(chain_state.current_height, 0, "chain must not have advanced past genesis");
+    }
+
+    /// A block that spends a team vesting tranche at height 1 - years before
+    /// its 6-month-cliff unlock height - must be rejected by
+    /// ChainState::apply_linear_block, even though the transaction itself is
+    /// otherwise perfectly balanced and signed (proving the rejection is
+    /// specifically the vesting timelock, not an incidental balance error).
+    #[test]
+    fn apply_block_rejects_early_spend_of_team_vesting_tranche() {
+        use crate::core::genesis::{TEAM_BLINDING_TRANCHES, TEAM_TRANCHE_VALUE};
+        use crate::core::vesting::tranche_unlock_height;
+
+        let mut chain_state = ChainState::new();
+        let genesis = crate::core::genesis::genesis_block();
+        assert!(chain_state.apply_block(&genesis).is_applied());
+
+        let r_in = Scalar::from(TEAM_BLINDING_TRANCHES[0]);
+        let tranche_commitment = Commitment::new(TEAM_TRANCHE_VALUE, r_in);
+        assert!(chain_state.utxos.contains(&tranche_commitment), "genesis must have minted the first team tranche");
+        assert!(tranche_unlock_height(0) > 1, "sanity: the cliff must be well past height 1");
+
+        let r_out = Scalar::random(&mut OsRng);
+        let change_output = Output {
+            commitment: Commitment::new(TEAM_TRANCHE_VALUE, r_out),
+            proof: RangeProof::prove(TEAM_TRANCHE_VALUE, &r_out),
+            note: vec![],
+        };
+        let excess_r = r_in - r_out;
+        let transfer_kernel = TxKernel {
+            excess: Commitment::new(0, excess_r),
+            fee: 0,
+            signature: Signature::sign(&0u64.to_le_bytes(), &excess_r),
+        };
+
+        let private_key = Scalar::from(42u64);
+        let r_coinbase = Scalar::random(&mut OsRng);
+        let reward = crate::core::block::block_reward_at(1);
+        let coinbase_output = Output {
+            commitment: Commitment::new(reward, r_coinbase),
+            proof: RangeProof::prove(reward, &r_coinbase),
+            note: vec![],
+        };
+        let coinbase_excess_r = Scalar::zero() - r_coinbase;
+        let coinbase_kernel = TxKernel {
+            excess: Commitment::new(0, coinbase_excess_r),
+            fee: 0,
+            signature: Signature::sign(&0u64.to_le_bytes(), &coinbase_excess_r),
+        };
+
+        let body = Transaction {
+            inputs: vec![Input { commitment: tranche_commitment }],
+            outputs: vec![change_output, coinbase_output],
+            kernels: vec![transfer_kernel, coinbase_kernel],
+        };
+        assert!(body.validate_with_reward(reward), "sanity: the transaction itself must be a well-balanced, validly-signed body");
+
+        let mut header = BlockHeader {
+            height: 1,
+            prev_hash: genesis.header.hash(),
+            total_kernel_offset: Scalar::zero(),
+            nonce: 0,
+            timestamp: 0,
+            validator_commitment: Commitment::new(1_000_000, private_key),
+            validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root: empty_registry_root(),
+            chain_id: crate::core::genesis::CHAIN_ID,
+        };
+        let msg = header.hash();
+        header.validator_signature = Signature::sign(&msg, &private_key);
+        let block = Block { header, body, name_ops: vec![], transfer_ops: vec![] };
+
+        assert!(!chain_state.apply_block(&block).is_applied(), "a block spending a team tranche before its unlock height must be rejected");
         assert_eq!(chain_state.current_height, 0, "chain must not have advanced past genesis");
     }
 }
