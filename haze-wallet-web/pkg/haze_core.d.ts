@@ -97,13 +97,18 @@ export class WasmSendPlan {
 }
 
 /**
- * Builds a RegisterNameOp paying the registration fee from the wallet's own
- * confirmed UTXOs, signed with this wallet's stable naming identity key
- * (the same key every time - so `owner_pubkey` is consistent across
- * registrations from this wallet). The caller must POST `op_json`
- * themselves, then call `commit_register_name` only on success.
+ * Builds a RegisterNameOp paying `fee` (must be >= NAME_REGISTRATION_FEE,
+ * the hard consensus floor - see its doc comment for why the floor itself
+ * can't be a live congestion-derived value) from the wallet's own confirmed
+ * UTXOs, signed with this wallet's stable naming identity key (the same key
+ * every time - so `owner_pubkey` is consistent across registrations from
+ * this wallet). Callers should pass GET /v1/fee-estimate's
+ * suggested_name_fee rather than hardcoding NAME_REGISTRATION_FEE, so
+ * paying "the going rate" adapts to how busy the name-registration backlog
+ * actually is. The caller must POST `op_json` themselves, then call
+ * `commit_register_name` only on success.
  */
-export function build_register_name_request(keystore_bytes: Uint8Array, store_bytes: Uint8Array, name: string): WasmRegisterNameResult;
+export function build_register_name_request(keystore_bytes: Uint8Array, store_bytes: Uint8Array, name: string, fee: bigint): WasmRegisterNameResult;
 
 /**
  * Builds a sponsored registration request body for POST
@@ -314,7 +319,7 @@ export interface InitOutput {
     readonly __wbg_wasmregisternameresult_free: (a: number, b: number) => void;
     readonly __wbg_wasmrespondresult_free: (a: number, b: number) => void;
     readonly __wbg_wasmsendplan_free: (a: number, b: number) => void;
-    readonly build_register_name_request: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly build_register_name_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: bigint) => [number, number, number];
     readonly build_sponsored_register_name_request: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly build_stake_request: (a: number, b: number, c: number, d: number, e: bigint) => [number, number, number, number];
     readonly build_transfer_name_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];

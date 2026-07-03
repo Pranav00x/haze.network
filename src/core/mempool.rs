@@ -1,6 +1,6 @@
 use super::transaction::Transaction;
 use super::cut_through::aggregate_and_cut_through;
-use super::registry::{RegisterNameOp, TransferNameOp};
+use super::registry::{RegisterNameOp, TransferNameOp, NAME_REGISTRATION_FEE};
 
 /// Caps how many name registrations/transfers can land in a single block,
 /// bounding block size the same way SYNC_BATCH_SIZE bounds a sync batch
@@ -26,6 +26,10 @@ pub const MIN_FEE: u64 = 5;
 
 fn tx_fee(tx: &Transaction) -> u64 {
     tx.kernels.iter().map(|k| k.fee).sum()
+}
+
+fn name_op_fee(op: &RegisterNameOp) -> u64 {
+    tx_fee(&op.fee_payment)
 }
 
 pub struct Mempool {
@@ -111,14 +115,30 @@ impl Mempool {
     }
 
     /// Drains up to MAX_NAME_OPS_PER_BLOCK pending name ops for inclusion in
-    /// the next block.
+    /// the next block, highest fee_payment fee first - same priority-by-fee
+    /// idea as aggregate(), so paying above the NAME_REGISTRATION_FEE floor
+    /// (see suggested_name_fee) actually buys earlier inclusion once the
+    /// name-op backlog exceeds one block's worth.
     pub fn take_name_ops(&mut self) -> Vec<RegisterNameOp> {
+        self.pending_name_ops.sort_by_key(|op| std::cmp::Reverse(name_op_fee(op)));
         let n = self.pending_name_ops.len().min(MAX_NAME_OPS_PER_BLOCK);
         self.pending_name_ops.drain(0..n).collect()
     }
 
     pub fn name_ops_len(&self) -> usize {
         self.pending_name_ops.len()
+    }
+
+    /// Congestion-priced suggestion for name registrations - same model as
+    /// suggested_fee(), just against the name-op backlog vs
+    /// MAX_NAME_OPS_PER_BLOCK instead of the payment backlog. The
+    /// NAME_REGISTRATION_FEE floor itself is a real consensus rule (see its
+    /// doc comment), but nothing stops a registration from voluntarily paying
+    /// more to jump the queue when it's busy.
+    pub fn suggested_name_fee(&self) -> u64 {
+        let backlog = self.pending_name_ops.len();
+        let steps = backlog.div_ceil(MAX_NAME_OPS_PER_BLOCK).max(1);
+        NAME_REGISTRATION_FEE * steps as u64
     }
 
     /// Drops any still-pending name ops that a just-applied block has made
@@ -246,5 +266,86 @@ mod tests {
 
         mempool.add_transaction(make_valid_tx_with_fee(MIN_FEE));
         assert_eq!(mempool.suggested_fee(), MIN_FEE * 2, "one more than a full block bumps the suggestion");
+    }
+
+    /// Mirrors make_valid_tx_with_fee, but wrapped as a RegisterNameOp -
+    /// independent random owner key + name each call so distinct instances
+    /// never collide on add_name_op's per-name uniqueness check.
+    fn make_valid_name_op_with_fee(name: &str, fee: u64) -> RegisterNameOp {
+        use crate::core::registry::RegisterNameOp;
+        use bulletproofs::PedersenGens;
+
+        let mut rng = OsRng;
+        let r_in = Scalar::random(&mut rng);
+        let r_change = Scalar::random(&mut rng);
+        let input_value = 1000 + fee;
+        let change_value = 1000;
+
+        let input = Input { commitment: Commitment::new(input_value, r_in) };
+        let change_commitment = Commitment::new(change_value, r_change);
+        let change_proof = RangeProof::prove(change_value, &r_change);
+        let change_output = Output { commitment: change_commitment, proof: change_proof, note: vec![] };
+
+        let excess_blinding = r_in - r_change;
+        let excess = Commitment::new(0, excess_blinding);
+        let signature = Signature::sign(&fee.to_le_bytes(), &excess_blinding);
+        let fee_payment = Transaction {
+            inputs: vec![input],
+            outputs: vec![change_output],
+            kernels: vec![TxKernel { excess, fee, signature }],
+        };
+
+        let gens = PedersenGens::default();
+        let owner_secret = Scalar::random(&mut rng);
+        let owner_pubkey = Commitment(owner_secret * gens.B_blinding);
+        let signature = RegisterNameOp::sign(name, &owner_secret);
+
+        RegisterNameOp { name: name.to_string(), owner_pubkey, resolves_to: owner_pubkey, fee_payment, signature }
+    }
+
+    #[test]
+    fn add_name_op_rejects_below_registration_floor() {
+        let mut mempool = Mempool::new();
+        assert!(!mempool.add_name_op(make_valid_name_op_with_fee("toolow", NAME_REGISTRATION_FEE - 1)));
+        assert_eq!(mempool.name_ops_len(), 0);
+    }
+
+    #[test]
+    fn add_name_op_accepts_floor_and_above() {
+        let mut mempool = Mempool::new();
+        assert!(mempool.add_name_op(make_valid_name_op_with_fee("atfloor", NAME_REGISTRATION_FEE)));
+        assert!(mempool.add_name_op(make_valid_name_op_with_fee("abovefloor", NAME_REGISTRATION_FEE * 3)));
+        assert_eq!(mempool.name_ops_len(), 2);
+    }
+
+    #[test]
+    fn take_name_ops_prioritizes_highest_fee_and_leaves_the_rest() {
+        let mut mempool = Mempool::new();
+        let total = MAX_NAME_OPS_PER_BLOCK + 3;
+        for i in 0..total {
+            mempool.add_name_op(make_valid_name_op_with_fee(&format!("name{}", i), NAME_REGISTRATION_FEE + i as u64));
+        }
+        assert_eq!(mempool.name_ops_len(), total);
+
+        let taken = mempool.take_name_ops();
+        assert_eq!(taken.len(), MAX_NAME_OPS_PER_BLOCK);
+        assert_eq!(mempool.name_ops_len(), 3, "the 3 lowest-fee registrations should remain queued");
+
+        let min_fee_taken: u64 = taken.iter().map(|op| op.fee_payment.kernels[0].fee).min().unwrap();
+        assert!(min_fee_taken > NAME_REGISTRATION_FEE + 2);
+    }
+
+    #[test]
+    fn suggested_name_fee_rises_with_backlog_and_floors_at_registration_fee() {
+        let mut mempool = Mempool::new();
+        assert_eq!(mempool.suggested_name_fee(), NAME_REGISTRATION_FEE, "empty backlog suggests the floor");
+
+        for i in 0..MAX_NAME_OPS_PER_BLOCK {
+            mempool.add_name_op(make_valid_name_op_with_fee(&format!("full{}", i), NAME_REGISTRATION_FEE));
+        }
+        assert_eq!(mempool.suggested_name_fee(), NAME_REGISTRATION_FEE, "exactly one block's worth is still the floor");
+
+        mempool.add_name_op(make_valid_name_op_with_fee("overflow", NAME_REGISTRATION_FEE));
+        assert_eq!(mempool.suggested_name_fee(), NAME_REGISTRATION_FEE * 2, "one more than a full block bumps the suggestion");
     }
 }

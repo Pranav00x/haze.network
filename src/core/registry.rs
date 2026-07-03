@@ -18,8 +18,16 @@ use crate::crypto::pedersen::Commitment;
 use crate::crypto::schnorr::Signature;
 use crate::core::transaction::Transaction;
 
-/// One-time registration fee, paid as this transaction's fee (collected into
-/// the block's coinbase like any other transaction fee - not silently burned).
+/// Minimum one-time registration fee, paid as this transaction's fee
+/// (collected into the block's coinbase like any other transaction fee - not
+/// silently burned). This is a hard consensus floor (validate_standalone
+/// runs at block-apply time, unlike the payment mempool's MIN_FEE, which is
+/// mempool-acceptance policy only) - it has to be a fixed floor rather than a
+/// live congestion-derived value, since different nodes' mempools aren't
+/// guaranteed to agree at any given moment and a hard equality/threshold
+/// check must be deterministic for every validator. The actual fee a wallet
+/// pays can be anything >= this floor - see Mempool::suggested_name_fee for
+/// the congestion-priced amount wallets should actually offer.
 pub const NAME_REGISTRATION_FEE: u64 = 5;
 
 pub const MIN_NAME_LENGTH: usize = 3;
@@ -104,7 +112,7 @@ impl RegisterNameOp {
             return Err(NameError::InvalidSignature);
         }
 
-        if self.fee_payment.kernels.len() != 1 || self.fee_payment.kernels[0].fee != NAME_REGISTRATION_FEE {
+        if self.fee_payment.kernels.len() != 1 || self.fee_payment.kernels[0].fee < NAME_REGISTRATION_FEE {
             return Err(NameError::InvalidFeePayment);
         }
         if !self.fee_payment.validate() {

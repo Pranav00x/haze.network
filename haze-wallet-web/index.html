@@ -556,6 +556,22 @@ async function getSuggestedFee() {
   }
 }
 
+// Matches core::registry::NAME_REGISTRATION_FEE - the hard consensus floor,
+// used as a fallback if the node can't be reached for a live estimate.
+const FALLBACK_NAME_FEE = 5n;
+
+// Congestion-priced the same way as getSuggestedFee, just against the
+// name-registration backlog instead of the payment one (see
+// Mempool::suggested_name_fee / GET /v1/fee-estimate's suggested_name_fee).
+async function getSuggestedNameFee() {
+  try {
+    const estimate = await fetchJson("/v1/fee-estimate");
+    return BigInt(estimate.suggested_name_fee);
+  } catch (e) {
+    return FALLBACK_NAME_FEE;
+  }
+}
+
 // ---------- UI: lock screen ----------
 function renderLockScreen() {
   const app = document.getElementById("app");
@@ -960,7 +976,7 @@ function renderDashboard() {
       <div class="tab-panel" data-tab="names">
         <div class="panel">
           <h2>Haze Naming Registry</h2>
-          <div class="sub">Register a permanent, first-come-first-served name that resolves to your wallet's identity pubkey - lowercase letters/digits/-/_, 3-32 characters. One-time fee, no expiry. A name currently only resolves to a bare pubkey - there's no way yet for someone to reach you with it to exchange a payment slate.</div>
+          <div class="sub">Register a permanent, first-come-first-served name that resolves to your wallet's identity pubkey - lowercase letters/digits/-/_, 3-32 characters. No expiry. Fee adapts to registration-backlog congestion - <span id="register-name-fee-note">checking current fee&hellip;</span></div>
           <label>Name</label>
           <input type="text" id="name-input" placeholder="e.g. pranav" autocomplete="off" />
           <button class="btn-primary" id="register-name-btn">Register name</button>
@@ -1120,7 +1136,8 @@ function renderDashboard() {
 
     try {
       const storeBytes = loadWalletStoreBytes();
-      const result = build_register_name_request(sessionKeystoreBytes, storeBytes, name);
+      const fee = await getSuggestedNameFee();
+      const result = build_register_name_request(sessionKeystoreBytes, storeBytes, name, fee);
 
       const res = await fetch(API_BASE + "/v1/names/register", {
         method: "POST",
@@ -1317,12 +1334,14 @@ function renderDashboard() {
   renderHistory();
 
   async function refreshFeeNotes() {
-    const fee = await getSuggestedFee();
+    const [fee, nameFee] = await Promise.all([getSuggestedFee(), getSuggestedNameFee()]);
     const text = `current fee: ${fee}`;
     ["send-fee-note", "name-send-fee-note"].forEach((id) => {
       const el = document.getElementById(id);
       if (el) el.textContent = text;
     });
+    const nameFeeEl = document.getElementById("register-name-fee-note");
+    if (nameFeeEl) nameFeeEl.textContent = `current fee: ${nameFee}`;
   }
   refreshFeeNotes();
 

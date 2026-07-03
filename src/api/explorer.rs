@@ -136,12 +136,16 @@ pub struct FeeEstimate {
     pub suggested_fee: u64,
     pub min_fee: u64,
     pub mempool_size: usize,
+    pub suggested_name_fee: u64,
+    pub min_name_fee: u64,
+    pub name_ops_size: usize,
 }
 
 /// A wallet's actual source of truth for what fee to pay - see
-/// Mempool::suggested_fee for the congestion-pricing model. Wallets should
-/// call this instead of hardcoding a flat fee, so paying "the going rate"
-/// automatically adapts to how busy the network actually is.
+/// Mempool::suggested_fee/suggested_name_fee for the congestion-pricing
+/// model. Wallets should call this instead of hardcoding a flat fee, so
+/// paying "the going rate" automatically adapts to how busy the network
+/// actually is.
 pub async fn handle_fee_estimate(
     mempool: Arc<Mutex<Mempool>>,
 ) -> Result<impl warp::Reply, Infallible> {
@@ -150,6 +154,9 @@ pub async fn handle_fee_estimate(
         suggested_fee: mp.suggested_fee(),
         min_fee: crate::core::mempool::MIN_FEE,
         mempool_size: mp.len(),
+        suggested_name_fee: mp.suggested_name_fee(),
+        min_name_fee: crate::core::registry::NAME_REGISTRATION_FEE,
+        name_ops_size: mp.name_ops_len(),
     };
     Ok(warp::reply::json(&estimate))
 }

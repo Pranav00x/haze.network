@@ -8,7 +8,7 @@ use warp::http::StatusCode;
 
 use crate::core::chain::ChainState;
 use crate::core::mempool::Mempool;
-use crate::core::registry::{RegisterNameOp, TransferNameOp, NameRecord, NAME_REGISTRATION_FEE, validate_name};
+use crate::core::registry::{RegisterNameOp, TransferNameOp, NameRecord, validate_name};
 use crate::crypto::pedersen::Commitment;
 use crate::crypto::schnorr::Signature;
 use crate::p2p::server::P2pServer;
@@ -114,7 +114,13 @@ pub async fn handle_sponsored_register_name(
         faucet.reconcile(&c);
     }
 
-    let fee_payment = match faucet.build_sponsored_fee_payment(NAME_REGISTRATION_FEE) {
+    // Pays the live congestion-priced suggestion (see Mempool::
+    // suggested_name_fee), not the bare NAME_REGISTRATION_FEE floor - a
+    // sponsored registration should queue-jump the same as a self-funded one
+    // would if it chose to pay more, rather than always sitting at the back
+    // of a busy backlog.
+    let suggested_fee = { mempool.lock().unwrap().suggested_name_fee() };
+    let fee_payment = match faucet.build_sponsored_fee_payment(suggested_fee) {
         Ok(tx) => tx,
         Err(_) => return Ok(error_reply(StatusCode::SERVICE_UNAVAILABLE, "sponsor reserve temporarily depleted - try again shortly")),
     };

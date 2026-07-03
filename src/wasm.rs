@@ -477,19 +477,27 @@ pub struct WasmRegisterNameResult {
     pub change: Option<WasmOwnedOutput>,
 }
 
-/// Builds a RegisterNameOp paying the registration fee from the wallet's own
-/// confirmed UTXOs, signed with this wallet's stable naming identity key
-/// (the same key every time - so `owner_pubkey` is consistent across
-/// registrations from this wallet). The caller must POST `op_json`
-/// themselves, then call `commit_register_name` only on success.
+/// Builds a RegisterNameOp paying `fee` (must be >= NAME_REGISTRATION_FEE,
+/// the hard consensus floor - see its doc comment for why the floor itself
+/// can't be a live congestion-derived value) from the wallet's own confirmed
+/// UTXOs, signed with this wallet's stable naming identity key (the same key
+/// every time - so `owner_pubkey` is consistent across registrations from
+/// this wallet). Callers should pass GET /v1/fee-estimate's
+/// suggested_name_fee rather than hardcoding NAME_REGISTRATION_FEE, so
+/// paying "the going rate" adapts to how busy the name-registration backlog
+/// actually is. The caller must POST `op_json` themselves, then call
+/// `commit_register_name` only on success.
 #[wasm_bindgen]
-pub fn build_register_name_request(keystore_bytes: Vec<u8>, store_bytes: Vec<u8>, name: String) -> Result<WasmRegisterNameResult, JsValue> {
+pub fn build_register_name_request(keystore_bytes: Vec<u8>, store_bytes: Vec<u8>, name: String, fee: u64) -> Result<WasmRegisterNameResult, JsValue> {
     validate_name(&name).map_err(|e| js_err(format!("invalid name: {:?}", e)))?;
+    if fee < NAME_REGISTRATION_FEE {
+        return Err(js_err(format!("fee must be at least {}", NAME_REGISTRATION_FEE)));
+    }
 
     let mut keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
     let store = WalletStore::from_bytes(&store_bytes).ok_or_else(|| js_err("invalid wallet store bytes"))?;
 
-    let selected = planner::select_spendable(&store, NAME_REGISTRATION_FEE)
+    let selected = planner::select_spendable(&store, fee)
         .map_err(|e| match e {
             PlanError::InsufficientBalance { have, need } => js_err(format!("insufficient balance: have {}, need {}", have, need)),
         })?;
@@ -504,7 +512,7 @@ pub fn build_register_name_request(keystore_bytes: Vec<u8>, store_bytes: Vec<u8>
         spent_commitments_hex.push(commitment.to_hex());
     }
 
-    let change_value = selected_total - NAME_REGISTRATION_FEE;
+    let change_value = selected_total - fee;
     let (outputs, change, change_blinding) = if change_value > 0 {
         let change_index = keystore.allocate_index();
         let change_blinding = keystore.derive_blinding(change_index);
@@ -525,8 +533,8 @@ pub fn build_register_name_request(keystore_bytes: Vec<u8>, store_bytes: Vec<u8>
         outputs,
         kernels: vec![TxKernel {
             excess: Commitment::new(0, excess_r),
-            fee: NAME_REGISTRATION_FEE,
-            signature: Signature::sign(&NAME_REGISTRATION_FEE.to_le_bytes(), &excess_r),
+            fee,
+            signature: Signature::sign(&fee.to_le_bytes(), &excess_r),
         }],
     };
 

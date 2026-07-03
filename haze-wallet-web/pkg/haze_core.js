@@ -659,24 +659,30 @@ export class WasmSendPlan {
 if (Symbol.dispose) WasmSendPlan.prototype[Symbol.dispose] = WasmSendPlan.prototype.free;
 
 /**
- * Builds a RegisterNameOp paying the registration fee from the wallet's own
- * confirmed UTXOs, signed with this wallet's stable naming identity key
- * (the same key every time - so `owner_pubkey` is consistent across
- * registrations from this wallet). The caller must POST `op_json`
- * themselves, then call `commit_register_name` only on success.
+ * Builds a RegisterNameOp paying `fee` (must be >= NAME_REGISTRATION_FEE,
+ * the hard consensus floor - see its doc comment for why the floor itself
+ * can't be a live congestion-derived value) from the wallet's own confirmed
+ * UTXOs, signed with this wallet's stable naming identity key (the same key
+ * every time - so `owner_pubkey` is consistent across registrations from
+ * this wallet). Callers should pass GET /v1/fee-estimate's
+ * suggested_name_fee rather than hardcoding NAME_REGISTRATION_FEE, so
+ * paying "the going rate" adapts to how busy the name-registration backlog
+ * actually is. The caller must POST `op_json` themselves, then call
+ * `commit_register_name` only on success.
  * @param {Uint8Array} keystore_bytes
  * @param {Uint8Array} store_bytes
  * @param {string} name
+ * @param {bigint} fee
  * @returns {WasmRegisterNameResult}
  */
-export function build_register_name_request(keystore_bytes, store_bytes, name) {
+export function build_register_name_request(keystore_bytes, store_bytes, name, fee) {
     const ptr0 = passArray8ToWasm0(keystore_bytes, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passArray8ToWasm0(store_bytes, wasm.__wbindgen_malloc);
     const len1 = WASM_VECTOR_LEN;
     const ptr2 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len2 = WASM_VECTOR_LEN;
-    const ret = wasm.build_register_name_request(ptr0, len0, ptr1, len1, ptr2, len2);
+    const ret = wasm.build_register_name_request(ptr0, len0, ptr1, len1, ptr2, len2, fee);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
