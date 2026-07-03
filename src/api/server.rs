@@ -87,6 +87,14 @@ impl ApiServer {
             .and(mempool_filter_2)
             .and_then(explorer::handle_status);
 
+        // GET /v1/scan-outputs - every on-chain output carrying a
+        // recoverable note, for a restored wallet to try decrypting (see
+        // wallet::note and explorer::handle_scan_outputs).
+        let scan_outputs_route = warp::get()
+            .and(warp::path!("v1" / "scan-outputs"))
+            .and(chain_filter.clone())
+            .and_then(explorer::handle_scan_outputs);
+
         // GET /v1/blocks?limit=N
         let blocks_list_route = warp::get()
             .and(warp::path!("v1" / "blocks"))
@@ -214,6 +222,7 @@ impl ApiServer {
             .or(utxos_route)
             .or(index_route)
             .or(status_route)
+            .or(scan_outputs_route)
             .or(blocks_list_route)
             .or(block_detail_route)
             .or(validators_route)

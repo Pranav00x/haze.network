@@ -300,7 +300,8 @@ import init, {
   build_register_name_request, commit_register_name, wallet_identity_pubkey_hex,
   build_sponsored_register_name_request,
   build_transfer_name_request,
-  generate_keystore_with_mnemonic, restore_keystore_from_mnemonic
+  generate_keystore_with_mnemonic, restore_keystore_from_mnemonic,
+  recover_wallet_from_chain
 } from './pkg/haze_core.js';
 
 // ---------- Node API base (same convention as the explorer) ----------
@@ -642,7 +643,7 @@ function renderRestoreScreen() {
   app.innerHTML = `
     <div class="panel">
       <h2>Restore from phrase</h2>
-      <div class="sub">Enter your 12-word recovery phrase to restore this wallet's keys - this recovers your identity (so any name you'd already registered still works, and you can spend/receive going forward), but NOT your old balance or transaction history. Mimblewimble hides output values in commitments with no recovery data attached, so past UTXOs can't be reconstructed from the phrase alone - only the device that made them ever knew their amounts.</div>
+      <div class="sub">Enter your 12-word recovery phrase to restore this wallet - keys, name, and balance. This scans the whole chain for outputs only you can decrypt, so it can take a moment on a large chain.</div>
       <label>Recovery phrase</label>
       <textarea id="restore-phrase-input" placeholder="12 words, separated by spaces" style="min-height:70px;"></textarea>
       <label>New password</label>
@@ -684,15 +685,30 @@ function renderRestoreScreen() {
       return;
     }
 
-    const encrypted = await encryptKeystore(password, keystoreBytes);
-    localStorage.setItem(KEYSTORE_STORAGE_KEY, JSON.stringify(encrypted));
-    // Balance/history genuinely cannot be recovered from the phrase alone
-    // (see the warning above) - starts from an empty store, same as a
-    // brand-new wallet, and reconciles normally against future activity.
-    saveWalletStoreBytes(wallet_store_new());
-    localStorage.setItem(ONBOARDING_STORAGE_KEY, "true");
-    sessionKeystoreBytes = keystoreBytes;
-    renderDashboard();
+    messageEl.innerHTML = `<div class="message success">Scanning the chain for your outputs&hellip;</div>`;
+
+    try {
+      const [scanRes, utxos] = await Promise.all([
+        fetch(API_BASE + "/v1/scan-outputs"),
+        fetchJson("/v1/utxos"),
+      ]);
+      if (!scanRes.ok) throw new Error("node rejected the scan request");
+      const scanEntriesJson = await scanRes.text();
+      const utxoHexList = utxos.map(bytesToHex);
+
+      const result = recover_wallet_from_chain(keystoreBytes, scanEntriesJson, utxoHexList);
+
+      const encrypted = await encryptKeystore(password, result.keystore_bytes);
+      localStorage.setItem(KEYSTORE_STORAGE_KEY, JSON.stringify(encrypted));
+      localStorage.setItem(STORE_STORAGE_KEY, toB64(result.store_bytes));
+      localStorage.setItem(ONBOARDING_STORAGE_KEY, "true");
+      sessionKeystoreBytes = result.keystore_bytes;
+
+      messageEl.innerHTML = `<div class="message success">Recovered ${result.recovered_count} output(s) totaling ${result.recovered_balance}.</div>`;
+      renderDashboard();
+    } catch (e) {
+      messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+    }
   });
 }
 

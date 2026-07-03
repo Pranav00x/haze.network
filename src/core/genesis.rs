@@ -19,7 +19,11 @@ pub const FAUCET_RESERVE_VALUE: u64 = 50_000_000;
 fn mint_output(value: u64, blinding: Scalar) -> (Output, TxKernel) {
     let commitment = Commitment::new(value, blinding);
     let proof = RangeProof::prove(value, &blinding);
-    let output = Output { commitment, proof };
+    // No note: these are fixed, well-known devnet constants (genesis_blinding
+    // = 42, FAUCET_RESERVE_BLINDING = 43) that every wallet already hardcodes
+    // directly (see wasm::claim_genesis) rather than deriving/discovering via
+    // the note-recovery mechanism.
+    let output = Output { commitment, proof, note: vec![] };
 
     // No corresponding input, so the excess blinding factor is just the
     // negation of the output's own blinding factor.

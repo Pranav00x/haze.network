@@ -294,6 +294,86 @@ export class WasmOwnedOutput {
 }
 if (Symbol.dispose) WasmOwnedOutput.prototype[Symbol.dispose] = WasmOwnedOutput.prototype.free;
 
+export class WasmRecoveryResult {
+    static __wrap(ptr) {
+        const obj = Object.create(WasmRecoveryResult.prototype);
+        obj.__wbg_ptr = ptr;
+        WasmRecoveryResultFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmRecoveryResultFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmrecoveryresult_free(ptr, 0);
+    }
+    /**
+     * @returns {Uint8Array}
+     */
+    get keystore_bytes() {
+        const ret = wasm.__wbg_get_wasmrecoveryresult_keystore_bytes(this.__wbg_ptr);
+        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v1;
+    }
+    /**
+     * @returns {bigint}
+     */
+    get recovered_balance() {
+        const ret = wasm.__wbg_get_wasmrecoveryresult_recovered_balance(this.__wbg_ptr);
+        return BigInt.asUintN(64, ret);
+    }
+    /**
+     * @returns {number}
+     */
+    get recovered_count() {
+        const ret = wasm.__wbg_get_wasmrecoveryresult_recovered_count(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {Uint8Array}
+     */
+    get store_bytes() {
+        const ret = wasm.__wbg_get_wasmrecoveryresult_store_bytes(this.__wbg_ptr);
+        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v1;
+    }
+    /**
+     * @param {Uint8Array} arg0
+     */
+    set keystore_bytes(arg0) {
+        const ptr0 = passArray8ToWasm0(arg0, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_wasmrecoveryresult_keystore_bytes(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * @param {bigint} arg0
+     */
+    set recovered_balance(arg0) {
+        wasm.__wbg_set_wasmrecoveryresult_recovered_balance(this.__wbg_ptr, arg0);
+    }
+    /**
+     * @param {number} arg0
+     */
+    set recovered_count(arg0) {
+        wasm.__wbg_set_wasmrecoveryresult_recovered_count(this.__wbg_ptr, arg0);
+    }
+    /**
+     * @param {Uint8Array} arg0
+     */
+    set store_bytes(arg0) {
+        const ptr0 = passArray8ToWasm0(arg0, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_wasmrecoveryresult_store_bytes(this.__wbg_ptr, ptr0, len0);
+    }
+}
+if (Symbol.dispose) WasmRecoveryResult.prototype[Symbol.dispose] = WasmRecoveryResult.prototype.free;
+
 export class WasmRegisterNameResult {
     static __wrap(ptr) {
         const obj = Object.create(WasmRegisterNameResult.prototype);
@@ -947,6 +1027,37 @@ export function reconcile_wallet_store(store_bytes, chain_utxo_commitments_hex) 
 }
 
 /**
+ * Recovers a restored wallet's balance by trying to decrypt every note the
+ * node hands back from GET /v1/scan-outputs (see api::explorer::
+ * handle_scan_outputs and wallet::note) - a fresh restore has no local
+ * record of which on-chain outputs are its own or what they're worth, since
+ * a Pedersen commitment hides value and there's no local WalletStore left.
+ * Only notes that decrypt successfully under this keystore's own note_key
+ * AND are still present in `chain_utxo_commitments_hex` (i.e. unspent) are
+ * added back as Confirmed - decrypting is already strong proof of
+ * ownership (ChaCha20-Poly1305's auth tag), but the commitment is
+ * recomputed from the recovered (index, value) as a final sanity check
+ * before trusting it.
+ * @param {Uint8Array} keystore_bytes
+ * @param {string} scan_entries_json
+ * @param {string[]} chain_utxo_commitments_hex
+ * @returns {WasmRecoveryResult}
+ */
+export function recover_wallet_from_chain(keystore_bytes, scan_entries_json, chain_utxo_commitments_hex) {
+    const ptr0 = passArray8ToWasm0(keystore_bytes, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(scan_entries_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArrayJsValueToWasm0(chain_utxo_commitments_hex, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.recover_wallet_from_chain(ptr0, len0, ptr1, len1, ptr2, len2);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return WasmRecoveryResult.__wrap(ret[0]);
+}
+
+/**
  * Receiver step: fills in a slate received from a sender. Returns the
  * response JSON to send back, plus the output info the caller should add
  * to its own store as Pending.
@@ -1220,6 +1331,9 @@ const WasmKeystoreAndMnemonicFinalization = (typeof FinalizationRegistry === 'un
 const WasmOwnedOutputFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmownedoutput_free(ptr, 1));
+const WasmRecoveryResultFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmrecoveryresult_free(ptr, 1));
 const WasmRegisterNameResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmregisternameresult_free(ptr, 1));

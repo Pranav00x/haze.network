@@ -44,11 +44,11 @@ mod tests {
 
         println!("Generating range proof for Out1 (25)...");
         let proof1 = RangeProof::prove(25, &r3);
-        let out1 = Output { commitment: Commitment::new(25, r3), proof: proof1 };
+        let out1 = Output { commitment: Commitment::new(25, r3), proof: proof1, note: vec![] };
 
         println!("Generating range proof for Out2 (40)...");
         let proof2 = RangeProof::prove(40, &r4);
-        let out2 = Output { commitment: Commitment::new(40, r4), proof: proof2 };
+        let out2 = Output { commitment: Commitment::new(40, r4), proof: proof2, note: vec![] };
 
         let fee1 = 5u64;
         // Blinding excess equation: excess = sum(in_r) - sum(out_r)
@@ -86,7 +86,7 @@ mod tests {
 
         println!("Generating range proof for Out3 (20)...");
         let proof3 = RangeProof::prove(20, &r5);
-        let out3 = Output { commitment: Commitment::new(20, r5), proof: proof3 };
+        let out3 = Output { commitment: Commitment::new(20, r5), proof: proof3, note: vec![] };
 
         let fee2 = 5u64;
         let excess_r2 = r3 - r5;
@@ -165,6 +165,7 @@ mod tests {
         let coinbase_output = Output {
             commitment: Commitment::new(70, r_coinbase),
             proof: RangeProof::prove(70, &r_coinbase),
+        note: vec![],
         };
         
         let coinbase_excess_r = Scalar::zero() - r_coinbase;
@@ -397,6 +398,7 @@ mod tests {
             let coinbase_output = Output {
                 commitment: Commitment::new(60, r_coinbase),
                 proof: RangeProof::prove(60, &r_coinbase),
+            note: vec![],
             };
             let coinbase_excess_r = Scalar::zero() - r_coinbase;
             let coinbase_kernel = TxKernel {
@@ -495,6 +497,7 @@ mod tests {
         let change_output = Output {
             commitment: Commitment::new(5, r_change),
             proof: RangeProof::prove(5, &r_change),
+        note: vec![],
         };
         let excess_r = r_in - r_change;
         let fee_payment = Transaction {
@@ -536,6 +539,7 @@ mod tests {
         let coinbase_output = Output {
             commitment: Commitment::new(60, coinbase_r),
             proof: RangeProof::prove(60, &coinbase_r),
+        note: vec![],
         };
         let coinbase_excess_r = Scalar::zero() - coinbase_r;
         let body = Transaction {
@@ -628,6 +632,7 @@ mod tests {
         let coinbase_output = Output {
             commitment: Commitment::new(60, coinbase_r),
             proof: RangeProof::prove(60, &coinbase_r),
+        note: vec![],
         };
         let coinbase_excess_r = Scalar::zero() - coinbase_r;
         let body = Transaction {
@@ -662,6 +667,7 @@ mod tests {
         let coinbase_output = Output {
             commitment: Commitment::new(60, coinbase_r),
             proof: RangeProof::prove(60, &coinbase_r),
+        note: vec![],
         };
         let coinbase_excess_r = Scalar::zero() - coinbase_r;
         let body = Transaction {

@@ -26,6 +26,7 @@ const WALLET_DIR: &str = "wallet_data";
 const PENDING_SLATE_FILE: &str = "wallet_data/pending_slate.dat";
 use crate::core::transaction::{Transaction, Input, Output, TxKernel};
 use super::keystore::Keystore;
+use super::note;
 use super::store::WalletStore;
 use super::planner::{blinding_for, select_spendable, PlanError};
 
@@ -133,7 +134,8 @@ pub fn create_slate(
         let change_blinding = keystore.derive_blinding(change_index);
         let change_commitment = Commitment::new(change_value, change_blinding);
         let change_proof = RangeProof::prove(change_value, &change_blinding);
-        let output = Output { commitment: change_commitment, proof: change_proof };
+        let change_note = note::seal(&keystore.note_key(), change_index, change_value);
+        let output = Output { commitment: change_commitment, proof: change_proof, note: change_note };
         (
             Some(output.clone()),
             Some(ChangeInfo { index: change_index, output, value: change_value }),
@@ -182,7 +184,8 @@ pub fn respond_to_slate(keystore: &mut Keystore, slate: &Slate) -> (Slate, Owned
     let r_out = keystore.derive_blinding(out_index);
     let out_commitment = Commitment::new(slate.amount, r_out);
     let out_proof = RangeProof::prove(slate.amount, &r_out);
-    let output = Output { commitment: out_commitment, proof: out_proof };
+    let out_note = note::seal(&keystore.note_key(), out_index, slate.amount);
+    let output = Output { commitment: out_commitment, proof: out_proof, note: out_note };
 
     let k_r = Scalar::zero() - r_out;
     let receiver_excess_point = Commitment::new(0, k_r);

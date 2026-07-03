@@ -132,4 +132,30 @@ impl Keystore {
         self.next_index += 1;
         index
     }
+
+    /// Deterministically derives this wallet's symmetric note-encryption key -
+    /// separate from derive_blinding/identity_key (a different domain-separated
+    /// derivation), used to seal/open each output's recoverable note (see
+    /// wallet::note). Unlike a per-output blinding factor, this one key covers
+    /// every output the wallet ever creates, since restoring from a phrase has
+    /// no local index bookkeeping to know which indices to even check.
+    pub fn note_key(&self) -> [u8; 32] {
+        let mut hasher = Sha512::new();
+        hasher.update(b"Haze Wallet Note Key");
+        hasher.update(&self.seed);
+        let result = hasher.finalize();
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&result[0..32]);
+        key
+    }
+
+    /// Bumps next_index up to at least `min`, without ever decreasing it -
+    /// used after recovering outputs by scanning the chain (see wallet::note),
+    /// so newly allocated indices can't collide with ones a restored wallet
+    /// already used before it lost its local next_index bookkeeping.
+    pub fn ensure_next_index_at_least(&mut self, min: u32) {
+        if self.next_index < min {
+            self.next_index = min;
+        }
+    }
 }

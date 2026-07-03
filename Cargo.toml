@@ -45,9 +45,15 @@ sled = { version = "0.34", optional = true }
 uniffi = { version = "0.28", features = ["cli"], optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
 bip39 = "2.2.2"
+chacha20poly1305 = "0.11.0"
 
-# rand/OsRng (keystore generation, nonces, range proofs) depends on getrandom,
-# which does nothing on wasm32-unknown-unknown unless its "js" feature is
+# rand/OsRng (keystore generation, nonces, range proofs) depends on getrandom
+# 0.2, which does nothing on wasm32-unknown-unknown unless its "js" feature is
 # enabled - without this every RNG call panics at runtime in the browser.
+# chacha20poly1305 (wallet::note) transitively pulls in a *separate* getrandom
+# 0.4 via crypto-common - a different major version needing its own "wasm_js"
+# feature, hence the second (otherwise-unused) direct dependency below just to
+# activate it for the version already in the tree.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
+getrandom04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }

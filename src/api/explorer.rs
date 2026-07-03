@@ -131,6 +131,39 @@ pub async fn handle_status(
     Ok(warp::reply::json(&status))
 }
 
+#[derive(Serialize)]
+pub struct ScanOutputEntry {
+    pub commitment_hex: String,
+    pub note_hex: String,
+}
+
+/// Every output ever created on this chain that carries a recoverable note
+/// (see wallet::note) - spent or unspent. A wallet restoring from a phrase
+/// has no local record of which outputs are its own, so it has to try
+/// decrypting every note it can get its hands on; cross-referencing the
+/// result against GET /v1/utxos tells it which of its own outputs are still
+/// spendable. Outputs with no note (genesis, coinbase - see their
+/// constructors for why) are skipped since there's nothing to try.
+pub async fn handle_scan_outputs(
+    chain: Arc<Mutex<ChainState>>,
+) -> Result<impl warp::Reply, Infallible> {
+    let (blocks, _) = {
+        let c = chain.lock().unwrap();
+        c.get_blocks_from(0, usize::MAX)
+    };
+
+    let entries: Vec<ScanOutputEntry> = blocks.iter()
+        .flat_map(|block| all_outputs(block))
+        .filter(|o| !o.note.is_empty())
+        .map(|o| ScanOutputEntry {
+            commitment_hex: commitment_hex(&o.commitment),
+            note_hex: to_hex(&o.note),
+        })
+        .collect();
+
+    Ok(warp::reply::json(&entries))
+}
+
 #[derive(serde::Deserialize)]
 pub struct BlocksQuery {
     pub limit: Option<usize>,

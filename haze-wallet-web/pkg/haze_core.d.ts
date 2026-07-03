@@ -48,6 +48,16 @@ export class WasmOwnedOutput {
     value: bigint;
 }
 
+export class WasmRecoveryResult {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    keystore_bytes: Uint8Array;
+    recovered_balance: bigint;
+    recovered_count: number;
+    store_bytes: Uint8Array;
+}
+
 export class WasmRegisterNameResult {
     private constructor();
     free(): void;
@@ -199,6 +209,21 @@ export function plan_send(keystore_bytes: Uint8Array, store_bytes: Uint8Array, a
 export function reconcile_wallet_store(store_bytes: Uint8Array, chain_utxo_commitments_hex: string[]): Uint8Array;
 
 /**
+ * Recovers a restored wallet's balance by trying to decrypt every note the
+ * node hands back from GET /v1/scan-outputs (see api::explorer::
+ * handle_scan_outputs and wallet::note) - a fresh restore has no local
+ * record of which on-chain outputs are its own or what they're worth, since
+ * a Pedersen commitment hides value and there's no local WalletStore left.
+ * Only notes that decrypt successfully under this keystore's own note_key
+ * AND are still present in `chain_utxo_commitments_hex` (i.e. unspent) are
+ * added back as Confirmed - decrypting is already strong proof of
+ * ownership (ChaCha20-Poly1305's auth tag), but the commitment is
+ * recomputed from the recovered (index, value) as a final sanity check
+ * before trusting it.
+ */
+export function recover_wallet_from_chain(keystore_bytes: Uint8Array, scan_entries_json: string, chain_utxo_commitments_hex: string[]): WasmRecoveryResult;
+
+/**
  * Receiver step: fills in a slate received from a sender. Returns the
  * response JSON to send back, plus the output info the caller should add
  * to its own store as Pending.
@@ -256,6 +281,7 @@ export interface InitOutput {
     readonly __wbg_get_wasmkeystoreandmnemonic_mnemonic: (a: number) => [number, number];
     readonly __wbg_get_wasmownedoutput_index: (a: number) => number;
     readonly __wbg_get_wasmownedoutput_value: (a: number) => bigint;
+    readonly __wbg_get_wasmrecoveryresult_recovered_count: (a: number) => number;
     readonly __wbg_get_wasmregisternameresult_spent_commitments_hex: (a: number) => [number, number];
     readonly __wbg_get_wasmregisternameresult_updated_keystore_bytes: (a: number) => [number, number];
     readonly __wbg_get_wasmrespondresult_receiver_output: (a: number) => number;
@@ -272,6 +298,7 @@ export interface InitOutput {
     readonly __wbg_set_wasmownedoutput_commitment_hex: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmownedoutput_index: (a: number, b: number) => void;
     readonly __wbg_set_wasmownedoutput_value: (a: number, b: bigint) => void;
+    readonly __wbg_set_wasmrecoveryresult_recovered_count: (a: number, b: number) => void;
     readonly __wbg_set_wasmregisternameresult_spent_commitments_hex: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmregisternameresult_updated_keystore_bytes: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmrespondresult_receiver_output: (a: number, b: number) => void;
@@ -283,6 +310,7 @@ export interface InitOutput {
     readonly __wbg_wasmfinalizedtx_free: (a: number, b: number) => void;
     readonly __wbg_wasmkeystoreandmnemonic_free: (a: number, b: number) => void;
     readonly __wbg_wasmownedoutput_free: (a: number, b: number) => void;
+    readonly __wbg_wasmrecoveryresult_free: (a: number, b: number) => void;
     readonly __wbg_wasmregisternameresult_free: (a: number, b: number) => void;
     readonly __wbg_wasmrespondresult_free: (a: number, b: number) => void;
     readonly __wbg_wasmsendplan_free: (a: number, b: number) => void;
@@ -300,6 +328,7 @@ export interface InitOutput {
     readonly generate_keystore_with_mnemonic: () => number;
     readonly plan_send: (a: number, b: number, c: number, d: number, e: bigint, f: bigint) => [number, number, number];
     readonly reconcile_wallet_store: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly recover_wallet_from_chain: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly respond_to_slate: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly restore_keystore_from_mnemonic: (a: number, b: number) => [number, number, number, number];
     readonly reveal_stake_blinding_hex: (a: number, b: number, c: number, d: number, e: bigint) => [number, number, number, number];
@@ -307,14 +336,20 @@ export interface InitOutput {
     readonly wallet_identity_pubkey_hex: (a: number, b: number) => [number, number, number, number];
     readonly wallet_pending_balance: (a: number, b: number) => [bigint, number, number];
     readonly wallet_store_new: () => [number, number];
+    readonly __wbg_get_wasmrecoveryresult_recovered_balance: (a: number) => bigint;
     readonly __wbg_get_wasmregisternameresult_change: (a: number) => number;
+    readonly __wbg_set_wasmrecoveryresult_recovered_balance: (a: number, b: bigint) => void;
     readonly __wbg_set_wasmregisternameresult_change: (a: number, b: number) => void;
     readonly __wbg_get_wasmsendplan_dest: (a: number) => number;
     readonly __wbg_set_wasmkeystoreandmnemonic_keystore_bytes: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmkeystoreandmnemonic_mnemonic: (a: number, b: number, c: number) => void;
+    readonly __wbg_set_wasmrecoveryresult_keystore_bytes: (a: number, b: number, c: number) => void;
+    readonly __wbg_set_wasmrecoveryresult_store_bytes: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmregisternameresult_op_json: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmrespondresult_response_slate_json: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmrespondresult_updated_keystore_bytes: (a: number, b: number, c: number) => void;
+    readonly __wbg_get_wasmrecoveryresult_keystore_bytes: (a: number) => [number, number];
+    readonly __wbg_get_wasmrecoveryresult_store_bytes: (a: number) => [number, number];
     readonly __wbg_get_wasmrespondresult_updated_keystore_bytes: (a: number) => [number, number];
     readonly __wbg_get_wasmownedoutput_commitment_hex: (a: number) => [number, number];
     readonly __wbg_get_wasmregisternameresult_op_json: (a: number) => [number, number];

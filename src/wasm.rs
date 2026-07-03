@@ -74,6 +74,89 @@ pub fn restore_keystore_from_mnemonic(phrase: String) -> Result<Vec<u8>, JsValue
         .ok_or_else(|| js_err("invalid recovery phrase"))
 }
 
+#[derive(serde::Deserialize)]
+struct ScanEntry {
+    commitment_hex: String,
+    note_hex: String,
+}
+
+#[wasm_bindgen(getter_with_clone)]
+pub struct WasmRecoveryResult {
+    pub keystore_bytes: Vec<u8>,
+    pub store_bytes: Vec<u8>,
+    pub recovered_count: u32,
+    pub recovered_balance: u64,
+}
+
+fn hex_decode(hex: &str) -> Option<Vec<u8>> {
+    if hex.len() % 2 != 0 {
+        return None;
+    }
+    (0..hex.len()).step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok())
+        .collect()
+}
+
+/// Recovers a restored wallet's balance by trying to decrypt every note the
+/// node hands back from GET /v1/scan-outputs (see api::explorer::
+/// handle_scan_outputs and wallet::note) - a fresh restore has no local
+/// record of which on-chain outputs are its own or what they're worth, since
+/// a Pedersen commitment hides value and there's no local WalletStore left.
+/// Only notes that decrypt successfully under this keystore's own note_key
+/// AND are still present in `chain_utxo_commitments_hex` (i.e. unspent) are
+/// added back as Confirmed - decrypting is already strong proof of
+/// ownership (ChaCha20-Poly1305's auth tag), but the commitment is
+/// recomputed from the recovered (index, value) as a final sanity check
+/// before trusting it.
+#[wasm_bindgen]
+pub fn recover_wallet_from_chain(
+    keystore_bytes: Vec<u8>,
+    scan_entries_json: String,
+    chain_utxo_commitments_hex: Vec<String>,
+) -> Result<WasmRecoveryResult, JsValue> {
+    let mut keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
+    let entries: Vec<ScanEntry> = serde_json::from_str(&scan_entries_json).map_err(|_| js_err("invalid scan entries JSON"))?;
+    let utxo_set: HashSet<String> = chain_utxo_commitments_hex.into_iter().collect();
+    let note_key = keystore.note_key();
+
+    let mut store = WalletStore::default();
+    let mut max_index_seen: Option<u32> = None;
+    let mut recovered_balance: u64 = 0;
+    let mut recovered_count: u32 = 0;
+
+    for entry in &entries {
+        let Some(note_bytes) = hex_decode(&entry.note_hex) else { continue };
+        let Some((index, value)) = crate::wallet::note::open(&note_key, &note_bytes) else { continue };
+
+        // Sanity check: the recovered (index, value) must actually reproduce
+        // this exact on-chain commitment - guards against a corrupted or
+        // truncated note that happened to still pass the AEAD tag check.
+        let expected_commitment = Commitment::new(value, keystore.derive_blinding(index));
+        if expected_commitment.to_hex() != entry.commitment_hex {
+            continue;
+        }
+
+        max_index_seen = Some(max_index_seen.map_or(index, |m| m.max(index)));
+
+        if utxo_set.contains(&entry.commitment_hex) {
+            store.add_output(index, value, expected_commitment, OutputStatus::Confirmed);
+            recovered_balance += value;
+            recovered_count += 1;
+        }
+    }
+
+    if let Some(max_index) = max_index_seen {
+        keystore.ensure_next_index_at_least(max_index + 1);
+    }
+
+    Ok(WasmRecoveryResult {
+        keystore_bytes: keystore.to_bytes(),
+        store_bytes: store.to_bytes(),
+        recovered_count,
+        recovered_balance,
+    })
+}
+
 /// Creates an empty wallet store and returns its serialized bytes.
 #[wasm_bindgen]
 pub fn wallet_store_new() -> Vec<u8> {
@@ -427,7 +510,8 @@ pub fn build_register_name_request(keystore_bytes: Vec<u8>, store_bytes: Vec<u8>
         let change_blinding = keystore.derive_blinding(change_index);
         let change_commitment = Commitment::new(change_value, change_blinding);
         let change_proof = RangeProof::prove(change_value, &change_blinding);
-        let output = Output { commitment: change_commitment, proof: change_proof };
+        let change_note = crate::wallet::note::seal(&keystore.note_key(), change_index, change_value);
+        let output = Output { commitment: change_commitment, proof: change_proof, note: change_note };
         let change_info = WasmOwnedOutput { index: change_index, value: change_value, commitment_hex: change_commitment.to_hex() };
         (vec![output], Some(change_info), change_blinding)
     } else {

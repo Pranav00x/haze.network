@@ -81,7 +81,8 @@ impl FaucetState {
             let change_blinding = keystore.derive_blinding(change_index);
             let change_commitment = Commitment::new(change_value, change_blinding);
             let change_proof = RangeProof::prove(change_value, &change_blinding);
-            let output = Output { commitment: change_commitment, proof: change_proof };
+            let change_note = crate::wallet::note::seal(&keystore.note_key(), change_index, change_value);
+            let output = Output { commitment: change_commitment, proof: change_proof, note: change_note };
             store.add_output(change_index, change_value, change_commitment, OutputStatus::Pending);
             (vec![output], change_blinding)
         } else {

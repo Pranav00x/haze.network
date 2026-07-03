@@ -13,6 +13,10 @@ pub struct Input {
 pub struct Output {
     pub commitment: Commitment,
     pub proof: RangeProof,
+    /// Encrypted (index, value) recoverable only by whoever created this
+    /// output (see wallet::note) - not part of consensus validation, purely
+    /// a wallet-restore mechanism riding along on-chain.
+    pub note: Vec<u8>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

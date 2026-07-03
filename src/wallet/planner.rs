@@ -5,6 +5,7 @@ use crate::crypto::range_proof::RangeProof;
 use crate::crypto::schnorr::Signature;
 use crate::core::transaction::{Transaction, Input, Output, TxKernel};
 use super::keystore::Keystore;
+use super::note;
 use super::store::{WalletStore, GENESIS_INDEX, FAUCET_INDEX};
 
 /// A single planned output: the wallet-local index that owns it, its commitment,
@@ -87,11 +88,13 @@ pub fn plan_send(keystore: &mut Keystore, store: &WalletStore, amount: u64, fee:
     }
 
     // 3. Allocate a destination output, and a change output if there's leftover.
+    let note_key = keystore.note_key();
     let dest_index = keystore.allocate_index();
     let dest_blinding = keystore.derive_blinding(dest_index);
     let dest_commitment = Commitment::new(amount, dest_blinding);
     let dest_proof = RangeProof::prove(amount, &dest_blinding);
-    let dest_output = Output { commitment: dest_commitment, proof: dest_proof };
+    let dest_note = note::seal(&note_key, dest_index, amount);
+    let dest_output = Output { commitment: dest_commitment, proof: dest_proof, note: dest_note };
 
     let change_value = selected_total - target;
     let mut outputs = vec![dest_output];
@@ -102,7 +105,8 @@ pub fn plan_send(keystore: &mut Keystore, store: &WalletStore, amount: u64, fee:
         let change_blinding = keystore.derive_blinding(change_index);
         let change_commitment = Commitment::new(change_value, change_blinding);
         let change_proof = RangeProof::prove(change_value, &change_blinding);
-        outputs.push(Output { commitment: change_commitment, proof: change_proof });
+        let change_note = note::seal(&note_key, change_index, change_value);
+        outputs.push(Output { commitment: change_commitment, proof: change_proof, note: change_note });
         output_blindings.push(change_blinding);
         Some((change_index, change_commitment, change_value))
     } else {

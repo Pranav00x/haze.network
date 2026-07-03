@@ -201,9 +201,16 @@ impl Proposer {
                     // 3. Create coinbase output and range proof
                     let coinbase_commitment = Commitment::new(coinbase_value, r_coinbase);
                     let coinbase_proof = crate::crypto::range_proof::RangeProof::prove(coinbase_value, &r_coinbase);
+                    // No note: the coinbase's blinding is randomly generated
+                    // and discarded right here, not derived from any
+                    // Keystore this proposer has access to - block rewards
+                    // aren't yet wired up to be claimable by a validator's
+                    // own wallet at all (a separate, pre-existing gap from
+                    // this note-recovery mechanism).
                     let coinbase_output = crate::core::transaction::Output {
                         commitment: coinbase_commitment,
                         proof: coinbase_proof,
+                        note: vec![],
                     };
 
                     // 4. Create coinbase kernel with additive inverse blinding factor: excess = -r_coinbase * H
