@@ -158,6 +158,7 @@
       <span class="brand-mark">&#9686;</span>
       <span class="brand-name">Haze</span>
       <span class="brand-tag">wallet</span>
+      <span class="brand-tag" id="my-name-badge" style="display:none;"></span>
     </div>
     <div class="node-indicator" id="node-indicator" title="Click to change the Haze node this wallet talks to">
       <span class="node-dot" id="node-dot"></span>
@@ -253,6 +254,10 @@ const STORE_STORAGE_KEY = "hazeWalletStoreBytes";
 // finishes - lets boot() resume onboarding after a reload instead of
 // dropping straight into the dashboard with no name.
 const ONBOARDING_STORAGE_KEY = "hazeOnboardingComplete";
+// Cached copy of this wallet's own registered .haze name, purely a display
+// convenience (the node's registry is the source of truth) - avoids a
+// reverse-lookup scan of the whole registry on every dashboard load.
+const MY_NAME_STORAGE_KEY = "hazeMyName";
 
 function hasWallet() { return localStorage.getItem(KEYSTORE_STORAGE_KEY) !== null; }
 function onboardingComplete() { return localStorage.getItem(ONBOARDING_STORAGE_KEY) === "true"; }
@@ -262,6 +267,40 @@ function loadWalletStoreBytes() {
 }
 function saveWalletStoreBytes(bytes) {
   localStorage.setItem(STORE_STORAGE_KEY, toB64(bytes));
+}
+function saveMyName(name) { localStorage.setItem(MY_NAME_STORAGE_KEY, name); }
+function loadMyName() { return localStorage.getItem(MY_NAME_STORAGE_KEY); }
+function clearMyName() { localStorage.removeItem(MY_NAME_STORAGE_KEY); }
+
+function renderMyNameBadge(name) {
+  const badge = document.getElementById("my-name-badge");
+  if (name) {
+    badge.textContent = displayName(name);
+    badge.style.display = "";
+  } else {
+    badge.style.display = "none";
+  }
+}
+
+// Resolves this wallet's own .haze name for display: trusts the cached name
+// if present, otherwise falls back to scanning the registry once for a
+// record owned by this wallet's identity pubkey (covers names registered
+// before this cache existed, or a fresh browser profile restored from a
+// mnemonic). Best-effort - failures just leave the badge hidden.
+async function resolveMyName() {
+  const cached = loadMyName();
+  if (cached) { renderMyNameBadge(cached); return; }
+  try {
+    const pubkeyHex = wallet_identity_pubkey_hex(sessionKeystoreBytes);
+    const records = await fetchJson("/v1/names?limit=500");
+    const mine = records.find(r => bytesToHex(r.owner_pubkey) === pubkeyHex);
+    if (mine) {
+      saveMyName(mine.name);
+      renderMyNameBadge(mine.name);
+    }
+  } catch (e) {
+    // non-fatal, just leave the badge hidden
+  }
 }
 
 // ---------- pending outgoing slate (two-party payments) ----------
@@ -363,6 +402,7 @@ function renderLockScreen() {
         localStorage.removeItem(KEYSTORE_STORAGE_KEY);
         localStorage.removeItem(STORE_STORAGE_KEY);
         localStorage.removeItem(ONBOARDING_STORAGE_KEY);
+        clearMyName();
         clearPendingSlate();
         renderLockScreen();
       }
@@ -452,6 +492,7 @@ function renderNameStep() {
       messageEl.innerHTML = `<div class="message success">Claiming "${displayName(name)}" - waiting for it to be mined&hellip;</div>`;
 
       pollForNameConfirmation(name, () => {
+        saveMyName(name);
         localStorage.setItem(ONBOARDING_STORAGE_KEY, "true");
         renderDashboard();
       });
@@ -748,6 +789,8 @@ function renderDashboard() {
       pollForNameConfirmation(name, (record) => {
         const link = explorerLinkForNameOp(result.op_json);
         messageEl.innerHTML = `<div class="message success">"${displayName(name)}" is registered! (block ${record.registered_at_block}) <a href="${link}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">View on explorer &rarr;</a></div>`;
+        saveMyName(name);
+        renderMyNameBadge(name);
       });
     } catch (e) {
       messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
@@ -806,6 +849,10 @@ function renderDashboard() {
 
       pollForNameConfirmation(name, () => {
         messageEl.innerHTML = `<div class="message success">"${displayName(name)}" transfer complete.</div>`;
+        if (loadMyName() === name) {
+          clearMyName();
+          renderMyNameBadge(null);
+        }
       }, { isConfirmed: (record) => bytesToHex(record.owner_pubkey) === newOwnerHex.toLowerCase() });
     } catch (e) {
       messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
@@ -864,6 +911,7 @@ function renderDashboard() {
 
   document.getElementById("lock-btn").addEventListener("click", () => {
     sessionKeystoreBytes = null;
+    renderMyNameBadge(null);
     renderLockScreen();
   });
 
@@ -1183,6 +1231,7 @@ function renderDashboard() {
   }
 
   refreshBalance();
+  resolveMyName();
   setInterval(refreshBalance, 5000);
   setInterval(pollInbox, 4000);
 }
