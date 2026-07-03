@@ -142,6 +142,20 @@
 
   .keystore-note { font-family: var(--font-mono); font-size: 11px; color: var(--ink-faint); word-break: break-all; margin-top: 4px; }
 
+  .receive-name-value {
+    font-family: var(--font-display);
+    font-size: clamp(26px, 5vw, 34px);
+    font-weight: 460;
+    color: var(--amber);
+    text-align: center;
+    padding: 22px 12px;
+    background: var(--fog-2);
+    border: 1px solid var(--fog-3);
+    border-radius: 6px;
+    margin-bottom: 18px;
+    word-break: break-word;
+  }
+
   .inbox-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--fog-2); }
   .inbox-item:last-child { border-bottom: none; }
   .inbox-item .inbox-item-text { font-size: 13.5px; }
@@ -449,6 +463,32 @@ function renderMyNameBadge(name) {
   } else {
     badge.style.display = "none";
   }
+  renderReceiveName(name);
+}
+
+// The Receive tab's whole job is showing this wallet's name so someone else
+// can send to it - if there isn't one yet, point at the Names tab instead of
+// showing an empty panel.
+function renderReceiveName(name) {
+  const el = document.getElementById("receive-name-display");
+  if (!el) return; // dashboard not rendered yet - renderMyNameBadge runs before it in some paths
+  if (name) {
+    el.innerHTML = `
+      <div class="receive-name-value">${displayName(name)}</div>
+      <button class="btn-primary" id="receive-name-copy-btn">Copy address</button>
+    `;
+    document.getElementById("receive-name-copy-btn").addEventListener("click", async (e) => {
+      try {
+        await navigator.clipboard.writeText(displayName(name));
+        e.target.textContent = "Copied!";
+      } catch (err) {
+        e.target.textContent = displayName(name); // clipboard blocked - show it so it can be selected/copied by hand
+      }
+      setTimeout(() => { e.target.textContent = "Copy address"; }, 1500);
+    });
+  } else {
+    el.innerHTML = `<div class="message error">You haven't claimed a name yet - head to the Names tab to get one, it's free.</div>`;
+  }
 }
 
 // Resolves this wallet's own .haze name for display: trusts the cached name
@@ -459,6 +499,7 @@ function renderMyNameBadge(name) {
 async function resolveMyName() {
   const cached = loadMyName();
   if (cached) { renderMyNameBadge(cached); return; }
+  renderMyNameBadge(null); // shows the Receive tab's "claim a name" prompt while resolving
   try {
     const pubkeyHex = wallet_identity_pubkey_hex(sessionKeystoreBytes);
     const records = await fetchJson("/v1/names?limit=500");
@@ -843,23 +884,10 @@ function renderDashboard() {
       </div>
 
       <div class="tab-panel" data-tab="receive">
-        <div class="panel">
-          <h2>Receiving to your name</h2>
-          <div class="sub">Payments sent to your name are credited automatically the moment your wallet sees them - nothing to accept. Check the History tab for a record of what's come in.</div>
-        </div>
-
-        <div class="panel">
-          <h2>Receive a payment</h2>
-          <div class="sub">Paste the slate someone sent you. This builds your response - send it back to them so they can complete and broadcast the payment.</div>
-          <label>Incoming slate</label>
-          <textarea id="receive-slate-in" placeholder="Paste the slate JSON here"></textarea>
-          <button class="btn-primary" id="receive-btn">Respond</button>
-          <div id="receive-message"></div>
-          <div id="receive-output" style="display:none;">
-            <label>Response to send back</label>
-            <textarea id="receive-slate-out" readonly></textarea>
-            <button class="btn-ghost btn-small" id="receive-copy-btn" style="margin-top:10px;">Copy</button>
-          </div>
+        <div class="panel" id="receive-name-panel">
+          <h2>Your Haze address</h2>
+          <div class="sub">Share this with anyone who wants to send you Haze - they just need your name, nothing else. Payments land here automatically, no accepting required.</div>
+          <div id="receive-name-display"></div>
         </div>
       </div>
 
@@ -1268,38 +1296,6 @@ function renderDashboard() {
     await navigator.clipboard.writeText(document.getElementById("pay-slate-out").value);
     document.getElementById("pay-copy-btn").textContent = "Copied!";
     setTimeout(() => { document.getElementById("pay-copy-btn").textContent = "Copy"; }, 1500);
-  });
-
-  document.getElementById("receive-btn").addEventListener("click", () => {
-    const input = document.getElementById("receive-slate-in").value.trim();
-    const messageEl = document.getElementById("receive-message");
-    if (!input) {
-      messageEl.innerHTML = `<div class="message error">Paste the incoming slate first.</div>`;
-      return;
-    }
-
-    try {
-      const result = respond_to_slate(sessionKeystoreBytes, input);
-
-      sessionKeystoreBytes = result.updated_keystore_bytes;
-      let storeBytes = loadWalletStoreBytes();
-      storeBytes = commit_receive(storeBytes, result.receiver_output);
-      saveWalletStoreBytes(storeBytes);
-
-      document.getElementById("receive-slate-out").value = result.response_slate_json;
-      document.getElementById("receive-output").style.display = "";
-      messageEl.innerHTML = `<div class="message success">Received ${result.receiver_output.value}. Send the response below back to the sender.</div>`;
-      document.getElementById("receive-slate-in").value = "";
-      refreshBalance();
-    } catch (e) {
-      messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
-    }
-  });
-
-  document.getElementById("receive-copy-btn").addEventListener("click", async () => {
-    await navigator.clipboard.writeText(document.getElementById("receive-slate-out").value);
-    document.getElementById("receive-copy-btn").textContent = "Copied!";
-    setTimeout(() => { document.getElementById("receive-copy-btn").textContent = "Copy"; }, 1500);
   });
 
   document.getElementById("complete-btn").addEventListener("click", async () => {
