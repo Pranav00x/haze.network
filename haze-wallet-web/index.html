@@ -38,7 +38,7 @@
     font-family: var(--font-body);
     margin: 0;
     min-height: 100vh;
-    padding: clamp(16px, 4vw, 44px) clamp(16px, 5vw, 64px) 80px;
+    padding: clamp(16px, 4vw, 44px) clamp(16px, 5vw, 64px) 110px;
   }
 
   .topbar {
@@ -147,6 +147,49 @@
   .inbox-item .inbox-item-text { font-size: 13.5px; }
   .inbox-item .inbox-item-from { font-family: var(--font-mono); font-size: 11px; color: var(--ink-faint); word-break: break-all; }
   .inbox-item button { margin-top: 0; flex-shrink: 0; }
+
+  /* ---------- tabbed dashboard + floating glass bottom nav ---------- */
+  .tab-panel { display: none; }
+  .tab-panel.active { display: grid; gap: 24px; animation: tab-in 0.18s ease-out; }
+  @keyframes tab-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+  .bottom-nav {
+    position: fixed;
+    left: 50%;
+    bottom: 22px;
+    transform: translateX(-50%);
+    z-index: 50;
+    display: flex;
+    gap: 2px;
+    padding: 6px;
+    border-radius: 999px;
+    background: oklch(0.22 0.02 292 / 0.55);
+    backdrop-filter: blur(22px) saturate(170%);
+    -webkit-backdrop-filter: blur(22px) saturate(170%);
+    border: 1px solid oklch(1 0 0 / 0.09);
+    box-shadow: 0 12px 36px oklch(0 0 0 / 0.4), inset 0 1px 0 oklch(1 0 0 / 0.07);
+  }
+  .nav-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    width: 58px;
+    padding: 9px 4px 8px;
+    border-radius: 999px;
+    background: transparent;
+    border: none;
+    color: var(--ink-faint);
+    cursor: pointer;
+    margin: 0;
+    transition: background 0.16s ease, color 0.16s ease;
+  }
+  .nav-item svg { width: 19px; height: 19px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; display: block; }
+  .nav-item .nav-label { font-family: var(--font-body); font-size: 9px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+  .nav-item:hover { color: var(--ink); }
+  .nav-item.active { background: var(--amber-dim); color: var(--amber); }
+  .nav-item.active svg { stroke: var(--amber); }
 
   ::selection { background: var(--amber-dim); }
 </style>
@@ -576,136 +619,179 @@ function renderDashboard() {
   const app = document.getElementById("app");
   app.innerHTML = `
     <div class="dashboard">
-      <div class="stat-row">
-        <div class="stat-item">
-          <div class="stat-label">Confirmed</div>
-          <div class="stat-value" id="stat-confirmed">&mdash;</div>
+
+      <div class="tab-panel active" data-tab="wallet">
+        <div class="stat-row">
+          <div class="stat-item">
+            <div class="stat-label">Confirmed</div>
+            <div class="stat-value" id="stat-confirmed">&mdash;</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Pending</div>
+            <div class="stat-value accent" id="stat-pending">&mdash;</div>
+          </div>
         </div>
-        <div class="stat-item">
-          <div class="stat-label">Pending</div>
-          <div class="stat-value accent" id="stat-pending">&mdash;</div>
+
+        <div class="action-row" style="margin-bottom: 4px;">
+          <button class="btn-primary" id="faucet-btn" style="margin-top:0;">Get devnet funds</button>
         </div>
-      </div>
+        <div id="dash-message"></div>
 
-      <div class="action-row" style="margin-bottom: 4px;">
-        <button class="btn-primary" id="faucet-btn" style="margin-top:0;">Get devnet funds</button>
-      </div>
-      <div id="dash-message"></div>
-
-      <div class="panel">
-        <h2>Send</h2>
-        <div class="sub">Splits/consolidates your own confirmed UTXOs (self-pay). Fee is fixed at 5.</div>
-        <label>Amount</label>
-        <input type="number" id="send-amount" min="1" />
-        <button class="btn-primary" id="send-btn">Send</button>
-        <div id="send-message"></div>
-      </div>
-
-      <div class="panel">
-        <h2>Send to a name</h2>
-        <div class="sub">Sends directly to someone's registered .haze name - no copy-pasting slates. Resolves the name, drops the payment request in their inbox automatically, and completes it the moment they accept. Fee is fixed at 5.</div>
-        <label>Recipient's name</label>
-        <input type="text" id="name-send-recipient" placeholder="e.g. harshit" autocomplete="off" />
-        <label>Amount</label>
-        <input type="number" id="name-send-amount" min="1" />
-        <button class="btn-primary" id="name-send-btn">Send</button>
-        <div id="name-send-message"></div>
-      </div>
-
-      <div class="panel" id="incoming-requests-panel" style="display:none;">
-        <h2>Incoming payments</h2>
-        <div class="sub">Payment requests sent to your identity pubkey, waiting for you to accept.</div>
-        <div id="incoming-requests-list"></div>
-      </div>
-
-      <div class="panel">
-        <h2>Pay someone</h2>
-        <div class="sub">Builds a payment slate for another wallet. Send them the text below (chat, email, anywhere) - they respond, then you paste their response into "Complete a payment" to broadcast it. Fee is fixed at 5.</div>
-        <label>Amount</label>
-        <input type="number" id="pay-amount" min="1" />
-        <button class="btn-primary" id="pay-btn">Create payment slate</button>
-        <div id="pay-message"></div>
-        <div id="pay-output" style="display:none;">
-          <label>Slate to send</label>
-          <textarea id="pay-slate-out" readonly></textarea>
-          <button class="btn-ghost btn-small" id="pay-copy-btn" style="margin-top:10px;">Copy</button>
+        <div class="panel">
+          <h2>Send</h2>
+          <div class="sub">Splits/consolidates your own confirmed UTXOs (self-pay). Fee is fixed at 5.</div>
+          <label>Amount</label>
+          <input type="number" id="send-amount" min="1" />
+          <button class="btn-primary" id="send-btn">Send</button>
+          <div id="send-message"></div>
         </div>
       </div>
 
-      <div class="panel">
-        <h2>Receive a payment</h2>
-        <div class="sub">Paste the slate someone sent you. This builds your response - send it back to them so they can complete and broadcast the payment.</div>
-        <label>Incoming slate</label>
-        <textarea id="receive-slate-in" placeholder="Paste the slate JSON here"></textarea>
-        <button class="btn-primary" id="receive-btn">Respond</button>
-        <div id="receive-message"></div>
-        <div id="receive-output" style="display:none;">
-          <label>Response to send back</label>
-          <textarea id="receive-slate-out" readonly></textarea>
-          <button class="btn-ghost btn-small" id="receive-copy-btn" style="margin-top:10px;">Copy</button>
+      <div class="tab-panel" data-tab="send">
+        <div class="panel">
+          <h2>Send to a name</h2>
+          <div class="sub">Sends directly to someone's registered .haze name - no copy-pasting slates. Resolves the name, drops the payment request in their inbox automatically, and completes it the moment they accept. Fee is fixed at 5.</div>
+          <label>Recipient's name</label>
+          <input type="text" id="name-send-recipient" placeholder="e.g. harshit" autocomplete="off" />
+          <label>Amount</label>
+          <input type="number" id="name-send-amount" min="1" />
+          <button class="btn-primary" id="name-send-btn">Send</button>
+          <div id="name-send-message"></div>
+        </div>
+
+        <div class="panel">
+          <h2>Pay someone</h2>
+          <div class="sub">Builds a payment slate for another wallet. Send them the text below (chat, email, anywhere) - they respond, then you paste their response into "Complete a payment" to broadcast it. Fee is fixed at 5.</div>
+          <label>Amount</label>
+          <input type="number" id="pay-amount" min="1" />
+          <button class="btn-primary" id="pay-btn">Create payment slate</button>
+          <div id="pay-message"></div>
+          <div id="pay-output" style="display:none;">
+            <label>Slate to send</label>
+            <textarea id="pay-slate-out" readonly></textarea>
+            <button class="btn-ghost btn-small" id="pay-copy-btn" style="margin-top:10px;">Copy</button>
+          </div>
+        </div>
+
+        <div class="panel" id="complete-panel" style="display:none;">
+          <h2>Complete a payment</h2>
+          <div class="sub" id="complete-sub"></div>
+          <label>Their response</label>
+          <textarea id="complete-slate-in" placeholder="Paste their response slate JSON here"></textarea>
+          <button class="btn-primary" id="complete-btn">Finalize &amp; broadcast</button>
+          <div id="complete-message"></div>
+          <span class="toggle-link" id="discard-pending-link">Discard this pending payment</span>
         </div>
       </div>
 
-      <div class="panel" id="complete-panel" style="display:none;">
-        <h2>Complete a payment</h2>
-        <div class="sub" id="complete-sub"></div>
-        <label>Their response</label>
-        <textarea id="complete-slate-in" placeholder="Paste their response slate JSON here"></textarea>
-        <button class="btn-primary" id="complete-btn">Finalize &amp; broadcast</button>
-        <div id="complete-message"></div>
-        <span class="toggle-link" id="discard-pending-link">Discard this pending payment</span>
-      </div>
+      <div class="tab-panel" data-tab="receive">
+        <div class="panel" id="incoming-requests-panel" style="display:none;">
+          <h2>Incoming payments</h2>
+          <div class="sub">Payment requests sent to your identity pubkey, waiting for you to accept.</div>
+          <div id="incoming-requests-list"></div>
+        </div>
 
-      <div class="panel">
-        <h2>Become a validator</h2>
-        <div class="sub">Stakes your single largest confirmed output as a validator. This doesn't spend anything - it just registers that output's commitment on-chain, proving ownership by revealing its blinding factor to the node. To actually propose blocks with it (not just appear in the validator list), you need to run your own node with that output's private key - see "Reveal my validator key" below.</div>
-        <label>Minimum amount to stake</label>
-        <input type="number" id="stake-min" min="1" value="1" />
-        <button class="btn-primary" id="stake-btn">Register as validator</button>
-        <div id="stake-message"></div>
-        <span class="toggle-link" id="reveal-key-link">Reveal my validator key (to run my own node)</span>
-        <div id="reveal-key-output" style="display:none;">
-          <label>Your validator's private key (do not share)</label>
-          <textarea id="reveal-key-text" readonly></textarea>
-          <div class="keystore-note">Run your own validator with: <code>haze node --stake-key &lt;this hex&gt; --bind 0.0.0.0:8333 --rpc-port 8332 --peers &lt;this node's P2P address&gt;</code></div>
+        <div class="panel">
+          <h2>Receive a payment</h2>
+          <div class="sub">Paste the slate someone sent you. This builds your response - send it back to them so they can complete and broadcast the payment.</div>
+          <label>Incoming slate</label>
+          <textarea id="receive-slate-in" placeholder="Paste the slate JSON here"></textarea>
+          <button class="btn-primary" id="receive-btn">Respond</button>
+          <div id="receive-message"></div>
+          <div id="receive-output" style="display:none;">
+            <label>Response to send back</label>
+            <textarea id="receive-slate-out" readonly></textarea>
+            <button class="btn-ghost btn-small" id="receive-copy-btn" style="margin-top:10px;">Copy</button>
+          </div>
         </div>
       </div>
 
-      <div class="panel">
-        <h2>Haze Naming Registry</h2>
-        <div class="sub">Register a permanent, first-come-first-served name that resolves to your wallet's identity pubkey - lowercase letters/digits/-/_, 3-32 characters. One-time fee, no expiry. A name currently only resolves to a bare pubkey - there's no way yet for someone to reach you with it to exchange a payment slate.</div>
-        <label>Name</label>
-        <input type="text" id="name-input" placeholder="e.g. pranav" autocomplete="off" />
-        <button class="btn-primary" id="register-name-btn">Register name</button>
-        <div id="register-name-message"></div>
-        <div class="keystore-note" id="identity-pubkey-note"></div>
+      <div class="tab-panel" data-tab="names">
+        <div class="panel">
+          <h2>Haze Naming Registry</h2>
+          <div class="sub">Register a permanent, first-come-first-served name that resolves to your wallet's identity pubkey - lowercase letters/digits/-/_, 3-32 characters. One-time fee, no expiry. A name currently only resolves to a bare pubkey - there's no way yet for someone to reach you with it to exchange a payment slate.</div>
+          <label>Name</label>
+          <input type="text" id="name-input" placeholder="e.g. pranav" autocomplete="off" />
+          <button class="btn-primary" id="register-name-btn">Register name</button>
+          <div id="register-name-message"></div>
+          <div class="keystore-note" id="identity-pubkey-note"></div>
+        </div>
+
+        <div class="panel">
+          <h2>Look up a name</h2>
+          <div class="sub">Resolves a registered name to its owner and identity pubkey.</div>
+          <label>Name</label>
+          <input type="text" id="lookup-name-input" placeholder="e.g. pranav" autocomplete="off" />
+          <button class="btn-primary" id="lookup-name-btn">Look up</button>
+          <div id="lookup-name-result"></div>
+        </div>
+
+        <div class="panel">
+          <h2>Transfer a name</h2>
+          <div class="sub">Hands ownership of a name you currently own to someone else's identity pubkey. No fee - just proves you're the current owner. The recipient needs to share their identity pubkey with you first (shown on their own wallet's dashboard).</div>
+          <label>Name</label>
+          <input type="text" id="transfer-name-input" placeholder="e.g. pranav" autocomplete="off" />
+          <label>New owner's identity pubkey</label>
+          <input type="text" id="transfer-new-owner-input" placeholder="hex pubkey" autocomplete="off" />
+          <button class="btn-primary" id="transfer-name-btn">Transfer</button>
+          <div id="transfer-name-message"></div>
+        </div>
       </div>
 
-      <div class="panel">
-        <h2>Look up a name</h2>
-        <div class="sub">Resolves a registered name to its owner and identity pubkey.</div>
-        <label>Name</label>
-        <input type="text" id="lookup-name-input" placeholder="e.g. pranav" autocomplete="off" />
-        <button class="btn-primary" id="lookup-name-btn">Look up</button>
-        <div id="lookup-name-result"></div>
+      <div class="tab-panel" data-tab="more">
+        <div class="panel">
+          <h2>Become a validator</h2>
+          <div class="sub">Stakes your single largest confirmed output as a validator. This doesn't spend anything - it just registers that output's commitment on-chain, proving ownership by revealing its blinding factor to the node. To actually propose blocks with it (not just appear in the validator list), you need to run your own node with that output's private key - see "Reveal my validator key" below.</div>
+          <label>Minimum amount to stake</label>
+          <input type="number" id="stake-min" min="1" value="1" />
+          <button class="btn-primary" id="stake-btn">Register as validator</button>
+          <div id="stake-message"></div>
+          <span class="toggle-link" id="reveal-key-link">Reveal my validator key (to run my own node)</span>
+          <div id="reveal-key-output" style="display:none;">
+            <label>Your validator's private key (do not share)</label>
+            <textarea id="reveal-key-text" readonly></textarea>
+            <div class="keystore-note">Run your own validator with: <code>haze node --stake-key &lt;this hex&gt; --bind 0.0.0.0:8333 --rpc-port 8332 --peers &lt;this node's P2P address&gt;</code></div>
+          </div>
+        </div>
+
+        <div class="action-row">
+          <button class="btn-ghost btn-small" id="lock-btn">Lock wallet</button>
+        </div>
       </div>
 
-      <div class="panel">
-        <h2>Transfer a name</h2>
-        <div class="sub">Hands ownership of a name you currently own to someone else's identity pubkey. No fee - just proves you're the current owner. The recipient needs to share their identity pubkey with you first (shown on their own wallet's dashboard).</div>
-        <label>Name</label>
-        <input type="text" id="transfer-name-input" placeholder="e.g. pranav" autocomplete="off" />
-        <label>New owner's identity pubkey</label>
-        <input type="text" id="transfer-new-owner-input" placeholder="hex pubkey" autocomplete="off" />
-        <button class="btn-primary" id="transfer-name-btn">Transfer</button>
-        <div id="transfer-name-message"></div>
-      </div>
-
-      <div class="action-row">
-        <button class="btn-ghost btn-small" id="lock-btn">Lock wallet</button>
-      </div>
     </div>
+
+    <nav class="bottom-nav">
+      <button class="nav-item active" data-tab="wallet">
+        <svg viewBox="0 0 24 24"><path d="M4 11l8-7 8 7M6 10v9a1 1 0 0 0 1 1h4v-6h2v6h4a1 1 0 0 0 1-1v-9"/></svg>
+        <span class="nav-label">Wallet</span>
+      </button>
+      <button class="nav-item" data-tab="send">
+        <svg viewBox="0 0 24 24"><path d="M7 17L17 7M8 7h9v9"/></svg>
+        <span class="nav-label">Send</span>
+      </button>
+      <button class="nav-item" data-tab="receive">
+        <svg viewBox="0 0 24 24"><path d="M17 7L7 17M16 17H7V8"/></svg>
+        <span class="nav-label">Receive</span>
+      </button>
+      <button class="nav-item" data-tab="names">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M16 12v1.4a2.6 2.6 0 0 0 5 0V12a9 9 0 1 0-5.5 8.3"/></svg>
+        <span class="nav-label">Names</span>
+      </button>
+      <button class="nav-item" data-tab="more">
+        <svg viewBox="0 0 24 24" stroke-width="0" fill="currentColor"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
+        <span class="nav-label">More</span>
+      </button>
+    </nav>
   `;
+
+  document.querySelectorAll(".nav-item").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const tab = btn.dataset.tab;
+      document.querySelectorAll(".tab-panel").forEach((el) => el.classList.toggle("active", el.dataset.tab === tab));
+      document.querySelectorAll(".nav-item").forEach((el) => el.classList.toggle("active", el === btn));
+    });
+  });
 
   document.getElementById("stake-btn").addEventListener("click", async () => {
     const minValue = BigInt(document.getElementById("stake-min").value || "1");
