@@ -563,7 +563,9 @@ function renderLockScreen() {
       ${exists ? "" : `<label>Confirm password</label><input type="password" id="pw-confirm-input" autocomplete="new-password" />`}
       <button class="btn-primary" id="submit-btn">${exists ? "Unlock" : "Create Wallet"}</button>
       <div id="lock-message"></div>
-      ${exists ? `<span class="toggle-link" id="reset-link">Wrong browser / start fresh instead?</span>` : ""}
+      ${exists
+        ? `<span class="toggle-link" id="reset-link">Wrong browser / start fresh instead?</span>`
+        : `<span class="toggle-link" id="restore-link">Already have a recovery phrase? Restore it</span>`}
     </div>
   `;
 
@@ -618,6 +620,70 @@ function renderLockScreen() {
       }
     });
   }
+
+  const restoreLink = document.getElementById("restore-link");
+  if (restoreLink) {
+    restoreLink.addEventListener("click", () => renderRestoreScreen());
+  }
+}
+
+function renderRestoreScreen() {
+  const app = document.getElementById("app");
+  app.innerHTML = `
+    <div class="panel">
+      <h2>Restore from phrase</h2>
+      <div class="sub">Enter your 12-word recovery phrase to restore this wallet's keys - this recovers your identity (so any name you'd already registered still works, and you can spend/receive going forward), but NOT your old balance or transaction history. Mimblewimble hides output values in commitments with no recovery data attached, so past UTXOs can't be reconstructed from the phrase alone - only the device that made them ever knew their amounts.</div>
+      <label>Recovery phrase</label>
+      <textarea id="restore-phrase-input" placeholder="12 words, separated by spaces" style="min-height:70px;"></textarea>
+      <label>New password</label>
+      <input type="password" id="restore-pw-input" autocomplete="new-password" />
+      <label>Confirm password</label>
+      <input type="password" id="restore-pw-confirm-input" autocomplete="new-password" />
+      <button class="btn-primary" id="restore-btn">Restore wallet</button>
+      <div id="restore-message"></div>
+      <span class="toggle-link" id="restore-back-link">Back</span>
+    </div>
+  `;
+
+  document.getElementById("restore-back-link").addEventListener("click", () => renderLockScreen());
+
+  document.getElementById("restore-btn").addEventListener("click", async () => {
+    const phrase = document.getElementById("restore-phrase-input").value.trim();
+    const password = document.getElementById("restore-pw-input").value;
+    const confirm = document.getElementById("restore-pw-confirm-input").value;
+    const messageEl = document.getElementById("restore-message");
+
+    if (!phrase) {
+      messageEl.innerHTML = `<div class="message error">Enter your recovery phrase.</div>`;
+      return;
+    }
+    if (password !== confirm) {
+      messageEl.innerHTML = `<div class="message error">Passwords don't match.</div>`;
+      return;
+    }
+    if (password.length < 8) {
+      messageEl.innerHTML = `<div class="message error">Use at least 8 characters.</div>`;
+      return;
+    }
+
+    let keystoreBytes;
+    try {
+      keystoreBytes = restore_keystore_from_mnemonic(phrase);
+    } catch (e) {
+      messageEl.innerHTML = `<div class="message error">That doesn't look like a valid recovery phrase.</div>`;
+      return;
+    }
+
+    const encrypted = await encryptKeystore(password, keystoreBytes);
+    localStorage.setItem(KEYSTORE_STORAGE_KEY, JSON.stringify(encrypted));
+    // Balance/history genuinely cannot be recovered from the phrase alone
+    // (see the warning above) - starts from an empty store, same as a
+    // brand-new wallet, and reconciles normally against future activity.
+    saveWalletStoreBytes(wallet_store_new());
+    localStorage.setItem(ONBOARDING_STORAGE_KEY, "true");
+    sessionKeystoreBytes = keystoreBytes;
+    renderDashboard();
+  });
 }
 
 // ---------- UI: onboarding wizard (mnemonic -> fund -> choose a name) ----------
