@@ -55,11 +55,19 @@ impl Proposer {
         println!("Staking proposer started. Monitoring slots...");
 
         loop {
-            // Check slots every second - short enough to feel instant for the
-            // wallet's poll-based confirmation UX, long enough that a single
-            // validator on modest hardware (range proof generation is the
-            // slow part) comfortably finishes one slot before the next.
-            sleep(Duration::from_millis(1000)).await;
+            // Check slots every 10 seconds. A 1s interval only "worked"
+            // because devnet has effectively one validator with ~0 network
+            // latency - select_proposer itself needs no time (pure hash of
+            // height+prev_hash), but the NEXT chosen proposer only has a
+            // correct view once the previous block actually propagates to
+            // them. With real geographically-distributed validators, an
+            // interval shorter than gossip propagation + verification time
+            // causes proposers to act on stale tips more often - more forks,
+            // more orphaned blocks, less settled finality. 10s gives real
+            // multi-validator networks comfortable room while still being
+            // fast enough that "how do I show live progress" is a wallet
+            // polling-cadence problem, not a protocol one.
+            sleep(Duration::from_millis(10_000)).await;
 
             let (next_height, prev_hash, my_validator) = {
                 let c = self.chain.lock().unwrap();

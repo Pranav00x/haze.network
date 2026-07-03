@@ -175,8 +175,8 @@
     align-items: center;
     justify-content: center;
     gap: 3px;
-    width: 58px;
-    padding: 9px 4px 8px;
+    width: 50px;
+    padding: 9px 2px 8px;
     border-radius: 999px;
     background: transparent;
     border: none;
@@ -185,11 +185,67 @@
     margin: 0;
     transition: background 0.16s ease, color 0.16s ease;
   }
-  .nav-item svg { width: 19px; height: 19px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; display: block; }
-  .nav-item .nav-label { font-family: var(--font-body); font-size: 9px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+  .nav-item svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; display: block; }
+  .nav-item .nav-label { font-family: var(--font-body); font-size: 8.5px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; }
   .nav-item:hover { color: var(--ink); }
   .nav-item.active { background: var(--amber-dim); color: var(--amber); }
   .nav-item.active svg { stroke: var(--amber); }
+
+  /* ---------- home-screen quick actions (Trust Wallet/MetaMask style) ---------- */
+  .quick-actions { display: flex; gap: clamp(10px, 3vw, 20px); }
+  .quick-action {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    background: transparent;
+    border: none;
+    color: var(--ink-dim);
+    cursor: pointer;
+    margin: 0;
+    padding: 0;
+    flex: 1;
+  }
+  .quick-action .quick-action-circle {
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    background: var(--fog-1);
+    border: 1px solid var(--fog-3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.16s ease, border-color 0.16s ease;
+  }
+  .quick-action svg { width: 20px; height: 20px; stroke: var(--amber); fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .quick-action .quick-action-label { font-size: 11.5px; font-weight: 600; color: var(--ink-dim); }
+  .quick-action:hover .quick-action-circle { background: var(--amber-dim); border-color: var(--amber); }
+
+  /* ---------- history / activity log ---------- */
+  .activity-item { display: flex; align-items: center; gap: 14px; padding: 14px 0; border-bottom: 1px solid var(--fog-2); }
+  .activity-item:last-child { border-bottom: none; }
+  .activity-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    background: var(--fog-2);
+  }
+  .activity-icon svg { width: 16px; height: 16px; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .activity-icon.in { background: oklch(0.75 0.14 155 / 0.14); }
+  .activity-icon.in svg { stroke: var(--ok); }
+  .activity-icon.out { background: var(--amber-dim); }
+  .activity-icon.out svg { stroke: var(--amber); }
+  .activity-icon.meta { background: oklch(0.68 0.05 285 / 0.16); }
+  .activity-icon.meta svg { stroke: var(--mist); }
+  .activity-body { flex: 1; min-width: 0; }
+  .activity-title { font-size: 13.5px; font-weight: 600; }
+  .activity-detail { font-family: var(--font-mono); font-size: 11px; color: var(--ink-faint); word-break: break-all; margin-top: 2px; }
+  .activity-time { font-size: 11px; color: var(--ink-faint); flex-shrink: 0; white-space: nowrap; }
+  .activity-empty { color: var(--ink-faint); font-size: 13.5px; padding: 12px 0; }
 
   ::selection { background: var(--amber-dim); }
 </style>
@@ -315,6 +371,76 @@ function saveMyName(name) { localStorage.setItem(MY_NAME_STORAGE_KEY, name); }
 function loadMyName() { return localStorage.getItem(MY_NAME_STORAGE_KEY); }
 function clearMyName() { localStorage.removeItem(MY_NAME_STORAGE_KEY); }
 
+// ---------- unified activity/history log ----------
+// A single append-only log of everything that moved funds or touched a name
+// from this wallet, newest first - gives the History tab a real place to
+// live instead of scattering "it worked" messages across Send/Receive/Names.
+// Purely a local display record (the chain/registry are the source of
+// truth for actual state); persisted so it survives a reload.
+const ACTIVITY_STORAGE_KEY = "hazeActivityLog";
+const MAX_ACTIVITY_ENTRIES = 50;
+
+function loadActivity() {
+  try {
+    return JSON.parse(localStorage.getItem(ACTIVITY_STORAGE_KEY) || "[]");
+  } catch (e) {
+    return [];
+  }
+}
+function pushActivity(entry) {
+  const log = loadActivity();
+  log.unshift({ ...entry, ts: Date.now() });
+  log.length = Math.min(log.length, MAX_ACTIVITY_ENTRIES);
+  localStorage.setItem(ACTIVITY_STORAGE_KEY, JSON.stringify(log));
+  renderHistory();
+}
+
+function relativeTime(ts) {
+  const seconds = Math.floor((Date.now() - ts) / 1000);
+  if (seconds < 5) return "just now";
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return new Date(ts).toLocaleDateString();
+}
+
+const ACTIVITY_ICONS = {
+  sent: { cls: "out", svg: '<path d="M7 17L17 7M8 7h9v9"/>' },
+  received: { cls: "in", svg: '<path d="M17 7L7 17M16 17H7V8"/>' },
+  faucet: { cls: "in", svg: '<path d="M12 4v12m0 0l-4-4m4 4l4-4M5 20h14"/>' },
+  name_registered: { cls: "meta", svg: '<circle cx="12" cy="12" r="4"/><path d="M16 12v1.4a2.6 2.6 0 0 0 5 0V12a9 9 0 1 0-5.5 8.3"/>' },
+  name_transferred: { cls: "meta", svg: '<path d="M4 12h13m0 0l-4-4m4 4l-4 4"/>' },
+  validator: { cls: "meta", svg: '<path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/>' },
+};
+
+// Renders into the History tab if it's currently in the DOM - a no-op
+// (harmlessly skipped) when called from other tabs, e.g. right after a
+// send completes while the user is still looking at the Send tab.
+function renderHistory() {
+  const list = document.getElementById("history-list");
+  if (!list) return;
+  const log = loadActivity();
+  if (log.length === 0) {
+    list.innerHTML = `<div class="activity-empty">No activity yet - sends, receives, and name changes will show up here.</div>`;
+    return;
+  }
+  list.innerHTML = log.map((entry) => {
+    const icon = ACTIVITY_ICONS[entry.type] || ACTIVITY_ICONS.name_registered;
+    return `
+      <div class="activity-item">
+        <div class="activity-icon ${icon.cls}"><svg viewBox="0 0 24 24">${icon.svg}</svg></div>
+        <div class="activity-body">
+          <div class="activity-title">${entry.title}</div>
+          ${entry.detail ? `<div class="activity-detail">${entry.detail}</div>` : ""}
+        </div>
+        <div class="activity-time">${relativeTime(entry.ts)}</div>
+      </div>
+    `;
+  }).join("");
+}
+
 function renderMyNameBadge(name) {
   const badge = document.getElementById("my-name-badge");
   if (name) {
@@ -373,11 +499,6 @@ let sessionKeystoreBytes = null;
 // Only one in-flight "send to a name" at a time, same convention as the
 // manual "Pay someone" flow's single PendingSlate.
 let pendingNameSend = null; // { toName, pendingSlateBytes, amount }
-// A receipt log of payments this wallet auto-accepted, newest first - purely
-// a display convenience (the wallet store is the source of truth for
-// balance). Capped so it doesn't grow unbounded across a long session.
-let receivedReceipts = []; // [{ amount, from_pubkey_hex }]
-const MAX_RECEIVED_RECEIPTS = 20;
 
 async function fetchJson(path, opts) {
   const res = await fetch(API_BASE + path, opts);
@@ -449,6 +570,7 @@ function renderLockScreen() {
         localStorage.removeItem(KEYSTORE_STORAGE_KEY);
         localStorage.removeItem(STORE_STORAGE_KEY);
         localStorage.removeItem(ONBOARDING_STORAGE_KEY);
+        localStorage.removeItem(ACTIVITY_STORAGE_KEY);
         clearMyName();
         clearPendingSlate();
         renderLockScreen();
@@ -541,6 +663,7 @@ function renderNameStep() {
       pollForNameConfirmation(name, () => {
         saveMyName(name);
         localStorage.setItem(ONBOARDING_STORAGE_KEY, "true");
+        pushActivity({ type: "name_registered", title: `Claimed ${displayName(name)}`, detail: "sponsored - free registration" });
         renderDashboard();
       });
     } catch (e) {
@@ -611,7 +734,7 @@ function parseHazeAddress(input) {
 // present), instead of leaving a static "queued" message forever - blocks
 // take real time here (~1s), same as every other action in this wallet, but
 // there's no reason not to surface confirmation the moment it lands.
-async function pollForNameConfirmation(name, onConfirmed, { intervalMs = 1200, timeoutMs = 60000, isConfirmed = () => true } = {}) {
+async function pollForNameConfirmation(name, onConfirmed, { intervalMs = 3000, timeoutMs = 90000, isConfirmed = () => true } = {}) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     await new Promise(r => setTimeout(r, intervalMs));
@@ -647,22 +770,41 @@ function renderDashboard() {
           </div>
         </div>
 
+        <div class="quick-actions">
+          <button class="quick-action" data-goto="send">
+            <span class="quick-action-circle"><svg viewBox="0 0 24 24"><path d="M7 17L17 7M8 7h9v9"/></svg></span>
+            <span class="quick-action-label">Send</span>
+          </button>
+          <button class="quick-action" data-goto="receive">
+            <span class="quick-action-circle"><svg viewBox="0 0 24 24"><path d="M17 7L7 17M16 17H7V8"/></svg></span>
+            <span class="quick-action-label">Receive</span>
+          </button>
+          <button class="quick-action" data-goto="names">
+            <span class="quick-action-circle"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M16 12v1.4a2.6 2.6 0 0 0 5 0V12a9 9 0 1 0-5.5 8.3"/></svg></span>
+            <span class="quick-action-label">Names</span>
+          </button>
+          <button class="quick-action" data-goto="history">
+            <span class="quick-action-circle"><svg viewBox="0 0 24 24"><path d="M12 7v5l3 3M20 12a8 8 0 1 1-8-8"/></svg></span>
+            <span class="quick-action-label">History</span>
+          </button>
+        </div>
+
         <div class="action-row" style="margin-bottom: 4px;">
           <button class="btn-primary" id="faucet-btn" style="margin-top:0;">Get devnet funds</button>
         </div>
         <div id="dash-message"></div>
+      </div>
 
+      <div class="tab-panel" data-tab="send">
         <div class="panel">
-          <h2>Send</h2>
-          <div class="sub">Splits/consolidates your own confirmed UTXOs (self-pay). Fee is fixed at 5.</div>
+          <h2>Self-pay</h2>
+          <div class="sub">Splits/consolidates your own confirmed UTXOs. Fee is fixed at 5.</div>
           <label>Amount</label>
           <input type="number" id="send-amount" min="1" />
           <button class="btn-primary" id="send-btn">Send</button>
           <div id="send-message"></div>
         </div>
-      </div>
 
-      <div class="tab-panel" data-tab="send">
         <div class="panel">
           <h2>Send to a name</h2>
           <div class="sub">Sends directly to someone's registered .haze name - no copy-pasting slates. Resolves the name, drops the payment request in their inbox automatically, and completes it the moment they accept. Fee is fixed at 5.</div>
@@ -701,10 +843,9 @@ function renderDashboard() {
       </div>
 
       <div class="tab-panel" data-tab="receive">
-        <div class="panel" id="incoming-requests-panel" style="display:none;">
-          <h2>Incoming payments</h2>
-          <div class="sub">Payments sent to your name are credited automatically the moment your wallet sees them - nothing to accept.</div>
-          <div id="incoming-requests-list"></div>
+        <div class="panel">
+          <h2>Receiving to your name</h2>
+          <div class="sub">Payments sent to your name are credited automatically the moment your wallet sees them - nothing to accept. Check the History tab for a record of what's come in.</div>
         </div>
 
         <div class="panel">
@@ -775,6 +916,14 @@ function renderDashboard() {
         </div>
       </div>
 
+      <div class="tab-panel" data-tab="history">
+        <div class="panel">
+          <h2>Activity</h2>
+          <div class="sub">Everything this wallet has sent, received, or registered - newest first, kept locally in this browser.</div>
+          <div id="history-list"></div>
+        </div>
+      </div>
+
     </div>
 
     <nav class="bottom-nav">
@@ -794,6 +943,10 @@ function renderDashboard() {
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M16 12v1.4a2.6 2.6 0 0 0 5 0V12a9 9 0 1 0-5.5 8.3"/></svg>
         <span class="nav-label">Names</span>
       </button>
+      <button class="nav-item" data-tab="history">
+        <svg viewBox="0 0 24 24"><path d="M12 7v5l3 3M20 12a8 8 0 1 1-8-8"/></svg>
+        <span class="nav-label">History</span>
+      </button>
       <button class="nav-item" data-tab="more">
         <svg viewBox="0 0 24 24" stroke-width="0" fill="currentColor"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
         <span class="nav-label">More</span>
@@ -801,12 +954,18 @@ function renderDashboard() {
     </nav>
   `;
 
+  function activateTab(tab) {
+    document.querySelectorAll(".tab-panel").forEach((el) => el.classList.toggle("active", el.dataset.tab === tab));
+    document.querySelectorAll(".nav-item").forEach((el) => el.classList.toggle("active", el.dataset.tab === tab));
+    if (tab === "history") renderHistory();
+  }
+
+  document.querySelectorAll(".quick-action").forEach((btn) => {
+    btn.addEventListener("click", () => activateTab(btn.dataset.goto));
+  });
+
   document.querySelectorAll(".nav-item").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const tab = btn.dataset.tab;
-      document.querySelectorAll(".tab-panel").forEach((el) => el.classList.toggle("active", el.dataset.tab === tab));
-      document.querySelectorAll(".nav-item").forEach((el) => el.classList.toggle("active", el === btn));
-    });
+    btn.addEventListener("click", () => activateTab(btn.dataset.tab));
   });
 
   document.getElementById("stake-btn").addEventListener("click", async () => {
@@ -830,6 +989,7 @@ function renderDashboard() {
       }
 
       messageEl.innerHTML = `<div class="message success">Registered as a validator. It'll show up in the explorer's validator count. It won't actually propose blocks until you run a node with its key - see below.</div>`;
+      pushActivity({ type: "validator", title: "Registered as a validator" });
     } catch (e) {
       messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
     }
@@ -893,6 +1053,7 @@ function renderDashboard() {
         messageEl.innerHTML = `<div class="message success">"${displayName(name)}" is registered! (block ${record.registered_at_block}) <a href="${link}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">View on explorer &rarr;</a></div>`;
         saveMyName(name);
         renderMyNameBadge(name);
+        pushActivity({ type: "name_registered", title: `Registered ${displayName(name)}` });
       });
     } catch (e) {
       messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
@@ -955,6 +1116,7 @@ function renderDashboard() {
           clearMyName();
           renderMyNameBadge(null);
         }
+        pushActivity({ type: "name_transferred", title: `Transferred ${displayName(name)}`, detail: `to ${newOwnerHex}` });
       }, { isConfirmed: (record) => bytesToHex(record.owner_pubkey) === newOwnerHex.toLowerCase() });
     } catch (e) {
       messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
@@ -1003,6 +1165,7 @@ function renderDashboard() {
       }
 
       messageEl.innerHTML = `<div class="message success">Received ${FAUCET_AMOUNT}. Refreshing balance&hellip;</div>`;
+      pushActivity({ type: "faucet", title: `Received ${FAUCET_AMOUNT} from devnet faucet` });
       await refreshBalance();
     } catch (e) {
       messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
@@ -1048,6 +1211,7 @@ function renderDashboard() {
 
       const link = explorerLinkForTx(plan.transaction_json);
       messageEl.innerHTML = `<div class="message success">Broadcast successfully. Balance will update once mined. <a href="${link}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">View on explorer &rarr;</a></div>`;
+      pushActivity({ type: "sent", title: `Self-pay ${amount.toString()}`, detail: "consolidated own UTXOs" });
       amountInput.value = "";
       await refreshBalance();
     } catch (e) {
@@ -1068,6 +1232,7 @@ function renderDashboard() {
       `You have a pending outgoing payment of ${pending.amount}, waiting on the recipient's response.`;
   }
   renderCompletePanel();
+  renderHistory();
 
   document.getElementById("pay-btn").addEventListener("click", () => {
     const amountInput = document.getElementById("pay-amount");
@@ -1172,6 +1337,7 @@ function renderDashboard() {
 
       const link = explorerLinkForTx(finalized.transaction_json);
       messageEl.innerHTML = `<div class="message success">Broadcast successfully. Balance will update once mined. <a href="${link}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">View on explorer &rarr;</a></div>`;
+      pushActivity({ type: "sent", title: `Sent ${pending.amount}`, detail: "manual payment slate" });
       document.getElementById("complete-slate-in").value = "";
       renderCompletePanel();
       await refreshBalance();
@@ -1262,28 +1428,6 @@ function renderDashboard() {
     }
   });
 
-  function renderIncomingRequests() {
-    const panel = document.getElementById("incoming-requests-panel");
-    const list = document.getElementById("incoming-requests-list");
-    if (receivedReceipts.length === 0) {
-      panel.style.display = "none";
-      return;
-    }
-    panel.style.display = "";
-    list.innerHTML = "";
-    receivedReceipts.forEach((receipt) => {
-      const item = document.createElement("div");
-      item.className = "inbox-item";
-      item.innerHTML = `
-        <div class="inbox-item-text">
-          Received <strong>${receipt.amount}</strong><br>
-          <span class="inbox-item-from">from ${receipt.from_pubkey_hex}</span>
-        </div>
-      `;
-      list.appendChild(item);
-    });
-  }
-
   // Crypto-necessary step, not a user decision: the receiver still has to
   // locally compute their output's blinding factor and send back a partial
   // signature (that's what makes it a two-party Mimblewimble payment rather
@@ -1304,8 +1448,11 @@ function renderDashboard() {
       body: JSON.stringify({ from_pubkey_hex: wallet_identity_pubkey_hex(sessionKeystoreBytes), kind: "response", payload_json: responded.response_slate_json }),
     });
 
-    receivedReceipts.unshift({ amount: responded.receiver_output.value.toString(), from_pubkey_hex: msg.from_pubkey_hex });
-    receivedReceipts.length = Math.min(receivedReceipts.length, MAX_RECEIVED_RECEIPTS);
+    pushActivity({
+      type: "received",
+      title: `Received ${responded.receiver_output.value.toString()}`,
+      detail: `from ${msg.from_pubkey_hex}`,
+    });
   }
 
   async function pollInbox() {
@@ -1337,6 +1484,7 @@ function renderDashboard() {
 
             const link = explorerLinkForTx(finalized.transaction_json);
             messageEl.innerHTML = `<div class="message success">"${displayName(pendingNameSend.toName)}" accepted - broadcast successfully. <a href="${link}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">View on explorer &rarr;</a></div>`;
+            pushActivity({ type: "sent", title: `Sent ${pendingNameSend.amount}`, detail: `to ${displayName(pendingNameSend.toName)}` });
             pendingNameSend = null;
             await refreshBalance();
           } catch (e) {
@@ -1355,7 +1503,6 @@ function renderDashboard() {
       }
       if (messages.some(m => m.kind === "request")) {
         await refreshBalance();
-        renderIncomingRequests();
       }
     } catch (e) {
       // transient - next poll will retry
@@ -1364,8 +1511,8 @@ function renderDashboard() {
 
   refreshBalance();
   resolveMyName();
-  setInterval(refreshBalance, 2000);
-  setInterval(pollInbox, 2000);
+  setInterval(refreshBalance, 4000);
+  setInterval(pollInbox, 3000);
 }
 
 // ---------- boot ----------
