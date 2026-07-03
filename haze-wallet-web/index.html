@@ -594,9 +594,9 @@ function displayName(name) {
 
 // Polls GET /v1/names/:name until it's actually mined (registered_at_block
 // present), instead of leaving a static "queued" message forever - blocks
-// take real time here (~5s), same as every other action in this wallet, but
+// take real time here (~1s), same as every other action in this wallet, but
 // there's no reason not to surface confirmation the moment it lands.
-async function pollForNameConfirmation(name, onConfirmed, { intervalMs = 3000, timeoutMs = 60000, isConfirmed = () => true } = {}) {
+async function pollForNameConfirmation(name, onConfirmed, { intervalMs = 1200, timeoutMs = 60000, isConfirmed = () => true } = {}) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     await new Promise(r => setTimeout(r, intervalMs));
@@ -1318,8 +1318,8 @@ function renderDashboard() {
 
   refreshBalance();
   resolveMyName();
-  setInterval(refreshBalance, 5000);
-  setInterval(pollInbox, 4000);
+  setInterval(refreshBalance, 2000);
+  setInterval(pollInbox, 2000);
 }
 
 // ---------- boot ----------

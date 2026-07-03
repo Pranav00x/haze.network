@@ -55,8 +55,11 @@ impl Proposer {
         println!("Staking proposer started. Monitoring slots...");
 
         loop {
-            // Check slots every 5 seconds
-            sleep(Duration::from_millis(5000)).await;
+            // Check slots every second - short enough to feel instant for the
+            // wallet's poll-based confirmation UX, long enough that a single
+            // validator on modest hardware (range proof generation is the
+            // slow part) comfortably finishes one slot before the next.
+            sleep(Duration::from_millis(1000)).await;
 
             let (next_height, prev_hash, my_validator) = {
                 let c = self.chain.lock().unwrap();
