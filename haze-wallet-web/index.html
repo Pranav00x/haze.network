@@ -524,32 +524,12 @@ async function resolveMyName() {
   }
 }
 
-// ---------- pending outgoing slate (two-party payments) ----------
-// Only one in-flight outgoing slate at a time, same convention as the CLI
-// (create_slate/finalize_slate are a matched pair - starting a second
-// payment before finishing the first would orphan the first's change
-// output). PendingSlate itself carries no amount, so it's stored alongside.
-const PENDING_SLATE_STORAGE_KEY = "hazePendingSlate";
-
-function savePendingSlate(bytes, amount) {
-  localStorage.setItem(PENDING_SLATE_STORAGE_KEY, JSON.stringify({ bytes: toB64(bytes), amount: amount.toString() }));
-}
-function loadPendingSlate() {
-  const raw = localStorage.getItem(PENDING_SLATE_STORAGE_KEY);
-  if (!raw) return null;
-  const parsed = JSON.parse(raw);
-  return { bytes: fromB64(parsed.bytes), amount: parsed.amount };
-}
-function clearPendingSlate() {
-  localStorage.removeItem(PENDING_SLATE_STORAGE_KEY);
-}
-
 // In-memory only for this session - never written back to localStorage in plaintext.
 let sessionKeystoreBytes = null;
 
 // ---------- "Send to a name" (inbox-relayed slate exchange) ----------
-// Only one in-flight "send to a name" at a time, same convention as the
-// manual "Pay someone" flow's single PendingSlate.
+// Only one in-flight "send to a name" at a time - starting a second before
+// the first completes would orphan its change output.
 let pendingNameSend = null; // { toName, pendingSlateBytes, amount }
 
 async function fetchJson(path, opts) {
@@ -644,7 +624,6 @@ function renderLockScreen() {
         localStorage.removeItem(ONBOARDING_STORAGE_KEY);
         localStorage.removeItem(ACTIVITY_STORAGE_KEY);
         clearMyName();
-        clearPendingSlate();
         renderLockScreen();
       }
     });
@@ -968,29 +947,6 @@ function renderDashboard() {
           <div id="name-send-message"></div>
         </div>
 
-        <div class="panel">
-          <h2>Pay someone</h2>
-          <div class="sub">Builds a payment slate for another wallet. Send them the text below (chat, email, anywhere) - they respond, then you paste their response into "Complete a payment" to broadcast it. Fee adapts to network congestion - <span id="pay-fee-note">checking current fee&hellip;</span></div>
-          <label>Amount</label>
-          <input type="number" id="pay-amount" min="1" />
-          <button class="btn-primary" id="pay-btn">Create payment slate</button>
-          <div id="pay-message"></div>
-          <div id="pay-output" style="display:none;">
-            <label>Slate to send</label>
-            <textarea id="pay-slate-out" readonly></textarea>
-            <button class="btn-ghost btn-small" id="pay-copy-btn" style="margin-top:10px;">Copy</button>
-          </div>
-        </div>
-
-        <div class="panel" id="complete-panel" style="display:none;">
-          <h2>Complete a payment</h2>
-          <div class="sub" id="complete-sub"></div>
-          <label>Their response</label>
-          <textarea id="complete-slate-in" placeholder="Paste their response slate JSON here"></textarea>
-          <button class="btn-primary" id="complete-btn">Finalize &amp; broadcast</button>
-          <div id="complete-message"></div>
-          <span class="toggle-link" id="discard-pending-link">Discard this pending payment</span>
-        </div>
       </div>
 
       <div class="tab-panel" data-tab="receive">
@@ -1358,118 +1314,17 @@ function renderDashboard() {
     }
   });
 
-  // ---------- two-party payments ----------
-  function renderCompletePanel() {
-    const pending = loadPendingSlate();
-    const panel = document.getElementById("complete-panel");
-    if (!pending) {
-      panel.style.display = "none";
-      return;
-    }
-    panel.style.display = "";
-    document.getElementById("complete-sub").textContent =
-      `You have a pending outgoing payment of ${pending.amount}, waiting on the recipient's response.`;
-  }
-  renderCompletePanel();
   renderHistory();
 
   async function refreshFeeNotes() {
     const fee = await getSuggestedFee();
     const text = `current fee: ${fee}`;
-    ["send-fee-note", "name-send-fee-note", "pay-fee-note"].forEach((id) => {
+    ["send-fee-note", "name-send-fee-note"].forEach((id) => {
       const el = document.getElementById(id);
       if (el) el.textContent = text;
     });
   }
   refreshFeeNotes();
-
-  document.getElementById("pay-btn").addEventListener("click", async () => {
-    const amountInput = document.getElementById("pay-amount");
-    const amount = BigInt(amountInput.value || "0");
-    const messageEl = document.getElementById("pay-message");
-    if (amount <= 0n) {
-      messageEl.innerHTML = `<div class="message error">Enter an amount.</div>`;
-      return;
-    }
-    if (loadPendingSlate()) {
-      messageEl.innerHTML = `<div class="message error">You already have a pending payment awaiting a response. Complete or discard it first.</div>`;
-      return;
-    }
-
-    try {
-      const storeBytes = loadWalletStoreBytes();
-      const fee = await getSuggestedFee();
-      const result = create_send_slate(sessionKeystoreBytes, storeBytes, amount, fee);
-
-      sessionKeystoreBytes = result.updated_keystore_bytes;
-      savePendingSlate(result.pending_slate_bytes, amount);
-
-      document.getElementById("pay-slate-out").value = result.slate_json;
-      document.getElementById("pay-output").style.display = "";
-      messageEl.innerHTML = `<div class="message success">Slate created. Send the text below to the recipient, then use "Complete a payment" once they respond.</div>`;
-      amountInput.value = "";
-      renderCompletePanel();
-    } catch (e) {
-      messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
-    }
-  });
-
-  document.getElementById("pay-copy-btn").addEventListener("click", async () => {
-    await navigator.clipboard.writeText(document.getElementById("pay-slate-out").value);
-    document.getElementById("pay-copy-btn").textContent = "Copied!";
-    setTimeout(() => { document.getElementById("pay-copy-btn").textContent = "Copy"; }, 1500);
-  });
-
-  document.getElementById("complete-btn").addEventListener("click", async () => {
-    const input = document.getElementById("complete-slate-in").value.trim();
-    const messageEl = document.getElementById("complete-message");
-    const pending = loadPendingSlate();
-    if (!pending) {
-      messageEl.innerHTML = `<div class="message error">No pending payment found.</div>`;
-      return;
-    }
-    if (!input) {
-      messageEl.innerHTML = `<div class="message error">Paste the recipient's response first.</div>`;
-      return;
-    }
-
-    try {
-      const finalized = finalize_slate(pending.bytes, input);
-
-      const res = await fetch(API_BASE + "/v1/transactions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: finalized.transaction_json,
-      });
-
-      if (!res.ok) {
-        const text = await res.text();
-        messageEl.innerHTML = `<div class="message error">Node rejected transaction: ${text}</div>`;
-        return;
-      }
-
-      let storeBytes = loadWalletStoreBytes();
-      storeBytes = commit_slate_send(storeBytes, finalized.spent_commitments_hex, finalized.change);
-      saveWalletStoreBytes(storeBytes);
-      clearPendingSlate();
-
-      const link = explorerLinkForTx(finalized.transaction_json);
-      messageEl.innerHTML = `<div class="message success">Broadcast successfully. Balance will update once mined. <a href="${link}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">View on explorer &rarr;</a></div>`;
-      pushActivity({ type: "sent", title: `Sent ${pending.amount}`, detail: "manual payment slate" });
-      document.getElementById("complete-slate-in").value = "";
-      renderCompletePanel();
-      await refreshBalance();
-    } catch (e) {
-      messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
-    }
-  });
-
-  document.getElementById("discard-pending-link").addEventListener("click", () => {
-    if (window.confirm("Discard this pending payment? The recipient's response (if they've already sent one) will no longer be usable.")) {
-      clearPendingSlate();
-      renderCompletePanel();
-    }
-  });
 
   // Live-checks the recipient as the user types (debounced) so a typo or a
   // not-yet-registered name is caught before the user even hits Send,
