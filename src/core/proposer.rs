@@ -13,12 +13,25 @@ use crate::crypto::schnorr::Signature;
 use crate::p2p::server::P2pServer;
 use crate::core::transaction::Transaction;
 
+/// How long a client waits before trying a fallback proposer slot: if the
+/// chain is still stuck at the same pending height after `rank * this`, the
+/// validator at that rank in proposer_priority_order steps in instead of
+/// waiting on a possibly-offline higher-priority validator forever (see
+/// ChainState::proposer_priority_order - this is what actually makes use of
+/// the freedom that fix gives, since consensus alone doesn't change which
+/// validator attempts to propose first in the common case).
+const FALLBACK_ROUND_TIMEOUT: Duration = Duration::from_secs(20);
+
 pub struct Proposer {
     mempool: Arc<Mutex<Mempool>>,
     chain: Arc<Mutex<ChainState>>,
     storage: Arc<Storage>,
     stake_key: Option<Scalar>,
     p2p_server: Mutex<Option<Arc<P2pServer>>>,
+    /// The pending height we're currently waiting on, and when we first
+    /// started waiting on it - reset every time the chain tip advances.
+    /// Used to time fallback-round eligibility.
+    stalled_since: Mutex<Option<(u64, std::time::Instant)>>,
 }
 
 impl Proposer {
@@ -34,6 +47,7 @@ impl Proposer {
             storage,
             stake_key,
             p2p_server: Mutex::new(None),
+            stalled_since: Mutex::new(None),
         }
     }
 
@@ -96,13 +110,47 @@ impl Proposer {
             };
 
             if let Some(validator) = my_validator {
-                // Determine if we are the chosen proposer for this slot
-                let chosen_proposer = {
-                    let c = self.chain.lock().unwrap();
-                    c.select_proposer(next_height, prev_hash)
+                // Track how long we've been waiting on this exact pending
+                // height - resets the instant the tip advances to a new one.
+                let stalled_for = {
+                    let mut s = self.stalled_since.lock().unwrap();
+                    let since = match *s {
+                        Some((h, since)) if h == next_height => since,
+                        _ => {
+                            let now = std::time::Instant::now();
+                            *s = Some((next_height, now));
+                            now
+                        }
+                    };
+                    since.elapsed()
                 };
 
-                if chosen_proposer == validator.commitment {
+                // Our rank in this height's weighted priority order - rank 0
+                // is the primary (identical to the old single-winner
+                // select_proposer), rank N is the Nth fallback. We only
+                // actually attempt to propose once we've been stuck long
+                // enough for our rank (see FALLBACK_ROUND_TIMEOUT) - in the
+                // common case (rank 0, chain not stalled) this behaves
+                // exactly as before.
+                let my_rank = {
+                    let c = self.chain.lock().unwrap();
+                    c.proposer_priority_order(next_height, prev_hash)
+                        .iter()
+                        .position(|commitment| *commitment == validator.commitment)
+                };
+
+                let eligible = match my_rank {
+                    Some(0) => true,
+                    Some(rank) => stalled_for >= FALLBACK_ROUND_TIMEOUT * rank as u32,
+                    None => false,
+                };
+
+                if eligible {
+                    if let Some(rank) = my_rank {
+                        if rank > 0 {
+                            println!("Primary proposer for block #{} appears offline (stuck for {:?}) - stepping in as fallback rank {}.", next_height, stalled_for, rank);
+                        }
+                    }
                     // Check for pending transactions or create empty block if none
                     let tx_bundle = {
                         let mut mp = self.mempool.lock().unwrap();

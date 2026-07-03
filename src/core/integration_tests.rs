@@ -300,6 +300,111 @@ mod tests {
         assert!(selected_b > 0);
     }
 
+    /// proposer_priority_order must rank every active validator exactly
+    /// once, agree with select_proposer at rank 0, and be deterministic -
+    /// the property Proposer::start_proposing's fallback timing relies on.
+    #[test]
+    fn proposer_priority_order_ranks_every_validator_exactly_once() {
+        let mut rng = OsRng;
+        let mut chain_state = ChainState::new();
+
+        let r_a = Scalar::random(&mut rng);
+        let r_b = Scalar::random(&mut rng);
+        let r_c = Scalar::random(&mut rng);
+        let commitment_a = Commitment::new(1000, r_a);
+        let commitment_b = Commitment::new(2000, r_b);
+        let commitment_c = Commitment::new(3000, r_c);
+        chain_state.utxos.insert(commitment_a);
+        chain_state.utxos.insert(commitment_b);
+        chain_state.utxos.insert(commitment_c);
+        assert!(chain_state.register_validator(commitment_a, 1000, r_a));
+        assert!(chain_state.register_validator(commitment_b, 2000, r_b));
+        assert!(chain_state.register_validator(commitment_c, 3000, r_c));
+
+        let order1 = chain_state.proposer_priority_order(5, [9u8; 32]);
+        let order2 = chain_state.proposer_priority_order(5, [9u8; 32]);
+        assert_eq!(order1, order2, "priority order must be deterministic for the same (height, prev_hash)");
+        assert_eq!(order1.len(), 3, "every active validator must appear exactly once");
+        assert_eq!(order1[0], chain_state.select_proposer(5, [9u8; 32]), "rank 0 must match the historical single-winner select_proposer");
+
+        let mut sorted = order1.clone();
+        sorted.sort_by_key(|c| c.as_point().compress().to_bytes());
+        let mut expected = vec![commitment_a, commitment_b, commitment_c];
+        expected.sort_by_key(|c| c.as_point().compress().to_bytes());
+        assert_eq!(sorted, expected, "priority order must contain exactly the active validator set, no duplicates or omissions");
+    }
+
+    /// The actual liveness fix: apply_linear_block must accept a block
+    /// signed by ANY active, registered validator - not just the single
+    /// computed select_proposer winner for that height. Before this fix,
+    /// this exact scenario (an otherwise fully valid block from a
+    /// non-primary validator) was rejected outright, which is what let a
+    /// single offline majority-stake validator stall the whole chain
+    /// forever (confirmed live in a 3-node test).
+    #[test]
+    fn apply_block_accepts_a_non_primary_active_validator_as_fallback_proposer() {
+        let mut rng = OsRng;
+        let mut chain_state = ChainState::new();
+        let genesis = crate::core::genesis::genesis_block();
+        assert!(chain_state.apply_block(&genesis).is_applied());
+
+        // Register two validators with real backing UTXOs (the genesis
+        // treasury and airdrop outputs, whose blindings are well-known
+        // devnet constants - see core::genesis).
+        let treasury_r = Scalar::from(crate::core::genesis::TREASURY_BLINDING);
+        let treasury_commitment = Commitment::new(crate::core::genesis::TREASURY_ALLOCATION, treasury_r);
+        assert!(chain_state.register_validator(treasury_commitment, crate::core::genesis::TREASURY_ALLOCATION, treasury_r));
+
+        let airdrop_r = Scalar::from(crate::core::genesis::AIRDROP_BLINDING);
+        let airdrop_commitment = Commitment::new(crate::core::genesis::AIRDROP_ALLOCATION, airdrop_r);
+        assert!(chain_state.register_validator(airdrop_commitment, crate::core::genesis::AIRDROP_ALLOCATION, airdrop_r));
+
+        let prev_hash = genesis.header.hash();
+        let primary = chain_state.select_proposer(1, prev_hash);
+        // Whichever validator ISN'T the computed primary for height 1 plays
+        // the "fallback stepping in" role this test proves works.
+        let (fallback_r, fallback_value) = if primary == treasury_commitment {
+            (airdrop_r, crate::core::genesis::AIRDROP_ALLOCATION)
+        } else {
+            (treasury_r, crate::core::genesis::TREASURY_ALLOCATION)
+        };
+
+        let r_coinbase = Scalar::random(&mut rng);
+        let reward = crate::core::block::block_reward_at(1);
+        let coinbase_output = Output {
+            commitment: Commitment::new(reward, r_coinbase),
+            proof: RangeProof::prove(reward, &r_coinbase),
+            note: vec![],
+        };
+        let coinbase_excess_r = Scalar::zero() - r_coinbase;
+        let coinbase_kernel = TxKernel {
+            excess: Commitment::new(0, coinbase_excess_r),
+            fee: 0,
+            signature: Signature::sign(&0u64.to_le_bytes(), &coinbase_excess_r),
+        };
+        let body = Transaction { inputs: vec![], outputs: vec![coinbase_output], kernels: vec![coinbase_kernel] };
+
+        let fallback_commitment = Commitment::new(fallback_value, fallback_r);
+        assert_ne!(fallback_commitment, primary, "sanity: the fallback signer must genuinely differ from the computed primary");
+
+        let mut header = BlockHeader {
+            height: 1,
+            prev_hash,
+            total_kernel_offset: Scalar::zero(),
+            nonce: 0,
+            timestamp: 0,
+            validator_commitment: fallback_commitment,
+            validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root: empty_registry_root(),
+            chain_id: crate::core::genesis::CHAIN_ID,
+        };
+        let msg = header.hash();
+        header.validator_signature = Signature::sign(&msg, &fallback_r);
+        let block = Block { header, body, name_ops: vec![], transfer_ops: vec![] };
+
+        assert!(chain_state.apply_block(&block).is_applied(), "a block signed by a non-primary but genuinely active validator must be accepted");
+    }
+
     #[tokio::test]
     async fn test_dandelion_fluff_timeout() {
         use crate::p2p::dandelion::DandelionRouter;

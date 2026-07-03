@@ -139,36 +139,66 @@ impl ChainState {
 
     /// Deterministically selects the block proposer for a given height and previous hash.
     pub fn select_proposer(&self, height: u64, prev_hash: [u8; 32]) -> Commitment {
+        self.proposer_priority_order(height, prev_hash)[0]
+    }
+
+    /// The full weighted priority order of active validators for a given
+    /// height: index 0 is the primary proposer (identical to the historical
+    /// select_proposer result), index 1 is the first fallback a client
+    /// should try if the primary hasn't produced a block after a timeout,
+    /// and so on. Consensus (apply_linear_block) no longer requires the
+    /// signer to be exactly index 0 - this ordering is purely a liveness
+    /// convention honest clients follow (see core::proposer), not something
+    /// enforced at the protocol level.
+    pub fn proposer_priority_order(&self, height: u64, prev_hash: [u8; 32]) -> Vec<Commitment> {
         if self.active_validators.is_empty() {
             // Default to genesis validator commitment
             let genesis_blinding = Scalar::from(42u64);
-            return Commitment::new(1_000_000, genesis_blinding);
+            return vec![Commitment::new(1_000_000, genesis_blinding)];
         }
 
-        let total_stake: u64 = self.active_validators.iter().map(|v| v.value).sum();
-        if total_stake == 0 {
-            return self.active_validators[0].commitment;
+        let mut pool: Vec<Validator> = self.active_validators.clone();
+        let mut order = Vec::with_capacity(pool.len());
+
+        for round in 0..pool.len() {
+            let total_stake: u64 = pool.iter().map(|v| v.value).sum();
+            let selected_index = if total_stake == 0 {
+                0
+            } else {
+                use sha2::{Sha256, Digest};
+                let mut hasher = Sha256::new();
+                hasher.update(&height.to_le_bytes());
+                hasher.update(&prev_hash);
+                // Round 0 intentionally matches the original select_proposer
+                // hash exactly (no round byte) for backward compatibility;
+                // later rounds mix in the round index so each fallback draw
+                // is independent of the others.
+                if round > 0 {
+                    hasher.update(&(round as u64).to_le_bytes());
+                }
+                let hash = hasher.finalize();
+
+                let mut seed_bytes = [0u8; 8];
+                seed_bytes.copy_from_slice(&hash[0..8]);
+                let seed = u64::from_le_bytes(seed_bytes);
+
+                let mut target = seed % total_stake;
+                let mut index = 0;
+                for (i, validator) in pool.iter().enumerate() {
+                    if target < validator.value {
+                        index = i;
+                        break;
+                    }
+                    target -= validator.value;
+                }
+                index
+            };
+
+            order.push(pool[selected_index].commitment);
+            pool.remove(selected_index);
         }
 
-        use sha2::{Sha256, Digest};
-        let mut hasher = Sha256::new();
-        hasher.update(&height.to_le_bytes());
-        hasher.update(&prev_hash);
-        let hash = hasher.finalize();
-
-        let mut seed_bytes = [0u8; 8];
-        seed_bytes.copy_from_slice(&hash[0..8]);
-        let seed = u64::from_le_bytes(seed_bytes);
-
-        let mut target = seed % total_stake;
-        for validator in &self.active_validators {
-            if target < validator.value {
-                return validator.commitment;
-            }
-            target -= validator.value;
-        }
-
-        self.active_validators[0].commitment
+        order
     }
 
     /// Attempts to apply a new block to the chain state.
@@ -237,23 +267,34 @@ impl ChainState {
             return None;
         }
 
-        // 2. Verify Proof of Stake block proposer signature
-        let expected_proposer = self.select_proposer(block.header.height, block.header.prev_hash);
-        if block.header.validator_commitment != expected_proposer {
-            return None;
-        }
+        // 2. Verify Proof of Stake block proposer signature. Any currently
+        // active, registered validator may sign any height's block - see
+        // proposer_priority_order for how honest clients rank who tries
+        // first (a liveness convention enforced client-side, not a
+        // consensus rule). Previously exactly one computed winner
+        // (select_proposer) was ever authorized to sign a given height; if
+        // that validator went offline, the chain stalled on that height
+        // forever (confirmed via a live 3-node test). Before any validator
+        // has ever registered, only the well-known genesis-bootstrap
+        // commitment may propose, matching Proposer::start_proposing's own
+        // fallback.
+        let proposer_commitment = block.header.validator_commitment;
+        let genesis_default = Commitment::new(1_000_000, Scalar::from(42u64));
 
-        let stake_value = if expected_proposer == Commitment::new(1_000_000, Scalar::from(42u64)) {
+        let stake_value = if self.active_validators.is_empty() {
+            if proposer_commitment != genesis_default {
+                return None;
+            }
             1_000_000
         } else {
-            self.active_validators.iter()
-                .find(|v| v.commitment == expected_proposer)
-                .map(|v| v.value)
-                .unwrap_or(0)
+            match self.active_validators.iter().find(|v| v.commitment == proposer_commitment) {
+                Some(v) => v.value,
+                None => return None,
+            }
         };
 
         let gens = PedersenGens::default();
-        let p_sig_point = expected_proposer.as_point() - Scalar::from(stake_value) * gens.B;
+        let p_sig_point = proposer_commitment.as_point() - Scalar::from(stake_value) * gens.B;
         let p_sig_commitment = Commitment(p_sig_point);
 
         let mut header_copy = block.header.clone();
