@@ -468,6 +468,35 @@ pub fn build_register_name_request(keystore_bytes: Vec<u8>, store_bytes: Vec<u8>
     })
 }
 
+#[derive(serde::Serialize)]
+struct SponsoredRegisterRequestJson {
+    name: String,
+    owner_pubkey: Commitment,
+    resolves_to: Commitment,
+    signature: Signature,
+}
+
+/// Builds a sponsored registration request body for POST
+/// /v1/names/register-sponsored - unlike build_register_name_request, this
+/// needs no store/UTXOs/coin-selection at all, since the node's own faucet
+/// reserve covers the flat registration fee (see FaucetState::
+/// build_sponsored_fee_payment on the server side). This is what lets a
+/// brand-new wallet register a name before it has ever received any funds.
+#[wasm_bindgen]
+pub fn build_sponsored_register_name_request(keystore_bytes: Vec<u8>, name: String) -> Result<String, JsValue> {
+    validate_name(&name).map_err(|e| js_err(format!("invalid name: {:?}", e)))?;
+
+    let keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
+
+    let owner_secret = keystore.identity_key();
+    let gens = bulletproofs::PedersenGens::default();
+    let owner_pubkey = Commitment(owner_secret * gens.B_blinding);
+    let signature = RegisterNameOp::sign(&name, &owner_secret);
+
+    let req = SponsoredRegisterRequestJson { name, owner_pubkey, resolves_to: owner_pubkey, signature };
+    serde_json::to_string(&req).map_err(|_| js_err("failed to serialize sponsored registration request"))
+}
+
 /// Applies a previously-built name registration's effects (spent inputs,
 /// optional change) to the store. Must only be called after the registration
 /// was successfully queued via POST /v1/names/register.

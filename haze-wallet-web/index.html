@@ -174,6 +174,7 @@ import init, {
   create_send_slate, respond_to_slate, finalize_slate, commit_receive, commit_slate_send,
   build_stake_request, reveal_stake_blinding_hex,
   build_register_name_request, commit_register_name, wallet_identity_pubkey_hex,
+  build_sponsored_register_name_request,
   build_transfer_name_request,
   generate_keystore_with_mnemonic, restore_keystore_from_mnemonic
 } from './pkg/haze_core.js';
@@ -335,8 +336,8 @@ function renderLockScreen() {
         } else {
           // Unlocked, but never finished picking a name (e.g. reloaded
           // mid-onboarding) - the phrase was only ever shown once and can't
-          // be re-shown, so just resume at funding + naming.
-          renderFundingStep();
+          // be re-shown, so just resume at naming.
+          renderNameStep();
         }
       } catch (e) {
         message("Incorrect password.", "error");
@@ -404,75 +405,8 @@ function renderMnemonicStep(mnemonic) {
     continueBtn.disabled = !checkbox.checked;
   });
   continueBtn.addEventListener("click", () => {
-    renderFundingStep();
+    renderNameStep();
   });
-}
-
-function renderFundingStep() {
-  const app = document.getElementById("app");
-  app.innerHTML = `
-    <div class="panel">
-      <h2>Setting up your wallet&hellip;</h2>
-      <div class="sub">Getting you some devnet funds so you can register your name.</div>
-      <div id="funding-message"><div class="message success">Requesting devnet funds&hellip;</div></div>
-    </div>
-  `;
-
-  (async () => {
-    const messageEl = document.getElementById("funding-message");
-    try {
-      let storeBytes = loadWalletStoreBytes();
-      const reqRes = await fetch(API_BASE + "/v1/faucet", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount: 500 }),
-      });
-      if (!reqRes.ok) {
-        const errJson = await reqRes.json().catch(() => ({}));
-        messageEl.innerHTML = `<div class="message error">Couldn't reach the devnet faucet: ${errJson.error || reqRes.status}. <span class="toggle-link" id="funding-retry">Try again</span></div>`;
-        document.getElementById("funding-retry").addEventListener("click", renderFundingStep);
-        return;
-      }
-      const reqJson = await reqRes.json();
-      const responded = respond_to_slate(sessionKeystoreBytes, reqJson.slate_json);
-      sessionKeystoreBytes = responded.updated_keystore_bytes;
-      storeBytes = commit_receive(storeBytes, responded.receiver_output);
-      saveWalletStoreBytes(storeBytes);
-
-      const completeRes = await fetch(API_BASE + "/v1/faucet/complete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ response_slate_json: responded.response_slate_json }),
-      });
-      if (!completeRes.ok) {
-        messageEl.innerHTML = `<div class="message error">Faucet request failed. <span class="toggle-link" id="funding-retry">Try again</span></div>`;
-        document.getElementById("funding-retry").addEventListener("click", renderFundingStep);
-        return;
-      }
-
-      messageEl.innerHTML = `<div class="message success">Funded! Waiting for it to be confirmed&hellip;</div>`;
-
-      // Wait for the faucet payout to actually be mined before letting the
-      // user spend part of it on a name registration fee.
-      const start = Date.now();
-      while (Date.now() - start < 60000) {
-        await new Promise(r => setTimeout(r, 3000));
-        try {
-          const utxos = await fetchJson("/v1/utxos");
-          const hexList = utxos.map(bytesToHex);
-          storeBytes = reconcile_wallet_store(storeBytes, hexList);
-          saveWalletStoreBytes(storeBytes);
-          if (wallet_balance(storeBytes) > 0n) break;
-        } catch (e) { /* keep waiting */ }
-      }
-
-      renderNameStep();
-    } catch (e) {
-      messageEl.innerHTML = `<div class="message error">${e.message || e} <span class="toggle-link" id="funding-retry">Try again</span></div>`;
-      const retry = document.getElementById("funding-retry");
-      if (retry) retry.addEventListener("click", renderFundingStep);
-    }
-  })();
 }
 
 function renderNameStep() {
@@ -480,11 +414,11 @@ function renderNameStep() {
   app.innerHTML = `
     <div class="panel">
       <h2>Choose your .haze name</h2>
-      <div class="sub">Permanent, first-come-first-served - lowercase letters/digits/-/_, 3-32 characters. This is how others can send you Haze directly (see "Send to a name"). One-time fee, no expiry.</div>
+      <div class="sub">Permanent, first-come-first-served - lowercase letters/digits/-/_, 3-32 characters. This is how others can send you Haze directly (see "Send to a name"). Free to claim - the network sponsors the registration fee for new wallets, so you don't need any Haze yet.</div>
       <label>Name</label>
       <input type="text" id="onboard-name-input" placeholder="e.g. pranav" autocomplete="off" />
       <button class="btn-ghost btn-small" id="onboard-random-btn" style="margin-top:10px;">Suggest a random name</button>
-      <button class="btn-primary" id="onboard-register-btn">Register &amp; continue</button>
+      <button class="btn-primary" id="onboard-register-btn">Claim &amp; continue</button>
       <div id="onboard-name-message"></div>
     </div>
   `;
@@ -502,13 +436,12 @@ function renderNameStep() {
     }
 
     try {
-      const storeBytes = loadWalletStoreBytes();
-      const result = build_register_name_request(sessionKeystoreBytes, storeBytes, name);
+      const reqJson = build_sponsored_register_name_request(sessionKeystoreBytes, name);
 
-      const res = await fetch(API_BASE + "/v1/names/register", {
+      const res = await fetch(API_BASE + "/v1/names/register-sponsored", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: result.op_json,
+        body: reqJson,
       });
       if (!res.ok) {
         const errJson = await res.json().catch(() => ({}));
@@ -516,11 +449,7 @@ function renderNameStep() {
         return;
       }
 
-      sessionKeystoreBytes = result.updated_keystore_bytes;
-      const storeBytes2 = commit_register_name(storeBytes, result.spent_commitments_hex, result.change);
-      saveWalletStoreBytes(storeBytes2);
-
-      messageEl.innerHTML = `<div class="message success">Registering "${displayName(name)}" - waiting for it to be mined&hellip;</div>`;
+      messageEl.innerHTML = `<div class="message success">Claiming "${displayName(name)}" - waiting for it to be mined&hellip;</div>`;
 
       pollForNameConfirmation(name, () => {
         localStorage.setItem(ONBOARDING_STORAGE_KEY, "true");

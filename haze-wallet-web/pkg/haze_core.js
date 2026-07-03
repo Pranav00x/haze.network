@@ -604,6 +604,40 @@ export function build_register_name_request(keystore_bytes, store_bytes, name) {
 }
 
 /**
+ * Builds a sponsored registration request body for POST
+ * /v1/names/register-sponsored - unlike build_register_name_request, this
+ * needs no store/UTXOs/coin-selection at all, since the node's own faucet
+ * reserve covers the flat registration fee (see FaucetState::
+ * build_sponsored_fee_payment on the server side). This is what lets a
+ * brand-new wallet register a name before it has ever received any funds.
+ * @param {Uint8Array} keystore_bytes
+ * @param {string} name
+ * @returns {string}
+ */
+export function build_sponsored_register_name_request(keystore_bytes, name) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passArray8ToWasm0(keystore_bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.build_sponsored_register_name_request(ptr0, len0, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
  * Builds a POST /v1/stake request body by staking the wallet's single
  * largest confirmed output. Fails if there is no confirmed output at least
  * `min_value`. Does not touch the store - staking doesn't spend anything.

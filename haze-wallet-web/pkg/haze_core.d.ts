@@ -96,6 +96,16 @@ export class WasmSendPlan {
 export function build_register_name_request(keystore_bytes: Uint8Array, store_bytes: Uint8Array, name: string): WasmRegisterNameResult;
 
 /**
+ * Builds a sponsored registration request body for POST
+ * /v1/names/register-sponsored - unlike build_register_name_request, this
+ * needs no store/UTXOs/coin-selection at all, since the node's own faucet
+ * reserve covers the flat registration fee (see FaucetState::
+ * build_sponsored_fee_payment on the server side). This is what lets a
+ * brand-new wallet register a name before it has ever received any funds.
+ */
+export function build_sponsored_register_name_request(keystore_bytes: Uint8Array, name: string): string;
+
+/**
  * Builds a POST /v1/stake request body by staking the wallet's single
  * largest confirmed output. Fails if there is no confirmed output at least
  * `min_value`. Does not touch the store - staking doesn't spend anything.
@@ -277,6 +287,7 @@ export interface InitOutput {
     readonly __wbg_wasmrespondresult_free: (a: number, b: number) => void;
     readonly __wbg_wasmsendplan_free: (a: number, b: number) => void;
     readonly build_register_name_request: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly build_sponsored_register_name_request: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly build_stake_request: (a: number, b: number, c: number, d: number, e: bigint) => [number, number, number, number];
     readonly build_transfer_name_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
     readonly claim_genesis: (a: number, b: number) => [number, number, number, number];

@@ -32,11 +32,14 @@ impl ApiServer {
         let faucet_state = Arc::new(FaucetState::new());
         let faucet_filter = warp::any().map(move || Arc::clone(&faucet_state));
         let faucet_filter_2 = faucet_filter.clone();
+        let faucet_filter_3 = faucet_filter.clone();
         let mempool_filter_3 = mempool_filter.clone();
         let mempool_filter_4 = mempool_filter.clone();
         let mempool_filter_5 = mempool_filter.clone();
+        let mempool_filter_6 = mempool_filter.clone();
         let p2p_filter_2 = p2p_filter.clone();
         let p2p_filter_3 = p2p_filter.clone();
+        let p2p_filter_4 = p2p_filter.clone();
 
         let inbox_state = Arc::new(InboxState::new());
         let inbox_filter = warp::any().map(move || Arc::clone(&inbox_state));
@@ -161,6 +164,22 @@ impl ApiServer {
             .and(chain_filter.clone())
             .and_then(names::handle_transfer_name);
 
+        // POST /v1/names/register-sponsored - same as register, except the
+        // flat registration fee is paid by the node's own faucet reserve
+        // instead of the requester (see api/names.rs and
+        // FaucetState::build_sponsored_fee_payment). Lets a brand-new
+        // zero-balance wallet still claim a name on mainnet, where there's no
+        // general-purpose faucet to fund it first.
+        let sponsored_register_name_route = warp::post()
+            .and(warp::path!("v1" / "names" / "register-sponsored"))
+            .and(warp::body::content_length_limit(MAX_BODY_SIZE))
+            .and(warp::body::json())
+            .and(faucet_filter_3)
+            .and(mempool_filter_6)
+            .and(p2p_filter_4)
+            .and(chain_filter.clone())
+            .and_then(names::handle_sponsored_register_name);
+
         // GET /v1/names/:name - resolves a single registered name.
         let resolve_name_route = warp::get()
             .and(warp::path!("v1" / "names" / String))
@@ -204,6 +223,7 @@ impl ApiServer {
             .or(faucet_complete_route)
             .or(register_name_route)
             .or(transfer_name_route)
+            .or(sponsored_register_name_route)
             .or(resolve_name_route)
             .or(list_names_route)
             .or(post_inbox_route)

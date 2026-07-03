@@ -12,11 +12,15 @@ use warp::http::StatusCode;
 use crate::core::chain::ChainState;
 use crate::core::genesis::{FAUCET_RESERVE_BLINDING, FAUCET_RESERVE_VALUE};
 use crate::core::mempool::Mempool;
+use crate::core::transaction::{Transaction, Input, Output, TxKernel};
 use crate::crypto::pedersen::Commitment;
+use crate::crypto::range_proof::RangeProof;
+use crate::crypto::schnorr::Signature;
 use crate::wallet::keystore::Keystore;
 use crate::wallet::store::{WalletStore, OutputStatus, FAUCET_INDEX};
 use crate::wallet::slate::{self, PendingSlate, Slate};
-use crate::wallet::planner::PlanError;
+use crate::wallet::planner::{self, PlanError};
+use curve25519_dalek_ng::scalar::Scalar;
 
 /// Devnet-only cap per request - keeps a single requester from draining the
 /// reserve, not a real anti-abuse measure.
@@ -43,9 +47,60 @@ impl FaucetState {
         }
     }
 
-    fn reconcile(&self, chain: &ChainState) {
+    pub(crate) fn reconcile(&self, chain: &ChainState) {
         let utxos: HashSet<Commitment> = chain.utxos.iter().cloned().collect();
         self.store.lock().unwrap().reconcile(&utxos);
+    }
+
+    /// Builds a plain fee-paying transaction from the faucet's own reserve -
+    /// no destination output, no two-party protocol needed, since this only
+    /// ever sponsors someone ELSE's fee (see api/names.rs's sponsored
+    /// registration), not a payment to them. This is what lets a brand-new
+    /// wallet with zero balance still register a name: it signs the
+    /// registration itself (free - just needs its own secret key), and the
+    /// faucet covers the flat fee.
+    pub fn build_sponsored_fee_payment(&self, fee: u64) -> Result<Transaction, PlanError> {
+        let mut keystore = self.keystore.lock().unwrap();
+        let mut store = self.store.lock().unwrap();
+
+        let selected = planner::select_spendable(&store, fee)?;
+        let selected_total: u64 = selected.iter().map(|(_, _, v)| v).sum();
+
+        let mut input_blindings: Vec<Scalar> = Vec::new();
+        let mut inputs: Vec<Input> = Vec::new();
+        let mut spent: Vec<Commitment> = Vec::new();
+        for (index, commitment, _value) in &selected {
+            input_blindings.push(planner::blinding_for(&keystore, *index));
+            inputs.push(Input { commitment: *commitment });
+            spent.push(*commitment);
+        }
+
+        let change_value = selected_total - fee;
+        let (outputs, change_blinding) = if change_value > 0 {
+            let change_index = keystore.allocate_index();
+            let change_blinding = keystore.derive_blinding(change_index);
+            let change_commitment = Commitment::new(change_value, change_blinding);
+            let change_proof = RangeProof::prove(change_value, &change_blinding);
+            let output = Output { commitment: change_commitment, proof: change_proof };
+            store.add_output(change_index, change_value, change_commitment, OutputStatus::Pending);
+            (vec![output], change_blinding)
+        } else {
+            (vec![], Scalar::zero())
+        };
+
+        for c in &spent {
+            store.mark_spent(c);
+        }
+
+        let sum_input_blinding: Scalar = input_blindings.iter().sum();
+        let excess_r = sum_input_blinding - change_blinding;
+        let kernel = TxKernel {
+            excess: Commitment::new(0, excess_r),
+            fee,
+            signature: Signature::sign(&fee.to_le_bytes(), &excess_r),
+        };
+
+        Ok(Transaction { inputs, outputs, kernels: vec![kernel] })
     }
 }
 

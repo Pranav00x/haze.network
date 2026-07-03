@@ -8,9 +8,12 @@ use warp::http::StatusCode;
 
 use crate::core::chain::ChainState;
 use crate::core::mempool::Mempool;
-use crate::core::registry::{RegisterNameOp, TransferNameOp, NameRecord};
+use crate::core::registry::{RegisterNameOp, TransferNameOp, NameRecord, NAME_REGISTRATION_FEE, validate_name};
+use crate::crypto::pedersen::Commitment;
+use crate::crypto::schnorr::Signature;
 use crate::p2p::server::P2pServer;
 use crate::p2p::message::P2pMessage;
+use super::faucet::FaucetState;
 
 #[derive(Serialize)]
 struct ErrorResponse {
@@ -54,6 +57,82 @@ pub async fn handle_register_name(
 
     if !added {
         return Ok(error_reply(StatusCode::BAD_REQUEST, "name already pending registration or has an unresolvable fee-payment input"));
+    }
+
+    let pm = Arc::clone(&p2p_server.peer_manager);
+    tokio::spawn(async move {
+        pm.broadcast(&P2pMessage::NewNameOp(op)).await;
+    });
+
+    Ok(Box::new(warp::reply::json(&RegisterResponse { status: "queued".to_string() })))
+}
+
+#[derive(Deserialize)]
+pub struct SponsoredRegisterRequest {
+    name: String,
+    owner_pubkey: Commitment,
+    resolves_to: Commitment,
+    /// Signed by owner_pubkey's secret key - costs nothing to produce, since
+    /// signing needs no funds. The node's own faucet identity covers the
+    /// flat registration fee instead of the requester, so a wallet with a
+    /// zero balance can still get a name (see FaucetState::build_sponsored_fee_payment).
+    signature: Signature,
+}
+
+/// Same registration as handle_register_name, except the *fee* is paid by
+/// this node's own faucet reserve instead of the requester - so a brand new
+/// wallet with no funds at all can still register a name. Everything else
+/// (name rules, ownership signature, on-chain validation once mined) is
+/// identical; the resulting RegisterNameOp is indistinguishable on-chain
+/// from a self-funded one.
+pub async fn handle_sponsored_register_name(
+    req: SponsoredRegisterRequest,
+    faucet: Arc<FaucetState>,
+    mempool: Arc<Mutex<Mempool>>,
+    p2p_server: Arc<P2pServer>,
+    chain: Arc<Mutex<ChainState>>,
+) -> Result<Box<dyn warp::Reply>, std::convert::Infallible> {
+    if let Err(e) = validate_name(&req.name) {
+        return Ok(error_reply(StatusCode::BAD_REQUEST, format!("invalid name: {:?}", e)));
+    }
+
+    let msg = RegisterNameOp::signing_message(&req.name);
+    if !req.signature.verify(&msg, &req.owner_pubkey) {
+        return Ok(error_reply(StatusCode::BAD_REQUEST, "signature does not match owner_pubkey"));
+    }
+
+    let already_taken = {
+        let c = chain.lock().unwrap();
+        c.name_registry.contains_key(&req.name)
+    };
+    if already_taken {
+        return Ok(error_reply(StatusCode::CONFLICT, format!("name '{}' is already registered", req.name)));
+    }
+
+    {
+        let c = chain.lock().unwrap();
+        faucet.reconcile(&c);
+    }
+
+    let fee_payment = match faucet.build_sponsored_fee_payment(NAME_REGISTRATION_FEE) {
+        Ok(tx) => tx,
+        Err(_) => return Ok(error_reply(StatusCode::SERVICE_UNAVAILABLE, "sponsor reserve temporarily depleted - try again shortly")),
+    };
+
+    let op = RegisterNameOp {
+        name: req.name,
+        owner_pubkey: req.owner_pubkey,
+        resolves_to: req.resolves_to,
+        fee_payment,
+        signature: req.signature,
+    };
+
+    let added = {
+        let mut mp = mempool.lock().unwrap();
+        mp.add_name_op(op.clone())
+    };
+    if !added {
+        return Ok(error_reply(StatusCode::BAD_REQUEST, "name already pending registration"));
     }
 
     let pm = Arc::clone(&p2p_server.peer_manager);
