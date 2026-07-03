@@ -21,7 +21,16 @@ RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/
 WORKDIR /app
 COPY --from=builder /build/target/release/haze /app/haze
 
-EXPOSE 8332 8333
+# Only the RPC/HTTP port is exposed - the P2P port (8333, bound below) isn't
+# reachable from the internet on Render's single-port web-service tier
+# anyway, and exposing it caused Render's port-prober to send HTTP health
+# checks straight into the P2P listener. The P2P protocol reads a connection's
+# first 4 bytes as a message-length prefix, so an HTTP "HEAD ..." request gets
+# read as a ~1.1GB length and rejected - Render then saw that as a failed
+# health check and restarted the container on a loop, wiping the chain (no
+# persistent disk yet) every time. Don't re-add 8333 here without also
+# fixing how it's health-checked.
+EXPOSE 8332
 
 # Shell form (not exec-form array) so ${PORT} is resolved at container start -
 # platforms like Render assign their own port via a PORT env var rather than
