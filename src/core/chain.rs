@@ -268,10 +268,17 @@ impl ChainState {
         let block_reward = if block.header.height == 0 {
             super::genesis::GENESIS_TOTAL_MINTED
         } else {
-            super::block::BLOCK_REWARD
+            super::block::block_reward_at(block.header.height)
         };
 
         if !block.body.validate_with_reward(block_reward) {
+            return None;
+        }
+
+        // 3b. Reject blocks from a different network outright - a mismatched
+        // chain_id means this block was never meant for this chain at all
+        // (see core::genesis::CHAIN_ID).
+        if block.header.chain_id != super::genesis::CHAIN_ID {
             return None;
         }
 

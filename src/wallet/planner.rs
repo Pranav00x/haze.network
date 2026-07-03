@@ -34,7 +34,7 @@ pub(crate) fn blinding_for(keystore: &Keystore, index: u32) -> Scalar {
     if index == GENESIS_INDEX {
         Scalar::from(42u64)
     } else if index == FAUCET_INDEX {
-        Scalar::from(crate::core::genesis::FAUCET_RESERVE_BLINDING)
+        Scalar::from(crate::core::genesis::TREASURY_BLINDING)
     } else {
         keystore.derive_blinding(index)
     }

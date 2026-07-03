@@ -160,11 +160,12 @@ mod tests {
         chain_state.utxos.insert(in2.commitment);
 
         // Construct the coinbase transaction for block 1:
-        // Value: BLOCK_REWARD (60) + total_fees (fee1 + fee2 = 5 + 5 = 10) = 70.
+        // Value: block_reward_at(1) + total_fees (fee1 + fee2 = 5 + 5 = 10).
+        let coinbase_value = crate::core::block::block_reward_at(1) + 10;
         let r_coinbase = Scalar::random(&mut rng);
         let coinbase_output = Output {
-            commitment: Commitment::new(70, r_coinbase),
-            proof: RangeProof::prove(70, &r_coinbase),
+            commitment: Commitment::new(coinbase_value, r_coinbase),
+            proof: RangeProof::prove(coinbase_value, &r_coinbase),
         note: vec![],
         };
         
@@ -189,6 +190,7 @@ mod tests {
             validator_commitment: Commitment::new(1_000_000, private_key),
             validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
             name_registry_root: empty_registry_root(),
+            chain_id: crate::core::genesis::CHAIN_ID,
         };
         let msg = header.hash();
         header.validator_signature = Signature::sign(&msg, &private_key);
@@ -227,7 +229,7 @@ mod tests {
         sum_final += out3.commitment.as_point();
         sum_final += coinbase_output.commitment.as_point();
 
-        let reward_commitment = Commitment::new(crate::core::block::BLOCK_REWARD, Scalar::zero()).as_point();
+        let reward_commitment = Commitment::new(crate::core::block::block_reward_at(1), Scalar::zero()).as_point();
 
         let mut sum_kernels = curve25519_dalek_ng::ristretto::RistrettoPoint::default();
         sum_kernels += kernel1.excess.as_point();
@@ -394,10 +396,11 @@ mod tests {
             let mut rng = OsRng;
             let private_key = Scalar::from(42u64);
             let r_coinbase = Scalar::random(&mut rng);
-            
+            let reward = crate::core::block::block_reward_at(height);
+
             let coinbase_output = Output {
-                commitment: Commitment::new(60, r_coinbase),
-                proof: RangeProof::prove(60, &r_coinbase),
+                commitment: Commitment::new(reward, r_coinbase),
+                proof: RangeProof::prove(reward, &r_coinbase),
             note: vec![],
             };
             let coinbase_excess_r = Scalar::zero() - r_coinbase;
@@ -422,6 +425,7 @@ mod tests {
                 validator_commitment: Commitment::new(1_000_000, private_key),
                 validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
                 name_registry_root: empty_registry_root(),
+                chain_id: crate::core::genesis::CHAIN_ID,
             };
             let msg = header.hash();
             header.validator_signature = Signature::sign(&msg, &private_key);
@@ -536,9 +540,10 @@ mod tests {
 
         let private_key = Scalar::from(42u64);
         let coinbase_r = Scalar::random(&mut rng);
+        let reward = crate::core::block::block_reward_at(1);
         let coinbase_output = Output {
-            commitment: Commitment::new(60, coinbase_r),
-            proof: RangeProof::prove(60, &coinbase_r),
+            commitment: Commitment::new(reward, coinbase_r),
+            proof: RangeProof::prove(reward, &coinbase_r),
         note: vec![],
         };
         let coinbase_excess_r = Scalar::zero() - coinbase_r;
@@ -561,6 +566,7 @@ mod tests {
             validator_commitment: Commitment::new(1_000_000, private_key),
             validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
             name_registry_root,
+            chain_id: crate::core::genesis::CHAIN_ID,
         };
         let msg = header.hash();
         header.validator_signature = Signature::sign(&msg, &private_key);
@@ -629,9 +635,10 @@ mod tests {
 
         let private_key = Scalar::from(42u64);
         let coinbase_r = Scalar::random(&mut rng);
+        let reward = crate::core::block::block_reward_at(1);
         let coinbase_output = Output {
-            commitment: Commitment::new(60, coinbase_r),
-            proof: RangeProof::prove(60, &coinbase_r),
+            commitment: Commitment::new(reward, coinbase_r),
+            proof: RangeProof::prove(reward, &coinbase_r),
         note: vec![],
         };
         let coinbase_excess_r = Scalar::zero() - coinbase_r;
@@ -653,6 +660,7 @@ mod tests {
             validator_commitment: Commitment::new(1_000_000, private_key),
             validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
             name_registry_root: compute_registry_root(&registry),
+            chain_id: crate::core::genesis::CHAIN_ID,
         };
         let msg = header.hash();
         header.validator_signature = Signature::sign(&msg, &private_key);
@@ -662,11 +670,12 @@ mod tests {
         assert!(!chain_state.apply_block(&block).is_applied(), "block registering the same name twice must be rejected");
     }
 
-    fn build_coinbase_only_body(rng: &mut OsRng) -> (Transaction, Scalar) {
+    fn build_coinbase_only_body(rng: &mut OsRng, height: u64) -> (Transaction, Scalar) {
         let coinbase_r = Scalar::random(rng);
+        let reward = crate::core::block::block_reward_at(height);
         let coinbase_output = Output {
-            commitment: Commitment::new(60, coinbase_r),
-            proof: RangeProof::prove(60, &coinbase_r),
+            commitment: Commitment::new(reward, coinbase_r),
+            proof: RangeProof::prove(reward, &coinbase_r),
         note: vec![],
         };
         let coinbase_excess_r = Scalar::zero() - coinbase_r;
@@ -727,7 +736,7 @@ mod tests {
             registered_at_block: 1,
         });
 
-        let (body1, _) = build_coinbase_only_body(&mut rng);
+        let (body1, _) = build_coinbase_only_body(&mut rng, 1);
         let mut header1 = BlockHeader {
             height: 1,
             prev_hash: genesis_hash,
@@ -737,6 +746,7 @@ mod tests {
             validator_commitment: Commitment::new(1_000_000, private_key),
             validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
             name_registry_root: compute_registry_root(&registry_after_block1),
+            chain_id: crate::core::genesis::CHAIN_ID,
         };
         header1.validator_signature = Signature::sign(&header1.hash(), &private_key);
         let block1 = Block { header: header1, body: body1, name_ops: vec![register_op], transfer_ops: vec![] };
@@ -762,7 +772,7 @@ mod tests {
             registered_at_block: 1, // unchanged - original registration height
         });
 
-        let (body2, _) = build_coinbase_only_body(&mut rng);
+        let (body2, _) = build_coinbase_only_body(&mut rng, 2);
         let mut header2 = BlockHeader {
             height: 2,
             prev_hash: block1_hash,
@@ -772,6 +782,7 @@ mod tests {
             validator_commitment: Commitment::new(1_000_000, private_key),
             validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
             name_registry_root: compute_registry_root(&registry_after_block2),
+            chain_id: crate::core::genesis::CHAIN_ID,
         };
         header2.validator_signature = Signature::sign(&header2.hash(), &private_key);
         let block2 = Block { header: header2, body: body2, name_ops: vec![], transfer_ops: vec![transfer_op] };
@@ -826,7 +837,7 @@ mod tests {
             resolves_to: original_pubkey,
             registered_at_block: 1,
         });
-        let (body1, _) = build_coinbase_only_body(&mut rng);
+        let (body1, _) = build_coinbase_only_body(&mut rng, 1);
         let mut header1 = BlockHeader {
             height: 1,
             prev_hash: genesis_hash,
@@ -836,6 +847,7 @@ mod tests {
             validator_commitment: Commitment::new(1_000_000, private_key),
             validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
             name_registry_root: compute_registry_root(&registry_after_block1),
+            chain_id: crate::core::genesis::CHAIN_ID,
         };
         header1.validator_signature = Signature::sign(&header1.hash(), &private_key);
         let block1 = Block { header: header1, body: body1, name_ops: vec![register_op], transfer_ops: vec![] };
@@ -860,7 +872,7 @@ mod tests {
             resolves_to: attacker_pubkey,
             registered_at_block: 1,
         });
-        let (body2, _) = build_coinbase_only_body(&mut rng);
+        let (body2, _) = build_coinbase_only_body(&mut rng, 2);
         let mut header2 = BlockHeader {
             height: 2,
             prev_hash: block1_hash,
@@ -870,6 +882,7 @@ mod tests {
             validator_commitment: Commitment::new(1_000_000, private_key),
             validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
             name_registry_root: compute_registry_root(&registry_after_block2),
+            chain_id: crate::core::genesis::CHAIN_ID,
         };
         header2.validator_signature = Signature::sign(&header2.hash(), &private_key);
         let block2 = Block { header: header2, body: body2, name_ops: vec![], transfer_ops: vec![transfer_op] };
@@ -1027,7 +1040,7 @@ mod tests {
         let phantom_output = Output { commitment: phantom_commitment, proof: phantom_proof, note: vec![] };
 
         let r_real = Scalar::random(&mut rng);
-        let real_value = 1_000_000 + crate::core::block::BLOCK_REWARD + 500_000; // balances against reward + phantom
+        let real_value = 1_000_000 + crate::core::block::block_reward_at(1) + 500_000; // balances against reward + phantom
         let real_output = Output {
             commitment: Commitment::new(real_value, r_real),
             proof: RangeProof::prove(real_value, &r_real),
@@ -1043,7 +1056,7 @@ mod tests {
         };
 
         let body = Transaction { inputs: vec![input], outputs: vec![phantom_output, real_output], kernels: vec![kernel] };
-        assert!(!body.validate_with_reward(crate::core::block::BLOCK_REWARD), "sanity: the body alone must already fail with the block reward applied");
+        assert!(!body.validate_with_reward(crate::core::block::block_reward_at(1)), "sanity: the body alone must already fail with the block reward applied");
 
         let private_key = Scalar::from(42u64);
         let mut header = BlockHeader {
@@ -1055,12 +1068,97 @@ mod tests {
             validator_commitment: Commitment::new(1_000_000, private_key),
             validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
             name_registry_root: empty_registry_root(),
+            chain_id: crate::core::genesis::CHAIN_ID,
         };
         let msg = header.hash();
         header.validator_signature = Signature::sign(&msg, &private_key);
         let block = Block { header, body, name_ops: vec![], transfer_ops: vec![] };
 
         assert!(!chain_state.apply_block(&block).is_applied(), "a block containing a wraparound-inflated output must be rejected at apply time");
+        assert_eq!(chain_state.current_height, 0, "chain must not have advanced past genesis");
+    }
+
+    /// Locks in the halving schedule's exact boundary behavior: full reward
+    /// right up to (and including) the last block of an interval, halved
+    /// reward the instant the next interval starts, and permanently zero
+    /// once enough halvings have occurred to shift the initial reward to 0.
+    #[test]
+    fn block_reward_at_halves_on_schedule_boundaries() {
+        use crate::core::block::block_reward_at;
+        use crate::core::genesis::{HALVING_INTERVAL_BLOCKS, INITIAL_BLOCK_REWARD};
+
+        assert_eq!(block_reward_at(0), INITIAL_BLOCK_REWARD);
+        assert_eq!(block_reward_at(1), INITIAL_BLOCK_REWARD);
+        assert_eq!(block_reward_at(HALVING_INTERVAL_BLOCKS - 1), INITIAL_BLOCK_REWARD);
+        assert_eq!(block_reward_at(HALVING_INTERVAL_BLOCKS), INITIAL_BLOCK_REWARD / 2);
+        assert_eq!(block_reward_at(HALVING_INTERVAL_BLOCKS * 2), INITIAL_BLOCK_REWARD / 4);
+
+        // 540 halved 10 times reaches exactly 0 (540 -> 270 -> ... -> 1 -> 0).
+        assert_eq!(block_reward_at(HALVING_INTERVAL_BLOCKS * 10), 0);
+        assert_eq!(block_reward_at(HALVING_INTERVAL_BLOCKS * 100), 0, "reward must stay permanently at zero, never wrap or resume");
+    }
+
+    /// GENESIS_TOTAL_MINTED is a hand-maintained sum (validator stake + the
+    /// four allocation constants) - this catches drift if any allocation
+    /// constant is edited without updating the total, which would otherwise
+    /// silently break every height-0 balance check.
+    #[test]
+    fn genesis_total_minted_matches_sum_of_genesis_outputs() {
+        use crate::core::genesis::{genesis_block, GENESIS_TOTAL_MINTED};
+
+        let genesis = genesis_block();
+
+        // Outputs don't expose their plaintext value directly, so instead
+        // confirm the block validates against the declared total - if any
+        // allocation constant drifted out of sync with GENESIS_TOTAL_MINTED,
+        // this balance-equation check would fail.
+        assert!(genesis.body.validate_with_reward(GENESIS_TOTAL_MINTED), "genesis outputs must balance exactly against GENESIS_TOTAL_MINTED");
+        assert!(!genesis.body.validate_with_reward(GENESIS_TOTAL_MINTED + 1), "genesis outputs must NOT balance against any other total - proves the check isn't vacuous");
+        assert_eq!(genesis.body.outputs.len(), 5, "expected exactly 5 genesis outputs: validator stake + team + investor + airdrop + treasury");
+    }
+
+    /// A block whose chain_id doesn't match this network's must be rejected
+    /// outright by apply_linear_block, even if every other field (reward,
+    /// signature, range proofs) is perfectly valid - proving two networks can
+    /// never accidentally interoperate over P2P.
+    #[test]
+    fn apply_block_rejects_mismatched_chain_id() {
+        let mut chain_state = ChainState::new();
+        let genesis = crate::core::genesis::genesis_block();
+        assert!(chain_state.apply_block(&genesis).is_applied());
+
+        let private_key = Scalar::from(42u64);
+        let r_coinbase = Scalar::random(&mut OsRng);
+        let reward = crate::core::block::block_reward_at(1);
+        let coinbase_output = Output {
+            commitment: Commitment::new(reward, r_coinbase),
+            proof: RangeProof::prove(reward, &r_coinbase),
+            note: vec![],
+        };
+        let coinbase_excess_r = Scalar::zero() - r_coinbase;
+        let coinbase_kernel = TxKernel {
+            excess: Commitment::new(0, coinbase_excess_r),
+            fee: 0,
+            signature: Signature::sign(&0u64.to_le_bytes(), &coinbase_excess_r),
+        };
+        let body = Transaction { inputs: vec![], outputs: vec![coinbase_output], kernels: vec![coinbase_kernel] };
+
+        let mut header = BlockHeader {
+            height: 1,
+            prev_hash: genesis.header.hash(),
+            total_kernel_offset: Scalar::zero(),
+            nonce: 0,
+            timestamp: 0,
+            validator_commitment: Commitment::new(1_000_000, private_key),
+            validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root: empty_registry_root(),
+            chain_id: crate::core::genesis::CHAIN_ID.wrapping_add(1),
+        };
+        let msg = header.hash();
+        header.validator_signature = Signature::sign(&msg, &private_key);
+        let block = Block { header, body, name_ops: vec![], transfer_ops: vec![] };
+
+        assert!(!chain_state.apply_block(&block).is_applied(), "a block with a mismatched chain_id must be rejected");
         assert_eq!(chain_state.current_height, 0, "chain must not have advanced past genesis");
     }
 }

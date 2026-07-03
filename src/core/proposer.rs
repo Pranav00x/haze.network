@@ -192,7 +192,7 @@ impl Proposer {
                     
                     // 1. Calculate total fees and coinbase value
                     let total_fees: u64 = tx.kernels.iter().map(|k| k.fee).sum();
-                    let coinbase_value = super::block::BLOCK_REWARD + total_fees;
+                    let coinbase_value = super::block::block_reward_at(next_height) + total_fees;
 
                     // 2. Derive this block's coinbase blinding from our own
                     // staking secret (private_key) instead of a random,
@@ -246,6 +246,7 @@ impl Proposer {
                         validator_commitment: validator.commitment,
                         validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
                         name_registry_root,
+                        chain_id: crate::core::genesis::CHAIN_ID,
                     };
 
                     // Sign the block header

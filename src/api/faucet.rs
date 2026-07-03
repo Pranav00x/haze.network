@@ -1,8 +1,8 @@
 //! Repeatable devnet faucet, distinct from the wallet's single-use
-//! claim-genesis convenience. Funded by a second well-known genesis output
-//! (see core::genesis::FAUCET_RESERVE_BLINDING) that only this node's own
-//! embedded wallet identity ever spends from - every request runs the same
-//! two-party slate protocol (wallet::slate) the web wallet already uses for
+//! claim-genesis convenience. Funded by the treasury genesis allocation (see
+//! core::genesis::TREASURY_BLINDING) that only this node's own embedded
+//! wallet identity ever spends from - every request runs the same two-party
+//! slate protocol (wallet::slate) the web wallet already uses for
 //! peer-to-peer payments, just with this node playing the sender.
 use std::sync::Mutex;
 use std::collections::HashSet;
@@ -10,7 +10,7 @@ use serde::{Serialize, Deserialize};
 use warp::http::StatusCode;
 
 use crate::core::chain::ChainState;
-use crate::core::genesis::{FAUCET_RESERVE_BLINDING, FAUCET_RESERVE_VALUE};
+use crate::core::genesis::{TREASURY_BLINDING, TREASURY_ALLOCATION};
 use crate::core::mempool::Mempool;
 use crate::core::transaction::{Transaction, Input, Output, TxKernel};
 use crate::crypto::pedersen::Commitment;
@@ -38,8 +38,8 @@ impl FaucetState {
     pub fn new() -> Self {
         let keystore = Keystore::generate();
         let mut store = WalletStore::default();
-        let commitment = Commitment::new(FAUCET_RESERVE_VALUE, curve25519_dalek_ng::scalar::Scalar::from(FAUCET_RESERVE_BLINDING));
-        store.add_output(FAUCET_INDEX, FAUCET_RESERVE_VALUE, commitment, OutputStatus::Confirmed);
+        let commitment = Commitment::new(TREASURY_ALLOCATION, curve25519_dalek_ng::scalar::Scalar::from(TREASURY_BLINDING));
+        store.add_output(FAUCET_INDEX, TREASURY_ALLOCATION, commitment, OutputStatus::Confirmed);
         Self {
             keystore: Mutex::new(keystore),
             store: Mutex::new(store),

@@ -18,6 +18,13 @@ pub struct BlockHeader {
     /// applied (see core::registry::compute_registry_root). Separate from
     /// the UTXO set on purpose - name ownership is intentionally public.
     pub name_registry_root: [u8; 32],
+    /// Identifies which network this block belongs to (see
+    /// core::genesis::CHAIN_ID/NETWORK_NAME) - part of the hash so nodes on
+    /// different networks can never accidentally interoperate, even if they
+    /// somehow connected over P2P (a mismatched genesis block hash alone
+    /// already prevents this in practice, but this makes the intent
+    /// explicit and checkable on every block, not just genesis).
+    pub chain_id: u64,
 }
 
 impl BlockHeader {
@@ -33,6 +40,7 @@ impl BlockHeader {
         hasher.update(self.validator_signature.s.as_bytes());
         hasher.update(self.validator_signature.e.as_bytes());
         hasher.update(&self.name_registry_root);
+        hasher.update(&self.chain_id.to_le_bytes());
         let result = hasher.finalize();
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&result);
@@ -40,7 +48,19 @@ impl BlockHeader {
     }
 }
 
-pub const BLOCK_REWARD: u64 = 60;
+/// Bitcoin-style integer halving schedule (see core::genesis's tokenomics
+/// lock for the full reasoning): reward is cut in half every
+/// HALVING_INTERVAL_BLOCKS, eventually reaching (and permanently staying at)
+/// zero. Height 0 is genesis, minted separately via
+/// core::genesis::GENESIS_TOTAL_MINTED - this function is never consulted
+/// for it.
+pub fn block_reward_at(height: u64) -> u64 {
+    let halvings = height / super::genesis::HALVING_INTERVAL_BLOCKS;
+    if halvings >= 64 {
+        return 0; // shift amount would overflow u64 - schedule has long since reached 0 anyway
+    }
+    super::genesis::INITIAL_BLOCK_REWARD >> halvings
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Block {
@@ -63,6 +83,11 @@ impl Block {
     /// Name ops are validated separately (ChainState::apply_linear_block) since checking
     /// them fully requires chain state (name uniqueness, real UTXOs) this method doesn't have.
     pub fn validate(&self) -> bool {
-        self.body.validate_with_reward(BLOCK_REWARD)
+        let reward = if self.header.height == 0 {
+            super::genesis::GENESIS_TOTAL_MINTED
+        } else {
+            block_reward_at(self.header.height)
+        };
+        self.body.validate_with_reward(reward)
     }
 }
