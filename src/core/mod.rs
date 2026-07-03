@@ -5,6 +5,7 @@ pub mod chain;
 pub mod mempool;
 pub mod genesis;
 pub mod registry;
+pub mod compaction;
 
 #[cfg(feature = "native")]
 pub mod proposer;

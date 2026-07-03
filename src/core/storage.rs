@@ -4,6 +4,7 @@ use sled::{Db, Tree, Batch};
 use crate::crypto::pedersen::Commitment;
 use crate::core::transaction::TxKernel;
 use super::chain::{ChainState, Validator, AppliedDelta, RollbackDelta};
+use super::compaction::BlockPruneMeta;
 use super::block::Block;
 
 const DEFAULT_DATA_DIR: &str = "haze_data";
@@ -17,6 +18,9 @@ pub struct Storage {
     utxos: Tree,
     kernels: Tree,
     validator_snapshots: Tree,
+    /// Per-block cut-through bookkeeping (see core::compaction) - keyed by
+    /// block hash, same as `blocks`. Only ever written by persist_compaction.
+    prune_meta: Tree,
     meta: Tree,
 }
 
@@ -39,6 +43,7 @@ impl Storage {
             utxos: db.open_tree("utxos").expect("Failed to open utxos tree"),
             kernels: db.open_tree("kernels").expect("Failed to open kernels tree"),
             validator_snapshots: db.open_tree("validator_snapshots").expect("Failed to open validator_snapshots tree"),
+            prune_meta: db.open_tree("prune_meta").expect("Failed to open prune_meta tree"),
             meta: db.open_tree("meta").expect("Failed to open meta tree"),
         }
     }
@@ -93,6 +98,20 @@ impl Storage {
             }
         }
         state.validator_snapshots = validator_snapshots;
+
+        let mut prune_meta: HashMap<[u8; 32], BlockPruneMeta> = HashMap::new();
+        for entry in self.prune_meta.iter() {
+            if let Ok((hash_bytes, meta_bytes)) = entry {
+                if hash_bytes.len() == 32 {
+                    let mut hash = [0u8; 32];
+                    hash.copy_from_slice(&hash_bytes);
+                    if let Ok(meta) = bincode::deserialize::<BlockPruneMeta>(&meta_bytes) {
+                        prune_meta.insert(hash, meta);
+                    }
+                }
+            }
+        }
+        state.prune_meta = prune_meta;
 
         if let Ok(Some(height_bytes)) = self.meta.get(META_HEIGHT_KEY) {
             if height_bytes.len() == 8 {
@@ -228,6 +247,37 @@ impl Storage {
     /// application (small, rewritten wholesale - cheap compared to the collections above).
     pub fn persist_active_validators(&self, validators: &[Validator]) -> sled::Result<()> {
         self.meta.insert(META_VALIDATORS_KEY, bincode::serialize(validators).unwrap())?;
+        Ok(())
+    }
+
+    /// Persists a completed horizon-based cut-through pass (see
+    /// core::compaction::compact): re-writes just the blocks that were
+    /// actually trimmed (now missing some inputs/outputs, same hash/key as
+    /// before) plus their prune_meta entries, and drops validator snapshots
+    /// older than the horizon from disk too - otherwise a restart would
+    /// reload them from `validator_snapshots` and silently undo that part
+    /// of the in-memory pruning on every load_state.
+    pub fn persist_compaction(&self, chain: &ChainState, touched_blocks: &[[u8; 32]]) -> sled::Result<()> {
+        for hash in touched_blocks {
+            if let Some(block) = chain.blocks.get(hash) {
+                self.blocks.insert(&hash[..], bincode::serialize(block).unwrap())?;
+            }
+            if let Some(meta) = chain.prune_meta.get(hash) {
+                self.prune_meta.insert(&hash[..], bincode::serialize(meta).unwrap())?;
+            }
+        }
+
+        // validator_snapshots is keyed by big-endian height, so a lexicographic
+        // range below the horizon is exactly the numeric range below it.
+        let horizon_height = chain.current_height.saturating_sub(super::compaction::CUT_THROUGH_HORIZON);
+        let mut snapshot_batch = Batch::default();
+        for entry in self.validator_snapshots.range(..horizon_height.to_be_bytes().to_vec()) {
+            if let Ok((key, _)) = entry {
+                snapshot_batch.remove(key);
+            }
+        }
+        self.validator_snapshots.apply_batch(snapshot_batch)?;
+
         Ok(())
     }
 }

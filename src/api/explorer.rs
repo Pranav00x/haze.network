@@ -5,6 +5,7 @@ use serde::Serialize;
 use crate::core::chain::ChainState;
 use crate::core::mempool::Mempool;
 use crate::core::block::Block;
+use crate::core::compaction::BlockPruneMeta;
 
 /// Encodes bytes as a lowercase hex string. Kept local to avoid pulling in a crate
 /// for something this small.
@@ -31,9 +32,15 @@ pub struct BlockSummary {
     pub prev_hash: String,
     pub timestamp: u64,
     pub proposer: String,
+    /// True original count, including anything since pruned via cut-through
+    /// (see core::compaction) - not just what's currently retrievable.
     pub num_inputs: usize,
     pub num_outputs: usize,
     pub num_kernels: usize,
+    /// How many of num_inputs/num_outputs above are no longer individually
+    /// retrievable (pruned) - 0 for a block nothing has ever compacted.
+    pub pruned_inputs: u32,
+    pub pruned_outputs: u32,
 }
 
 #[derive(Serialize)]
@@ -50,10 +57,17 @@ pub struct BlockDetail {
     pub timestamp: u64,
     pub nonce: u64,
     pub proposer: String,
+    /// Commitment hex strings for whatever inputs/outputs are still
+    /// individually retrievable, PLUS one placeholder string per pruned
+    /// entry (see core::compaction) so the list's length still reflects the
+    /// block's true original input/output count instead of silently looking
+    /// smaller than it ever was.
     pub inputs: Vec<String>,
     pub outputs: Vec<String>,
     pub kernels: Vec<KernelInfo>,
 }
+
+const PRUNED_PLACEHOLDER: &str = "<pruned via cut-through>";
 
 #[derive(Serialize)]
 pub struct ValidatorInfo {
@@ -82,20 +96,31 @@ fn all_outputs(block: &Block) -> Vec<&crate::core::transaction::Output> {
         .collect()
 }
 
-fn to_summary(block: &Block) -> BlockSummary {
+fn to_summary(block: &Block, prune_meta: Option<&BlockPruneMeta>) -> BlockSummary {
+    let (pruned_inputs, pruned_outputs) = prune_meta.map(|m| (m.pruned_inputs, m.pruned_outputs)).unwrap_or((0, 0));
     BlockSummary {
         height: block.header.height,
         hash: to_hex(&block.header.hash()),
         prev_hash: to_hex(&block.header.prev_hash),
         timestamp: block.header.timestamp,
         proposer: commitment_hex(&block.header.validator_commitment),
-        num_inputs: all_inputs(block).len(),
-        num_outputs: all_outputs(block).len(),
+        num_inputs: all_inputs(block).len() + pruned_inputs as usize,
+        num_outputs: all_outputs(block).len() + pruned_outputs as usize,
         num_kernels: all_kernels(block).len(),
+        pruned_inputs,
+        pruned_outputs,
     }
 }
 
-fn to_detail(block: &Block) -> BlockDetail {
+fn to_detail(block: &Block, prune_meta: Option<&BlockPruneMeta>) -> BlockDetail {
+    let (pruned_inputs, pruned_outputs) = prune_meta.map(|m| (m.pruned_inputs, m.pruned_outputs)).unwrap_or((0, 0));
+
+    let mut inputs: Vec<String> = all_inputs(block).iter().map(|i| commitment_hex(&i.commitment)).collect();
+    inputs.extend(std::iter::repeat(PRUNED_PLACEHOLDER.to_string()).take(pruned_inputs as usize));
+
+    let mut outputs: Vec<String> = all_outputs(block).iter().map(|o| commitment_hex(&o.commitment)).collect();
+    outputs.extend(std::iter::repeat(PRUNED_PLACEHOLDER.to_string()).take(pruned_outputs as usize));
+
     BlockDetail {
         height: block.header.height,
         hash: to_hex(&block.header.hash()),
@@ -103,8 +128,8 @@ fn to_detail(block: &Block) -> BlockDetail {
         timestamp: block.header.timestamp,
         nonce: block.header.nonce,
         proposer: commitment_hex(&block.header.validator_commitment),
-        inputs: all_inputs(block).iter().map(|i| commitment_hex(&i.commitment)).collect(),
-        outputs: all_outputs(block).iter().map(|o| commitment_hex(&o.commitment)).collect(),
+        inputs,
+        outputs,
         kernels: all_kernels(block).iter().map(|k| KernelInfo {
             excess: commitment_hex(&k.excess),
             fee: k.fee,
@@ -205,15 +230,19 @@ pub async fn handle_blocks_list(
 ) -> Result<impl warp::Reply, Infallible> {
     let limit = query.limit.unwrap_or(20).clamp(1, 100);
 
-    let (blocks, current_height) = {
+    let (blocks, prune_metas) = {
         let c = chain.lock().unwrap();
         let from_height = c.current_height.saturating_sub(limit.saturating_sub(1) as u64);
         let (blocks, _has_more) = c.get_blocks_from(from_height, limit);
-        (blocks, c.current_height)
+        let prune_metas: Vec<Option<BlockPruneMeta>> = blocks.iter()
+            .map(|b| c.prune_meta.get(&b.header.hash()).cloned())
+            .collect();
+        (blocks, prune_metas)
     };
-    let _ = current_height;
 
-    let mut summaries: Vec<BlockSummary> = blocks.iter().map(to_summary).collect();
+    let mut summaries: Vec<BlockSummary> = blocks.iter().zip(prune_metas.iter())
+        .map(|(b, m)| to_summary(b, m.as_ref()))
+        .collect();
     summaries.reverse(); // newest first
     Ok(warp::reply::json(&summaries))
 }
@@ -222,14 +251,18 @@ pub async fn handle_block_detail(
     height: u64,
     chain: Arc<Mutex<ChainState>>,
 ) -> Result<Box<dyn warp::Reply>, Infallible> {
-    let block = {
+    let block_and_meta = {
         let c = chain.lock().unwrap();
         let (blocks, _) = c.get_blocks_from(height, 1);
         blocks.into_iter().find(|b| b.header.height == height)
+            .map(|b| {
+                let meta = c.prune_meta.get(&b.header.hash()).cloned();
+                (b, meta)
+            })
     };
 
-    match block {
-        Some(b) => Ok(Box::new(warp::reply::json(&to_detail(&b)))),
+    match block_and_meta {
+        Some((b, meta)) => Ok(Box::new(warp::reply::json(&to_detail(&b, meta.as_ref())))),
         None => Ok(Box::new(warp::reply::with_status(
             warp::reply::json(&serde_json::json!({ "error": "block not found" })),
             warp::http::StatusCode::NOT_FOUND,

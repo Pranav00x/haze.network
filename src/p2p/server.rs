@@ -470,13 +470,38 @@ async fn handle_peer_connection(
                             }
                         }
                         P2pMessage::GetBlocks { from_height } => {
-                            let (blocks, has_more) = {
+                            let (blocks, has_more, earliest_full) = {
                                 let cs = chain.lock().unwrap();
-                                cs.get_blocks_from(from_height, SYNC_BATCH_SIZE)
+                                let earliest_full = cs.earliest_full_height();
+                                if from_height < earliest_full {
+                                    (None, false, earliest_full)
+                                } else {
+                                    let (blocks, has_more) = cs.get_blocks_from(from_height, SYNC_BATCH_SIZE);
+                                    (Some(blocks), has_more, earliest_full)
+                                }
                             };
-                            println!("P2P: Sending {} blocks (from height {}) to {}", blocks.len(), from_height, peer_addr);
                             let mut w = write_half.lock().await;
-                            let _ = write_msg(&mut *w, &P2pMessage::BlocksBatch { blocks, has_more }).await;
+                            match blocks {
+                                Some(blocks) => {
+                                    println!("P2P: Sending {} blocks (from height {}) to {}", blocks.len(), from_height, peer_addr);
+                                    let _ = write_msg(&mut *w, &P2pMessage::BlocksBatch { blocks, has_more }).await;
+                                }
+                                None => {
+                                    println!("P2P: Declining GetBlocks from height {} for {} - already compacted below height {}", from_height, peer_addr, earliest_full);
+                                    let _ = write_msg(&mut *w, &P2pMessage::PrunedRange { earliest_full_height: earliest_full }).await;
+                                }
+                            }
+                        }
+                        P2pMessage::PrunedRange { earliest_full_height } => {
+                            // This node can't fully sync historical state through
+                            // a peer that's already compacted past what we asked
+                            // for - see core::compaction's module docs for why a
+                            // pruned block would fail fresh per-block
+                            // re-validation. Finding another (less-compacted or
+                            // archival) peer to sync that range from is out of
+                            // scope for now; just log it rather than silently
+                            // stalling forever.
+                            println!("P2P: {} has already pruned below height {} - can't fully sync that range from them.", peer_addr, earliest_full_height);
                         }
                         P2pMessage::BlocksBatch { blocks, has_more } => {
                             println!("P2P: Received batch of {} blocks from {} (has_more: {})", blocks.len(), peer_addr, has_more);

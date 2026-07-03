@@ -5,6 +5,7 @@ use haze_core::core::mempool::Mempool;
 use haze_core::core::proposer::Proposer;
 use haze_core::core::storage::Storage;
 use haze_core::core::chain::ApplyResult;
+use haze_core::core::compaction::Compactor;
 use haze_core::core::genesis;
 use haze_core::p2p::server::P2pServer;
 use haze_core::api::server::ApiServer;
@@ -65,6 +66,11 @@ async fn main() -> std::io::Result<()> {
             let proposer_clone = Arc::clone(&proposer);
             tokio::spawn(async move {
                 proposer_clone.start_proposing().await;
+            });
+
+            let compactor = Arc::new(Compactor::new(Arc::clone(&chain), Arc::clone(&storage)));
+            tokio::spawn(async move {
+                compactor.run_periodic().await;
             });
 
             let rpc_mempool = Arc::clone(&mempool);

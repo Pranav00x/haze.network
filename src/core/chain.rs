@@ -4,6 +4,7 @@ use crate::crypto::schnorr::Signature;
 use super::transaction::{TxKernel, Output};
 use super::block::Block;
 use super::registry::{NameRecord, compute_registry_root};
+use super::compaction::BlockPruneMeta;
 use serde::{Serialize, Deserialize};
 use curve25519_dalek_ng::scalar::Scalar;
 use bulletproofs::PedersenGens;
@@ -35,6 +36,11 @@ pub struct ChainState {
     /// same purpose as validator_snapshots: apply_linear_block populates it,
     /// rollback_block consumes it to restore the exact prior record.
     pub transfer_snapshots: HashMap<u64, Vec<(String, NameRecord)>>,
+    /// Per-block bookkeeping for horizon-based cut-through (see
+    /// core::compaction::compact) - which blocks have had inputs/outputs
+    /// physically removed, and how many. Purely a display aid (see
+    /// api::explorer), never consulted by validation.
+    pub prune_meta: HashMap<[u8; 32], BlockPruneMeta>,
 }
 
 /// Describes exactly what changed when a block was successfully applied, so storage can
@@ -491,6 +497,26 @@ impl ChainState {
             new_height: self.current_height,
             new_tip: self.last_block_hash,
         })
+    }
+
+    /// The oldest height this node can still guarantee FULL (unpruned)
+    /// block data for. A syncing peer requesting history older than this
+    /// would receive blocks missing some inputs/outputs that horizon-based
+    /// compaction has already removed - fine for this node's own already-
+    /// validated state, but a fresh peer re-validating each block's balance
+    /// equation from scratch would fail on them (see core::compaction's
+    /// module docs for why). Nodes that have never compacted anything just
+    /// report height 0 (fully archival).
+    pub fn earliest_full_height(&self) -> u64 {
+        if self.prune_meta.is_empty() {
+            return 0;
+        }
+        self.prune_meta.keys()
+            .filter_map(|hash| self.blocks.get(hash))
+            .map(|b| b.header.height)
+            .max()
+            .map(|h| h + 1)
+            .unwrap_or(0)
     }
 
     /// Returns up to `limit` blocks starting at `from_height` from the active chain,
