@@ -26,6 +26,19 @@ export class WasmFinalizedTx {
     transaction_json: string;
 }
 
+export class WasmKeystoreAndMnemonic {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    keystore_bytes: Uint8Array;
+    /**
+     * Only ever available right here at generation time - the keystore
+     * itself never stores or re-derives it. The caller is responsible for
+     * showing it to the user and requiring confirmation it's been saved.
+     */
+    mnemonic: string;
+}
+
 export class WasmOwnedOutput {
     private constructor();
     free(): void;
@@ -155,6 +168,12 @@ export function finalize_slate(pending_slate_bytes: Uint8Array, response_slate_j
 export function generate_keystore(): Uint8Array;
 
 /**
+ * Generates a fresh keystore backed by a real 12-word BIP39 mnemonic, so it
+ * can be recovered later via restore_keystore_from_mnemonic().
+ */
+export function generate_keystore_with_mnemonic(): WasmKeystoreAndMnemonic;
+
+/**
  * Builds a real, self-contained transaction from the wallet's own confirmed UTXOs.
  * Allocates new output indices in the returned keystore bytes immediately (same
  * as the desktop wallet), regardless of whether the caller goes on to broadcast
@@ -175,6 +194,11 @@ export function reconcile_wallet_store(store_bytes: Uint8Array, chain_utxo_commi
  * to its own store as Pending.
  */
 export function respond_to_slate(keystore_bytes: Uint8Array, slate_json: string): WasmRespondResult;
+
+/**
+ * Reconstructs a keystore from a previously-generated BIP39 phrase.
+ */
+export function restore_keystore_from_mnemonic(phrase: string): Uint8Array;
 
 /**
  * Reveals the raw blinding factor (as hex) for the wallet's single largest
@@ -218,7 +242,8 @@ export interface InitOutput {
     readonly __wbg_get_wasmfinalizedtx_change: (a: number) => number;
     readonly __wbg_get_wasmfinalizedtx_spent_commitments_hex: (a: number) => [number, number];
     readonly __wbg_get_wasmfinalizedtx_transaction_json: (a: number) => [number, number];
-    readonly __wbg_get_wasmownedoutput_commitment_hex: (a: number) => [number, number];
+    readonly __wbg_get_wasmkeystoreandmnemonic_keystore_bytes: (a: number) => [number, number];
+    readonly __wbg_get_wasmkeystoreandmnemonic_mnemonic: (a: number) => [number, number];
     readonly __wbg_get_wasmownedoutput_index: (a: number) => number;
     readonly __wbg_get_wasmownedoutput_value: (a: number) => bigint;
     readonly __wbg_get_wasmregisternameresult_spent_commitments_hex: (a: number) => [number, number];
@@ -246,6 +271,7 @@ export interface InitOutput {
     readonly __wbg_set_wasmsendplan_updated_keystore_bytes: (a: number, b: number, c: number) => void;
     readonly __wbg_wasmcreateslateresult_free: (a: number, b: number) => void;
     readonly __wbg_wasmfinalizedtx_free: (a: number, b: number) => void;
+    readonly __wbg_wasmkeystoreandmnemonic_free: (a: number, b: number) => void;
     readonly __wbg_wasmownedoutput_free: (a: number, b: number) => void;
     readonly __wbg_wasmregisternameresult_free: (a: number, b: number) => void;
     readonly __wbg_wasmrespondresult_free: (a: number, b: number) => void;
@@ -260,9 +286,11 @@ export interface InitOutput {
     readonly create_send_slate: (a: number, b: number, c: number, d: number, e: bigint, f: bigint) => [number, number, number];
     readonly finalize_slate: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly generate_keystore: () => [number, number];
+    readonly generate_keystore_with_mnemonic: () => number;
     readonly plan_send: (a: number, b: number, c: number, d: number, e: bigint, f: bigint) => [number, number, number];
     readonly reconcile_wallet_store: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly respond_to_slate: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly restore_keystore_from_mnemonic: (a: number, b: number) => [number, number, number, number];
     readonly reveal_stake_blinding_hex: (a: number, b: number, c: number, d: number, e: bigint) => [number, number, number, number];
     readonly wallet_balance: (a: number, b: number) => [bigint, number, number];
     readonly wallet_identity_pubkey_hex: (a: number, b: number) => [number, number, number, number];
@@ -271,10 +299,13 @@ export interface InitOutput {
     readonly __wbg_get_wasmregisternameresult_change: (a: number) => number;
     readonly __wbg_set_wasmregisternameresult_change: (a: number, b: number) => void;
     readonly __wbg_get_wasmsendplan_dest: (a: number) => number;
+    readonly __wbg_set_wasmkeystoreandmnemonic_keystore_bytes: (a: number, b: number, c: number) => void;
+    readonly __wbg_set_wasmkeystoreandmnemonic_mnemonic: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmregisternameresult_op_json: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmrespondresult_response_slate_json: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmrespondresult_updated_keystore_bytes: (a: number, b: number, c: number) => void;
     readonly __wbg_get_wasmrespondresult_updated_keystore_bytes: (a: number) => [number, number];
+    readonly __wbg_get_wasmownedoutput_commitment_hex: (a: number) => [number, number];
     readonly __wbg_get_wasmregisternameresult_op_json: (a: number) => [number, number];
     readonly __wbg_get_wasmrespondresult_response_slate_json: (a: number) => [number, number];
     readonly __wbg_set_wasmsendplan_dest: (a: number, b: number) => void;

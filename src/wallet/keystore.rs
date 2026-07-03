@@ -70,6 +70,31 @@ impl Keystore {
         Keystore { seed, next_index: 0 }
     }
 
+    /// Generates a fresh keystore backed by a real BIP39 mnemonic - same
+    /// standard as most wallets (MetaMask, etc), so the phrase can be written
+    /// down and used to recover the wallet later via from_mnemonic(). Returns
+    /// the phrase alongside the keystore since it's only ever available at
+    /// generation time - the keystore itself never stores it.
+    pub fn generate_with_mnemonic() -> (Self, String) {
+        let mut entropy = [0u8; 16]; // 128 bits -> 12-word mnemonic
+        OsRng.fill_bytes(&mut entropy);
+        let mnemonic = bip39::Mnemonic::from_entropy(&entropy).expect("valid entropy length");
+        let phrase = mnemonic.to_string();
+        let keystore = Self::from_mnemonic(&phrase).expect("just-generated mnemonic must parse");
+        (keystore, phrase)
+    }
+
+    /// Reconstructs a keystore deterministically from a previously-generated
+    /// BIP39 phrase - the same phrase always yields the same seed, and thus
+    /// the same keys/outputs/identity.
+    pub fn from_mnemonic(phrase: &str) -> Option<Self> {
+        let mnemonic = bip39::Mnemonic::parse_normalized(phrase).ok()?;
+        let bip39_seed = mnemonic.to_seed("");
+        let mut seed = [0u8; 32];
+        seed.copy_from_slice(&bip39_seed[0..32]);
+        Some(Keystore { seed, next_index: 0 })
+    }
+
     /// Deterministically derives the blinding factor for a given output index.
     pub fn derive_blinding(&self, index: u32) -> Scalar {
         let mut hasher = Sha512::new();

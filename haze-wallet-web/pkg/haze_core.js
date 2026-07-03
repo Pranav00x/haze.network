@@ -159,6 +159,72 @@ export class WasmFinalizedTx {
 }
 if (Symbol.dispose) WasmFinalizedTx.prototype[Symbol.dispose] = WasmFinalizedTx.prototype.free;
 
+export class WasmKeystoreAndMnemonic {
+    static __wrap(ptr) {
+        const obj = Object.create(WasmKeystoreAndMnemonic.prototype);
+        obj.__wbg_ptr = ptr;
+        WasmKeystoreAndMnemonicFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmKeystoreAndMnemonicFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmkeystoreandmnemonic_free(ptr, 0);
+    }
+    /**
+     * @returns {Uint8Array}
+     */
+    get keystore_bytes() {
+        const ret = wasm.__wbg_get_wasmkeystoreandmnemonic_keystore_bytes(this.__wbg_ptr);
+        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v1;
+    }
+    /**
+     * Only ever available right here at generation time - the keystore
+     * itself never stores or re-derives it. The caller is responsible for
+     * showing it to the user and requiring confirmation it's been saved.
+     * @returns {string}
+     */
+    get mnemonic() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.__wbg_get_wasmkeystoreandmnemonic_mnemonic(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @param {Uint8Array} arg0
+     */
+    set keystore_bytes(arg0) {
+        const ptr0 = passArray8ToWasm0(arg0, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_wasmkeystoreandmnemonic_keystore_bytes(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * Only ever available right here at generation time - the keystore
+     * itself never stores or re-derives it. The caller is responsible for
+     * showing it to the user and requiring confirmation it's been saved.
+     * @param {string} arg0
+     */
+    set mnemonic(arg0) {
+        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_wasmkeystoreandmnemonic_mnemonic(this.__wbg_ptr, ptr0, len0);
+    }
+}
+if (Symbol.dispose) WasmKeystoreAndMnemonic.prototype[Symbol.dispose] = WasmKeystoreAndMnemonic.prototype.free;
+
 export class WasmOwnedOutput {
     static __wrap(ptr) {
         const obj = Object.create(WasmOwnedOutput.prototype);
@@ -792,6 +858,16 @@ export function generate_keystore() {
 }
 
 /**
+ * Generates a fresh keystore backed by a real 12-word BIP39 mnemonic, so it
+ * can be recovered later via restore_keystore_from_mnemonic().
+ * @returns {WasmKeystoreAndMnemonic}
+ */
+export function generate_keystore_with_mnemonic() {
+    const ret = wasm.generate_keystore_with_mnemonic();
+    return WasmKeystoreAndMnemonic.__wrap(ret);
+}
+
+/**
  * Builds a real, self-contained transaction from the wallet's own confirmed UTXOs.
  * Allocates new output indices in the returned keystore bytes immediately (same
  * as the desktop wallet), regardless of whether the caller goes on to broadcast
@@ -854,6 +930,23 @@ export function respond_to_slate(keystore_bytes, slate_json) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return WasmRespondResult.__wrap(ret[0]);
+}
+
+/**
+ * Reconstructs a keystore from a previously-generated BIP39 phrase.
+ * @param {string} phrase
+ * @returns {Uint8Array}
+ */
+export function restore_keystore_from_mnemonic(phrase) {
+    const ptr0 = passStringToWasm0(phrase, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.restore_keystore_from_mnemonic(ptr0, len0);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v2;
 }
 
 /**
@@ -1087,6 +1180,9 @@ const WasmCreateSlateResultFinalization = (typeof FinalizationRegistry === 'unde
 const WasmFinalizedTxFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmfinalizedtx_free(ptr, 1));
+const WasmKeystoreAndMnemonicFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmkeystoreandmnemonic_free(ptr, 1));
 const WasmOwnedOutputFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmownedoutput_free(ptr, 1));

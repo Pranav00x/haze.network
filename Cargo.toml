@@ -44,6 +44,7 @@ reqwest = { version = "0.13.4", features = ["json"], optional = true }
 sled = { version = "0.34", optional = true }
 uniffi = { version = "0.28", features = ["cli"], optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
+bip39 = "2.2.2"
 
 # rand/OsRng (keystore generation, nonces, range proofs) depends on getrandom,
 # which does nothing on wasm32-unknown-unknown unless its "js" feature is

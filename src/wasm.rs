@@ -49,6 +49,31 @@ pub fn generate_keystore() -> Vec<u8> {
     Keystore::generate().to_bytes()
 }
 
+#[wasm_bindgen(getter_with_clone)]
+pub struct WasmKeystoreAndMnemonic {
+    pub keystore_bytes: Vec<u8>,
+    /// Only ever available right here at generation time - the keystore
+    /// itself never stores or re-derives it. The caller is responsible for
+    /// showing it to the user and requiring confirmation it's been saved.
+    pub mnemonic: String,
+}
+
+/// Generates a fresh keystore backed by a real 12-word BIP39 mnemonic, so it
+/// can be recovered later via restore_keystore_from_mnemonic().
+#[wasm_bindgen]
+pub fn generate_keystore_with_mnemonic() -> WasmKeystoreAndMnemonic {
+    let (keystore, mnemonic) = Keystore::generate_with_mnemonic();
+    WasmKeystoreAndMnemonic { keystore_bytes: keystore.to_bytes(), mnemonic }
+}
+
+/// Reconstructs a keystore from a previously-generated BIP39 phrase.
+#[wasm_bindgen]
+pub fn restore_keystore_from_mnemonic(phrase: String) -> Result<Vec<u8>, JsValue> {
+    Keystore::from_mnemonic(&phrase)
+        .map(|k| k.to_bytes())
+        .ok_or_else(|| js_err("invalid recovery phrase"))
+}
+
 /// Creates an empty wallet store and returns its serialized bytes.
 #[wasm_bindgen]
 pub fn wallet_store_new() -> Vec<u8> {
