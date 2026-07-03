@@ -11,6 +11,7 @@ use crate::p2p::server::P2pServer;
 use super::explorer;
 use super::faucet::{self, FaucetState};
 use super::names;
+use super::inbox::{self, InboxState};
 
 pub struct ApiServer;
 
@@ -36,6 +37,10 @@ impl ApiServer {
         let mempool_filter_5 = mempool_filter.clone();
         let p2p_filter_2 = p2p_filter.clone();
         let p2p_filter_3 = p2p_filter.clone();
+
+        let inbox_state = Arc::new(InboxState::new());
+        let inbox_filter = warp::any().map(move || Arc::clone(&inbox_state));
+        let inbox_filter_2 = inbox_filter.clone();
 
         // Caps request body size for the two write endpoints - now that this
         // API is meant to be internet-facing, an unbounded body from an
@@ -169,6 +174,22 @@ impl ApiServer {
             .and(chain_filter)
             .and_then(names::handle_list_names);
 
+        // POST /v1/inbox/:pubkey_hex - drops a slate/response off for a
+        // recipient (see api/inbox.rs). Not part of consensus - pure message
+        // relay, so it needs neither the mempool nor the chain.
+        let post_inbox_route = warp::post()
+            .and(warp::path!("v1" / "inbox" / String))
+            .and(warp::body::content_length_limit(MAX_BODY_SIZE))
+            .and(warp::body::json())
+            .and(inbox_filter)
+            .and_then(inbox::handle_post_inbox);
+
+        // GET /v1/inbox/:pubkey_hex - drains and returns pending messages.
+        let get_inbox_route = warp::get()
+            .and(warp::path!("v1" / "inbox" / String))
+            .and(inbox_filter_2)
+            .and_then(inbox::handle_get_inbox);
+
         let routes = tx_route
             .or(stake_route)
             .or(utxos_route)
@@ -185,6 +206,8 @@ impl ApiServer {
             .or(transfer_name_route)
             .or(resolve_name_route)
             .or(list_names_route)
+            .or(post_inbox_route)
+            .or(get_inbox_route)
             .with(
                 warp::cors()
                     .allow_any_origin()

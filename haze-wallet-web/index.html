@@ -142,6 +142,12 @@
 
   .keystore-note { font-family: var(--font-mono); font-size: 11px; color: var(--ink-faint); word-break: break-all; margin-top: 4px; }
 
+  .inbox-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--fog-2); }
+  .inbox-item:last-child { border-bottom: none; }
+  .inbox-item .inbox-item-text { font-size: 13.5px; }
+  .inbox-item .inbox-item-from { font-family: var(--font-mono); font-size: 11px; color: var(--ink-faint); word-break: break-all; }
+  .inbox-item button { margin-top: 0; flex-shrink: 0; }
+
   ::selection { background: var(--amber-dim); }
 </style>
 </head>
@@ -273,6 +279,12 @@ function clearPendingSlate() {
 
 // In-memory only for this session - never written back to localStorage in plaintext.
 let sessionKeystoreBytes = null;
+
+// ---------- "Send to a name" (inbox-relayed slate exchange) ----------
+// Only one in-flight "send to a name" at a time, same convention as the
+// manual "Pay someone" flow's single PendingSlate.
+let pendingNameSend = null; // { toName, pendingSlateBytes, amount }
+let incomingRequests = []; // [{ from_pubkey_hex, kind, payload_json }]
 
 async function fetchJson(path, opts) {
   const res = await fetch(API_BASE + path, opts);
@@ -440,6 +452,23 @@ function renderDashboard() {
         <input type="number" id="send-amount" min="1" />
         <button class="btn-primary" id="send-btn">Send</button>
         <div id="send-message"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Send to a name</h2>
+        <div class="sub">Sends directly to someone's registered .haze name - no copy-pasting slates. Resolves the name, drops the payment request in their inbox automatically, and completes it the moment they accept. Fee is fixed at 5.</div>
+        <label>Recipient's name</label>
+        <input type="text" id="name-send-recipient" placeholder="e.g. harshit" autocomplete="off" />
+        <label>Amount</label>
+        <input type="number" id="name-send-amount" min="1" />
+        <button class="btn-primary" id="name-send-btn">Send</button>
+        <div id="name-send-message"></div>
+      </div>
+
+      <div class="panel" id="incoming-requests-panel" style="display:none;">
+        <h2>Incoming payments</h2>
+        <div class="sub">Payment requests sent to your identity pubkey, waiting for you to accept.</div>
+        <div id="incoming-requests-list"></div>
       </div>
 
       <div class="panel">
@@ -902,8 +931,154 @@ function renderDashboard() {
     }
   });
 
+  document.getElementById("name-send-btn").addEventListener("click", async () => {
+    const toName = document.getElementById("name-send-recipient").value.trim();
+    const amount = BigInt(document.getElementById("name-send-amount").value || "0");
+    const messageEl = document.getElementById("name-send-message");
+
+    if (!toName || amount <= 0n) {
+      messageEl.innerHTML = `<div class="message error">Enter a recipient name and an amount.</div>`;
+      return;
+    }
+    if (pendingNameSend) {
+      messageEl.innerHTML = `<div class="message error">You already have a send to "${displayName(pendingNameSend.toName)}" awaiting acceptance. Wait for it to complete first.</div>`;
+      return;
+    }
+
+    try {
+      const nameRes = await fetch(API_BASE + "/v1/names/" + encodeURIComponent(toName));
+      if (!nameRes.ok) {
+        messageEl.innerHTML = `<div class="message error">"${displayName(toName)}" is not registered.</div>`;
+        return;
+      }
+      const record = await nameRes.json();
+      const toPubkeyHex = bytesToHex(record.resolves_to);
+
+      const storeBytes = loadWalletStoreBytes();
+      const slate = create_send_slate(sessionKeystoreBytes, storeBytes, amount, 5n);
+      sessionKeystoreBytes = slate.updated_keystore_bytes;
+
+      const myPubkeyHex = wallet_identity_pubkey_hex(sessionKeystoreBytes);
+      const inboxRes = await fetch(API_BASE + "/v1/inbox/" + toPubkeyHex, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ from_pubkey_hex: myPubkeyHex, kind: "request", payload_json: slate.slate_json }),
+      });
+      if (!inboxRes.ok) {
+        messageEl.innerHTML = `<div class="message error">Failed to deliver payment request.</div>`;
+        return;
+      }
+
+      pendingNameSend = { toName, pendingSlateBytes: slate.pending_slate_bytes, amount: amount.toString() };
+      messageEl.innerHTML = `<div class="message success">Sent to "${displayName(toName)}" - waiting for them to accept&hellip;</div>`;
+      document.getElementById("name-send-recipient").value = "";
+      document.getElementById("name-send-amount").value = "";
+    } catch (e) {
+      messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+    }
+  });
+
+  function renderIncomingRequests() {
+    const panel = document.getElementById("incoming-requests-panel");
+    const list = document.getElementById("incoming-requests-list");
+    if (incomingRequests.length === 0) {
+      panel.style.display = "none";
+      return;
+    }
+    panel.style.display = "";
+    list.innerHTML = "";
+    incomingRequests.forEach((msg, idx) => {
+      let amount = "?";
+      try { amount = JSON.parse(msg.payload_json).amount; } catch (e) {}
+      const item = document.createElement("div");
+      item.className = "inbox-item";
+      item.innerHTML = `
+        <div class="inbox-item-text">
+          Payment request for <strong>${amount}</strong><br>
+          <span class="inbox-item-from">from ${msg.from_pubkey_hex}</span>
+        </div>
+        <button class="btn-primary btn-small" data-idx="${idx}">Accept</button>
+      `;
+      item.querySelector("button").addEventListener("click", () => acceptIncomingRequest(idx));
+      list.appendChild(item);
+    });
+  }
+
+  async function acceptIncomingRequest(idx) {
+    const msg = incomingRequests[idx];
+    if (!msg) return;
+    try {
+      const responded = respond_to_slate(sessionKeystoreBytes, msg.payload_json);
+      sessionKeystoreBytes = responded.updated_keystore_bytes;
+
+      let storeBytes = loadWalletStoreBytes();
+      storeBytes = commit_receive(storeBytes, responded.receiver_output);
+      saveWalletStoreBytes(storeBytes);
+
+      await fetch(API_BASE + "/v1/inbox/" + msg.from_pubkey_hex, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ from_pubkey_hex: wallet_identity_pubkey_hex(sessionKeystoreBytes), kind: "response", payload_json: responded.response_slate_json }),
+      });
+
+      incomingRequests.splice(idx, 1);
+      renderIncomingRequests();
+      await refreshBalance();
+    } catch (e) {
+      alert("Failed to accept payment: " + (e.message || e));
+    }
+  }
+
+  async function pollInbox() {
+    try {
+      const myPubkeyHex = wallet_identity_pubkey_hex(sessionKeystoreBytes);
+      const res = await fetch(API_BASE + "/v1/inbox/" + myPubkeyHex);
+      if (!res.ok) return;
+      const messages = await res.json();
+
+      for (const msg of messages) {
+        if (msg.kind === "response" && pendingNameSend) {
+          const messageEl = document.getElementById("name-send-message");
+          try {
+            const finalized = finalize_slate(pendingNameSend.pendingSlateBytes, msg.payload_json);
+            const res2 = await fetch(API_BASE + "/v1/transactions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: finalized.transaction_json,
+            });
+            if (!res2.ok) {
+              const text = await res2.text();
+              messageEl.innerHTML = `<div class="message error">Node rejected transaction: ${text}</div>`;
+              pendingNameSend = null;
+              continue;
+            }
+            let storeBytes = loadWalletStoreBytes();
+            storeBytes = commit_slate_send(storeBytes, finalized.spent_commitments_hex, finalized.change);
+            saveWalletStoreBytes(storeBytes);
+
+            const link = explorerLinkForTx(finalized.transaction_json);
+            messageEl.innerHTML = `<div class="message success">"${displayName(pendingNameSend.toName)}" accepted - broadcast successfully. <a href="${link}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">View on explorer &rarr;</a></div>`;
+            pendingNameSend = null;
+            await refreshBalance();
+          } catch (e) {
+            messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+            pendingNameSend = null;
+          }
+        } else if (msg.kind === "request") {
+          incomingRequests.push(msg);
+        }
+      }
+      if (messages.some(m => m.kind === "request")) {
+        renderIncomingRequests();
+      }
+    } catch (e) {
+      // transient - next poll will retry
+    }
+  }
+
   refreshBalance();
   setInterval(refreshBalance, 5000);
+  setInterval(pollInbox, 4000);
 }
 
 // ---------- boot ----------
