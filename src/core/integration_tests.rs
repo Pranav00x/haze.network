@@ -877,5 +877,191 @@ mod tests {
         assert!(!chain_state.apply_block(&block2).is_applied(), "transfer signed by a non-owner must be rejected");
         assert_eq!(chain_state.name_registry["pranav"].owner_pubkey, original_pubkey, "ownership must be unchanged");
     }
+
+    /// Direct proof that RangeProof::verify() is bound to a specific
+    /// commitment, not just "some valid-looking proof": a genuinely
+    /// generated proof for (value=100, blinding=r) must fail against a
+    /// different commitment, even one for the same value with a different
+    /// blinding, or the same blinding with a different value.
+    #[test]
+    fn range_proof_verify_rejects_mismatched_commitment() {
+        let mut rng = OsRng;
+        let r = Scalar::random(&mut rng);
+        let proof = RangeProof::prove(100, &r);
+        let real_commitment = Commitment::new(100, r);
+        assert!(proof.verify(&real_commitment), "a proof must verify against the exact commitment it was generated for");
+
+        let different_value = Commitment::new(200, r);
+        assert!(!proof.verify(&different_value), "a proof for value=100 must not verify against a value=200 commitment sharing the same blinding");
+
+        let different_blinding = Commitment::new(100, Scalar::random(&mut rng));
+        assert!(!proof.verify(&different_blinding), "a proof for blinding=r must not verify against the same value under a different blinding");
+    }
+
+    /// The concrete attack range proofs exist to prevent: curve25519's Scalar
+    /// arithmetic is always mod the group order L, so a Pedersen commitment
+    /// alone cannot distinguish "value = 100" from "value = L - k" (which
+    /// behaves as "-k" in the balance equation, since k*H + (L-k)*H both
+    /// reduce mod L). Without a range proof, an attacker could commit to
+    /// value = -1000 on one output and +1100 on another, walk away with a
+    /// genuinely spendable 1100-value output, and the naive point-arithmetic
+    /// balance equation (sum_inputs - sum_outputs == kernel_excess) would
+    /// still hold perfectly for a 100-value input - pure inflation.
+    ///
+    /// This builds exactly that transaction: real 100-value input, a
+    /// "phantom" output whose raw commitment encodes value ≡ -1000 (built by
+    /// hand via PedersenGens, bypassing Commitment::new's u64-only API,
+    /// which cannot itself express an out-of-range value at all - already
+    /// the first line of defense), paired with a genuinely spendable
+    /// 1100-value output, with the kernel excess chosen so the balance
+    /// equation checks out on paper. Since a valid Bulletproof cannot be
+    /// generated for the phantom commitment (RangeProof::prove only accepts
+    /// real u64 values), the best an attacker can attach is a validly-
+    /// generated-but-unrelated proof - which the range-proof step must
+    /// still catch, or the whole transaction validity check is broken.
+    #[test]
+    fn transaction_validate_rejects_wraparound_inflation_attack() {
+        use bulletproofs::PedersenGens;
+        let mut rng = OsRng;
+        let gens = PedersenGens::default();
+
+        // Real input: value 100.
+        let r_in = Scalar::random(&mut rng);
+        let input = Input { commitment: Commitment::new(100, r_in) };
+
+        // Phantom output: raw commitment for value ≡ -1000 (mod L), i.e.
+        // Scalar::zero() - Scalar::from(1000u64) - constructed by hand since
+        // Commitment::new's u64 parameter can't even represent this value.
+        let r_phantom = Scalar::random(&mut rng);
+        let phantom_value_scalar = Scalar::zero() - Scalar::from(1000u64);
+        let phantom_point = gens.commit(phantom_value_scalar, r_phantom);
+        let phantom_commitment = Commitment(phantom_point);
+        // The best an attacker can attach: a genuinely valid proof, just for
+        // an unrelated value/commitment (proving an out-of-range value is
+        // impossible via the typed API at all).
+        let phantom_proof = RangeProof::prove(0, &Scalar::random(&mut rng));
+        let phantom_output = Output { commitment: phantom_commitment, proof: phantom_proof, note: vec![] };
+
+        // Real, honestly-proved output: value 1100 - what the attacker
+        // actually walks away with if the range check doesn't catch this.
+        let r_real = Scalar::random(&mut rng);
+        let real_output = Output {
+            commitment: Commitment::new(1100, r_real),
+            proof: RangeProof::prove(1100, &r_real),
+            note: vec![],
+        };
+
+        // Kernel excess chosen so sum_inputs - sum_outputs - fee == kernel_excess
+        // holds exactly: 100*H - ((-1000+1100)*H) cancels the H component,
+        // leaving only the blinding factors.
+        let fee = 0u64;
+        let excess_r = r_in - r_phantom - r_real;
+        let kernel = TxKernel {
+            excess: Commitment::new(0, excess_r),
+            fee,
+            signature: Signature::sign(&fee.to_le_bytes(), &excess_r),
+        };
+
+        let attack_tx = Transaction {
+            inputs: vec![input],
+            outputs: vec![phantom_output, real_output],
+            kernels: vec![kernel],
+        };
+
+        assert!(!attack_tx.validate(), "a transaction with a wraparound/negative-implying output must be rejected");
+
+        // Positive control: prove the rejection above is really about the
+        // range proof, not some incidental mistake in this test's balance
+        // arithmetic - the identical structure with an honest, in-range
+        // value (900, matching the same balance equation without any
+        // wraparound) must validate successfully.
+        // Same 100-value input as the attack above, honestly split into two
+        // outputs summing to exactly 100 (no phantom/wraparound value).
+        let r_honest = Scalar::random(&mut rng);
+        let honest_output = Output {
+            commitment: Commitment::new(60, r_honest),
+            proof: RangeProof::prove(60, &r_honest),
+            note: vec![],
+        };
+        let r_real2 = Scalar::random(&mut rng);
+        let real_output2 = Output {
+            commitment: Commitment::new(40, r_real2),
+            proof: RangeProof::prove(40, &r_real2),
+            note: vec![],
+        };
+        let excess_r2 = r_in - r_honest - r_real2;
+        let honest_tx = Transaction {
+            inputs: vec![Input { commitment: Commitment::new(100, r_in) }],
+            outputs: vec![honest_output, real_output2],
+            kernels: vec![TxKernel {
+                excess: Commitment::new(0, excess_r2),
+                fee,
+                signature: Signature::sign(&fee.to_le_bytes(), &excess_r2),
+            }],
+        };
+        assert!(honest_tx.validate(), "an honest, in-range, correctly-balanced transaction must still validate");
+    }
+
+    /// Confirms apply_linear_block (the single path every block - local,
+    /// synced, forked, genesis - goes through) rejects the same attack at
+    /// the full block/chain level, not just Transaction::validate() in
+    /// isolation - proving there's no separate "fast path" during block
+    /// application that skips range proof verification.
+    #[test]
+    fn apply_block_rejects_block_containing_wraparound_inflation_attack() {
+        use bulletproofs::PedersenGens;
+        let mut rng = OsRng;
+        let gens = PedersenGens::default();
+        let mut chain_state = ChainState::new();
+        let genesis_block = crate::core::genesis::genesis_block();
+        assert!(chain_state.apply_block(&genesis_block).is_applied());
+
+        // Spend the real genesis validator-stake output (1_000_000, blinding=42).
+        let r_in = Scalar::from(42u64);
+        let input = Input { commitment: Commitment::new(1_000_000, r_in) };
+
+        let r_phantom = Scalar::random(&mut rng);
+        let phantom_value_scalar = Scalar::zero() - Scalar::from(500_000u64);
+        let phantom_commitment = Commitment(gens.commit(phantom_value_scalar, r_phantom));
+        let phantom_proof = RangeProof::prove(0, &Scalar::random(&mut rng));
+        let phantom_output = Output { commitment: phantom_commitment, proof: phantom_proof, note: vec![] };
+
+        let r_real = Scalar::random(&mut rng);
+        let real_value = 1_000_000 + crate::core::block::BLOCK_REWARD + 500_000; // balances against reward + phantom
+        let real_output = Output {
+            commitment: Commitment::new(real_value, r_real),
+            proof: RangeProof::prove(real_value, &r_real),
+            note: vec![],
+        };
+
+        let fee = 0u64;
+        let excess_r = r_in - r_phantom - r_real;
+        let kernel = TxKernel {
+            excess: Commitment::new(0, excess_r),
+            fee,
+            signature: Signature::sign(&fee.to_le_bytes(), &excess_r),
+        };
+
+        let body = Transaction { inputs: vec![input], outputs: vec![phantom_output, real_output], kernels: vec![kernel] };
+        assert!(!body.validate_with_reward(crate::core::block::BLOCK_REWARD), "sanity: the body alone must already fail with the block reward applied");
+
+        let private_key = Scalar::from(42u64);
+        let mut header = BlockHeader {
+            height: 1,
+            prev_hash: genesis_block.header.hash(),
+            total_kernel_offset: Scalar::zero(),
+            nonce: 0,
+            timestamp: 0,
+            validator_commitment: Commitment::new(1_000_000, private_key),
+            validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root: empty_registry_root(),
+        };
+        let msg = header.hash();
+        header.validator_signature = Signature::sign(&msg, &private_key);
+        let block = Block { header, body, name_ops: vec![], transfer_ops: vec![] };
+
+        assert!(!chain_state.apply_block(&block).is_applied(), "a block containing a wraparound-inflated output must be rejected at apply time");
+        assert_eq!(chain_state.current_height, 0, "chain must not have advanced past genesis");
+    }
 }
 
