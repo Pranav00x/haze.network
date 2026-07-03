@@ -146,7 +146,14 @@ pub async fn handle_faucet_request(
     let mut keystore = faucet.keystore.lock().unwrap();
     let store = faucet.store.lock().unwrap();
 
-    match slate::create_slate(&mut keystore, &store, req.amount, 0) {
+    // Pays the mempool's fee floor (see core::mempool::MIN_FEE) from the
+    // faucet's own reserve, on top of req.amount - the requester still gets
+    // the full amount they asked for, since plan_send/create_slate's fee is
+    // additional to the destination output, not deducted from it. A flat 0
+    // used to work fine here since nothing enforced a minimum; now that
+    // add_transaction rejects anything under MIN_FEE, this transaction needs
+    // a real fee to even enter a mempool.
+    match slate::create_slate(&mut keystore, &store, req.amount, crate::core::mempool::MIN_FEE) {
         Ok((built_slate, pending)) => {
             *pending_guard = Some(pending);
             let slate_json = serde_json::to_string(&built_slate).unwrap();

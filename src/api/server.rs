@@ -37,6 +37,7 @@ impl ApiServer {
         let mempool_filter_4 = mempool_filter.clone();
         let mempool_filter_5 = mempool_filter.clone();
         let mempool_filter_6 = mempool_filter.clone();
+        let mempool_filter_7 = mempool_filter.clone();
         let p2p_filter_2 = p2p_filter.clone();
         let p2p_filter_3 = p2p_filter.clone();
         let p2p_filter_4 = p2p_filter.clone();
@@ -94,6 +95,14 @@ impl ApiServer {
             .and(warp::path!("v1" / "scan-outputs"))
             .and(chain_filter.clone())
             .and_then(explorer::handle_scan_outputs);
+
+        // GET /v1/fee-estimate - congestion-priced fee suggestion (see
+        // Mempool::suggested_fee) - wallets should call this instead of
+        // hardcoding a flat fee.
+        let fee_estimate_route = warp::get()
+            .and(warp::path!("v1" / "fee-estimate"))
+            .and(mempool_filter_7)
+            .and_then(explorer::handle_fee_estimate);
 
         // GET /v1/blocks?limit=N
         let blocks_list_route = warp::get()
@@ -223,6 +232,7 @@ impl ApiServer {
             .or(index_route)
             .or(status_route)
             .or(scan_outputs_route)
+            .or(fee_estimate_route)
             .or(blocks_list_route)
             .or(block_detail_route)
             .or(validators_route)
