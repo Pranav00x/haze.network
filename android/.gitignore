@@ -1,0 +1,17 @@
+*.iml
+.gradle
+/local.properties
+.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+app/build/
+
+# Native libs and generated bindings are build artifacts (see CI workflow) -
+# regenerated from src/ffi.rs on every build, not something to keep in sync
+# manually in source control.
+app/src/main/jniLibs/
+app/src/main/java/uniffi/
