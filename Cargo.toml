@@ -23,7 +23,7 @@ default = ["native"]
 # Everything that needs a real OS: sockets (p2p, the API server), a filesystem
 # (sled storage), a native TLS stack (reqwest), and UniFFI's mobile scaffolding.
 # None of this compiles to wasm32-unknown-unknown.
-native = ["dep:sled", "dep:warp", "dep:reqwest", "dep:clap", "dep:uniffi", "dep:tokio"]
+native = ["dep:sled", "dep:warp", "dep:reqwest", "dep:clap", "dep:uniffi", "dep:tokio", "dep:tokio-tungstenite", "dep:futures-util"]
 wasm = ["dep:wasm-bindgen"]
 
 [dependencies]
@@ -39,11 +39,17 @@ thiserror = "1.0"
 
 tokio = { version = "1.52.3", features = ["full"], optional = true }
 clap = { version = "4.6.1", features = ["derive"], optional = true }
-warp = { version = "0.4.3", features = ["server"], optional = true }
+warp = { version = "0.4.3", features = ["server", "websocket"], optional = true }
 reqwest = { version = "0.13.4", features = ["json"], optional = true }
 sled = { version = "0.34", optional = true }
 uniffi = { version = "0.28", features = ["cli"], optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
+# Outbound-only WS client, used by connect_to_peer when a --peers entry is a
+# ws(s):// address (see src/p2p/transport.rs) - rustls to match the TLS stack
+# reqwest/hyper-rustls already pull in, rather than adding a second (OpenSSL)
+# stack via native-tls.
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"], optional = true }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"], optional = true }
 bip39 = "2.2.2"
 chacha20poly1305 = "0.11.0"
 

@@ -1,6 +1,7 @@
 use warp::Filter;
 use std::sync::{Arc, Mutex};
 use std::convert::Infallible;
+use std::net::SocketAddr;
 use serde::{Serialize, Deserialize};
 
 use crate::core::mempool::Mempool;
@@ -46,6 +47,7 @@ impl ApiServer {
         let p2p_filter_4 = p2p_filter.clone();
         let p2p_filter_5 = p2p_filter.clone();
         let p2p_filter_6 = p2p_filter.clone();
+        let p2p_filter_7 = p2p_filter.clone();
 
         let inbox_state = Arc::new(InboxState::new());
         let inbox_filter = warp::any().map(move || Arc::clone(&inbox_state));
@@ -255,6 +257,23 @@ impl ApiServer {
             .and(chain_filter.clone())
             .and_then(assets::handle_list_assets);
 
+        // GET /v1/p2p/ws - WebSocket P2P transport, for peers that can't be
+        // dialed via raw TCP (see src/p2p/transport.rs for why this exists -
+        // Render only proxies a single HTTP(S) port, so this rides on the
+        // same port as the JSON API instead of needing 8333 exposed).
+        let p2p_ws_route = warp::path!("v1" / "p2p" / "ws")
+            .and(warp::ws())
+            .and(warp::addr::remote())
+            .and(p2p_filter_7)
+            .map(|ws: warp::ws::Ws, remote: Option<SocketAddr>, p2p_server: Arc<P2pServer>| {
+                let label = remote.map(|a| a.to_string()).unwrap_or_else(|| "ws-peer".to_string());
+                ws.max_message_size(1024 * 1024 * 32)
+                    .max_frame_size(1024 * 1024 * 32)
+                    .on_upgrade(move |socket| async move {
+                        p2p_server.handle_inbound_ws(socket, label).await;
+                    })
+            });
+
         // POST /v1/inbox/:pubkey_hex - drops a slate/response off for a
         // recipient (see api/inbox.rs). Not part of consensus - pure message
         // relay, so it needs neither the mempool nor the chain.
@@ -294,6 +313,7 @@ impl ApiServer {
             .or(transfer_asset_route)
             .or(resolve_asset_route)
             .or(list_assets_route)
+            .or(p2p_ws_route)
             .or(post_inbox_route)
             .or(get_inbox_route)
             .with(

@@ -1,10 +1,9 @@
 use tokio::net::{TcpListener, TcpStream};
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
-use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::Mutex as TokioMutex;
 use std::sync::{Arc, Mutex};
 use std::collections::{HashMap, HashSet};
 use rand::Rng;
+use futures_util::StreamExt;
 
 use crate::core::mempool::Mempool;
 use crate::core::chain::{ChainState, ApplyResult};
@@ -13,13 +12,10 @@ use crate::core::storage::Storage;
 use crate::crypto::pedersen::Commitment;
 use super::dandelion::{DandelionRouter, TxState, compute_tx_id};
 use super::message::P2pMessage;
+use super::transport::{self, PeerReader, PeerWriter, MAX_MESSAGE_SIZE};
 
 /// Maximum number of blocks sent per GetBlocks/BlocksBatch round during chain sync.
 const SYNC_BATCH_SIZE: usize = 256;
-
-/// Maximum allowed size (in bytes) for a single length-prefixed P2P message.
-/// Guards against a peer claiming an oversized length and forcing a huge allocation.
-const MAX_MESSAGE_SIZE: usize = 32 * 1024 * 1024;
 
 /// Maximum number of simultaneous outbound+inbound connections a node will maintain.
 /// Bounds automatic peer-discovery dialing so a node doesn't try to connect to
@@ -30,7 +26,7 @@ const MAX_PEERS: usize = 8;
 const MAX_PEERS_SHARED: usize = 50;
 
 pub struct PeerManager {
-    peers: Mutex<HashMap<String, Arc<TokioMutex<OwnedWriteHalf>>>>,
+    peers: Mutex<HashMap<String, Arc<TokioMutex<PeerWriter>>>>,
     /// Address book of peers' real, dialable listen addresses (learned via
     /// Handshake/PeersList) - distinct from `peers`, which is keyed by whatever
     /// address identifies the live connection (the inbound side's ephemeral
@@ -46,9 +42,9 @@ impl PeerManager {
         }
     }
 
-    /// Registers a peer's write half and returns the shared handle for it.
-    pub fn add_peer(&self, addr: String, write_half: OwnedWriteHalf) -> Arc<TokioMutex<OwnedWriteHalf>> {
-        let handle = Arc::new(TokioMutex::new(write_half));
+    /// Registers a peer's writer (whichever transport) and returns the shared handle for it.
+    pub fn add_peer(&self, addr: String, writer: PeerWriter) -> Arc<TokioMutex<PeerWriter>> {
+        let handle = Arc::new(TokioMutex::new(writer));
         let mut peers = self.peers.lock().unwrap();
         peers.insert(addr, Arc::clone(&handle));
         handle
@@ -78,12 +74,6 @@ impl PeerManager {
     }
 
     pub async fn broadcast(&self, msg: &P2pMessage) {
-        let bytes = match bincode::serialize(msg) {
-            Ok(b) => b,
-            Err(_) => return,
-        };
-        let len = bytes.len() as u32;
-
         let peers = {
             let p = self.peers.lock().unwrap();
             p.values().cloned().collect::<Vec<_>>()
@@ -91,19 +81,11 @@ impl PeerManager {
 
         for peer in peers {
             let mut peer_lock = peer.lock().await;
-            let _ = peer_lock.write_all(&len.to_le_bytes()).await;
-            let _ = peer_lock.write_all(&bytes).await;
-            let _ = peer_lock.flush().await;
+            let _ = transport::write_message(&mut peer_lock, msg).await;
         }
     }
 
     pub async fn send_to_random_peer(&self, msg: &P2pMessage) -> bool {
-        let bytes = match bincode::serialize(msg) {
-            Ok(b) => b,
-            Err(_) => return false,
-        };
-        let len = bytes.len() as u32;
-
         let peer = {
             let p = self.peers.lock().unwrap();
             if p.is_empty() {
@@ -117,13 +99,7 @@ impl PeerManager {
 
         if let Some(peer_write) = peer {
             let mut peer_lock = peer_write.lock().await;
-            if peer_lock.write_all(&len.to_le_bytes()).await.is_ok() &&
-               peer_lock.write_all(&bytes).await.is_ok() &&
-               peer_lock.flush().await.is_ok() {
-                true
-            } else {
-                false
-            }
+            transport::write_message(&mut peer_lock, msg).await.is_ok()
         } else {
             false
         }
@@ -136,6 +112,11 @@ pub struct P2pServer {
     chain: Arc<Mutex<ChainState>>,
     storage: Arc<Storage>,
     pub peer_manager: Arc<PeerManager>,
+    /// This node's own configured --bind address, mirrored here (in addition
+    /// to being threaded through start()'s TCP call chain as before) so
+    /// handle_inbound_ws - reached via the API server, outside start()'s
+    /// scope - has access to it too.
+    own_listen_addr: Mutex<String>,
 }
 
 impl P2pServer {
@@ -146,6 +127,7 @@ impl P2pServer {
             chain,
             storage,
             peer_manager: Arc::new(PeerManager::new()),
+            own_listen_addr: Mutex::new(String::new()),
         }
     }
 
@@ -154,11 +136,35 @@ impl P2pServer {
         self.peer_manager.broadcast(&P2pMessage::NewBlock(block)).await;
     }
 
+    /// Hands an inbound WebSocket connection (accepted via warp::ws() in
+    /// api/server.rs - see src/p2p/transport.rs for why this transport
+    /// exists) into the same peer-handling machinery as a raw TCP inbound
+    /// connection, so WS and TCP peers gossip/sync with each other
+    /// transparently through the shared PeerManager.
+    pub async fn handle_inbound_ws(self: Arc<Self>, ws: warp::ws::WebSocket, peer_label: String) {
+        println!("P2P: Inbound WebSocket peer connected: {}", peer_label);
+        let (ws_write, ws_read) = ws.split();
+        let write_handle = self.peer_manager.add_peer(peer_label.clone(), PeerWriter::WsServer(ws_write));
+        let own_listen_addr = self.own_listen_addr.lock().unwrap().clone();
+        handle_peer_connection(
+            PeerReader::WsServer(ws_read),
+            write_handle,
+            peer_label,
+            Arc::clone(&self.peer_manager),
+            Arc::clone(&self.mempool),
+            Arc::clone(&self.chain),
+            Arc::clone(&self.storage),
+            Arc::clone(&self.router),
+            own_listen_addr,
+        ).await;
+    }
+
     pub async fn start(&self, addr: &str, seed_peers: Vec<String>) -> std::io::Result<()> {
         let listener = TcpListener::bind(addr).await?;
         println!("P2P Server listening on {}", addr);
 
         let own_listen_addr = addr.to_string();
+        *self.own_listen_addr.lock().unwrap() = own_listen_addr.clone();
 
         // Connect to seed peers outbound
         for peer in seed_peers {
@@ -195,8 +201,8 @@ impl P2pServer {
 
             tokio::spawn(async move {
                 let (read_half, write_half) = stream.into_split();
-                let write_handle = pm_clone.add_peer(peer_str.clone(), write_half);
-                handle_peer_connection(read_half, write_handle, peer_str, pm_clone, mp_clone, c_clone, st_clone, r_clone, own_listen_addr).await;
+                let write_handle = pm_clone.add_peer(peer_str.clone(), PeerWriter::Tcp(write_half));
+                handle_peer_connection(PeerReader::Tcp(read_half), write_handle, peer_str, pm_clone, mp_clone, c_clone, st_clone, r_clone, own_listen_addr).await;
             });
         }
     }
@@ -221,25 +227,32 @@ fn connect_to_peer(
     own_listen_addr: String,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
     Box::pin(async move {
+        if peer_addr.starts_with("ws://") || peer_addr.starts_with("wss://") {
+            connect_to_ws_peer(peer_addr, pm, mp, c, st, r, own_listen_addr).await;
+            return;
+        }
+
         println!("P2P: Connecting outbound to peer {}...", peer_addr);
         match TcpStream::connect(&peer_addr).await {
-            Ok(mut stream) => {
+            Ok(stream) => {
                 println!("P2P: Connected outbound to peer {}!", peer_addr);
                 pm.add_known_peer(peer_addr.clone());
 
+                let (read_half, write_half) = stream.into_split();
+                let mut writer = PeerWriter::Tcp(write_half);
+
                 // Send Handshake
-                if write_msg(&mut stream, &P2pMessage::Handshake { listen_addr: own_listen_addr.clone() }).await.is_ok() {
+                if transport::write_message(&mut writer, &P2pMessage::Handshake { listen_addr: own_listen_addr.clone() }).await.is_ok() {
                     // Also send our chain info so the peer can sync from us if they're behind
                     let (our_height, our_tip) = {
                         let cs = c.lock().unwrap();
                         (cs.current_height, cs.last_block_hash)
                     };
-                    let _ = write_msg(&mut stream, &P2pMessage::ChainInfo { height: our_height, tip_hash: our_tip }).await;
-                    let _ = write_msg(&mut stream, &P2pMessage::GetPeers).await;
+                    let _ = transport::write_message(&mut writer, &P2pMessage::ChainInfo { height: our_height, tip_hash: our_tip }).await;
+                    let _ = transport::write_message(&mut writer, &P2pMessage::GetPeers).await;
 
-                    let (read_half, write_half) = stream.into_split();
-                    let write_handle = pm.add_peer(peer_addr.clone(), write_half);
-                    handle_peer_connection(read_half, write_handle, peer_addr, pm, mp, c, st, r, own_listen_addr).await;
+                    let write_handle = pm.add_peer(peer_addr.clone(), writer);
+                    handle_peer_connection(PeerReader::Tcp(read_half), write_handle, peer_addr, pm, mp, c, st, r, own_listen_addr).await;
                 }
             }
             Err(e) => {
@@ -247,6 +260,51 @@ fn connect_to_peer(
             }
         }
     })
+}
+
+/// Dials a peer over WebSocket instead of raw TCP - used when a --peers
+/// entry (either from the initial seed list or learned via PeersList) is a
+/// ws(s):// URL rather than a plain host:port. See src/p2p/transport.rs for
+/// why this transport exists.
+async fn connect_to_ws_peer(
+    peer_addr: String,
+    pm: Arc<PeerManager>,
+    mp: Arc<Mutex<Mempool>>,
+    c: Arc<Mutex<ChainState>>,
+    st: Arc<Storage>,
+    r: Arc<DandelionRouter>,
+    own_listen_addr: String,
+) {
+    println!("P2P: Connecting outbound via WebSocket to peer {}...", peer_addr);
+    let config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig {
+        max_message_size: Some(MAX_MESSAGE_SIZE),
+        max_frame_size: Some(MAX_MESSAGE_SIZE),
+        ..Default::default()
+    };
+    match tokio_tungstenite::connect_async_with_config(&peer_addr, Some(config), false).await {
+        Ok((ws_stream, _response)) => {
+            println!("P2P: Connected outbound via WebSocket to {}!", peer_addr);
+            pm.add_known_peer(peer_addr.clone());
+
+            let (ws_write, ws_read) = ws_stream.split();
+            let mut writer = PeerWriter::WsClient(ws_write);
+
+            if transport::write_message(&mut writer, &P2pMessage::Handshake { listen_addr: own_listen_addr.clone() }).await.is_ok() {
+                let (our_height, our_tip) = {
+                    let cs = c.lock().unwrap();
+                    (cs.current_height, cs.last_block_hash)
+                };
+                let _ = transport::write_message(&mut writer, &P2pMessage::ChainInfo { height: our_height, tip_hash: our_tip }).await;
+                let _ = transport::write_message(&mut writer, &P2pMessage::GetPeers).await;
+
+                let write_handle = pm.add_peer(peer_addr.clone(), writer);
+                handle_peer_connection(PeerReader::WsClient(ws_read), write_handle, peer_addr, pm, mp, c, st, r, own_listen_addr).await;
+            }
+        }
+        Err(e) => {
+            println!("P2P: Failed to connect outbound via WebSocket to {}: {}", peer_addr, e);
+        }
+    }
 }
 
 /// Persists an ApplyResult's deltas to storage, logging (but not failing on) any error.
@@ -273,18 +331,9 @@ fn persist_apply_result(storage: &Storage, result: &ApplyResult) {
     }
 }
 
-async fn write_msg<W: AsyncWrite + Unpin>(stream: &mut W, msg: &P2pMessage) -> std::io::Result<()> {
-    let bytes = bincode::serialize(msg).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-    let len = bytes.len() as u32;
-    stream.write_all(&len.to_le_bytes()).await?;
-    stream.write_all(&bytes).await?;
-    stream.flush().await?;
-    Ok(())
-}
-
 async fn handle_peer_connection(
-    mut read_half: OwnedReadHalf,
-    write_half: Arc<TokioMutex<OwnedWriteHalf>>,
+    mut reader: PeerReader,
+    write_half: Arc<TokioMutex<PeerWriter>>,
     peer_addr: String,
     pm: Arc<PeerManager>,
     mempool: Arc<Mutex<Mempool>>,
@@ -293,21 +342,9 @@ async fn handle_peer_connection(
     router: Arc<DandelionRouter>,
     own_listen_addr: String,
 ) {
-    let mut len_bytes = [0u8; 4];
     loop {
-        match read_half.read_exact(&mut len_bytes).await {
-            Ok(_) => {
-                let len = u32::from_le_bytes(len_bytes) as usize;
-                if len > MAX_MESSAGE_SIZE {
-                    println!("P2P: Peer {} sent oversized message ({} bytes), disconnecting", peer_addr, len);
-                    break;
-                }
-                let mut buf = vec![0u8; len];
-                if read_half.read_exact(&mut buf).await.is_err() {
-                    break;
-                }
-
-                if let Ok(msg) = bincode::deserialize::<P2pMessage>(&buf) {
+        match transport::read_message(&mut reader).await {
+            Some(msg) => {
                     match msg {
                         P2pMessage::Handshake { listen_addr } => {
                             println!("P2P: Handshake received from {} (listening on {})", peer_addr, listen_addr);
@@ -317,12 +354,12 @@ async fn handle_peer_connection(
                                 (cs.current_height, cs.last_block_hash)
                             };
                             let mut w = write_half.lock().await;
-                            let _ = write_msg(&mut *w, &P2pMessage::ChainInfo { height: our_height, tip_hash: our_tip }).await;
-                            let _ = write_msg(&mut *w, &P2pMessage::GetPeers).await;
+                            let _ = transport::write_message(&mut *w, &P2pMessage::ChainInfo { height: our_height, tip_hash: our_tip }).await;
+                            let _ = transport::write_message(&mut *w, &P2pMessage::GetPeers).await;
                         }
                         P2pMessage::Ping => {
                             let mut w = write_half.lock().await;
-                            let _ = write_msg(&mut *w, &P2pMessage::Pong).await;
+                            let _ = transport::write_message(&mut *w, &P2pMessage::Pong).await;
                         }
                         P2pMessage::Pong => {
                             // Alive confirmation
@@ -483,12 +520,12 @@ async fn handle_peer_connection(
                             println!("P2P: Peer {} reports chain height {} (tip {:?}, ours: {})", peer_addr, height, tip_hash, our_height);
                             let mut w = write_half.lock().await;
                             if height > our_height {
-                                let _ = write_msg(&mut *w, &P2pMessage::GetBlocks { from_height: our_height + 1 }).await;
+                                let _ = transport::write_message(&mut *w, &P2pMessage::GetBlocks { from_height: our_height + 1 }).await;
                             } else {
                                 // Already caught up on blocks - still need to catch up on
                                 // active_validators, which isn't part of block history (see
                                 // the BlocksBatch handler's sync-completion path below).
-                                let _ = write_msg(&mut *w, &P2pMessage::GetValidators).await;
+                                let _ = transport::write_message(&mut *w, &P2pMessage::GetValidators).await;
                             }
                         }
                         P2pMessage::GetBlocks { from_height } => {
@@ -506,11 +543,11 @@ async fn handle_peer_connection(
                             match blocks {
                                 Some(blocks) => {
                                     println!("P2P: Sending {} blocks (from height {}) to {}", blocks.len(), from_height, peer_addr);
-                                    let _ = write_msg(&mut *w, &P2pMessage::BlocksBatch { blocks, has_more }).await;
+                                    let _ = transport::write_message(&mut *w, &P2pMessage::BlocksBatch { blocks, has_more }).await;
                                 }
                                 None => {
                                     println!("P2P: Declining GetBlocks from height {} for {} - already compacted below height {}", from_height, peer_addr, earliest_full);
-                                    let _ = write_msg(&mut *w, &P2pMessage::PrunedRange { earliest_full_height: earliest_full }).await;
+                                    let _ = transport::write_message(&mut *w, &P2pMessage::PrunedRange { earliest_full_height: earliest_full }).await;
                                 }
                             }
                         }
@@ -556,19 +593,19 @@ async fn handle_peer_connection(
                             if has_more && applied_count == batch_len {
                                 let next_from = { chain.lock().unwrap().current_height + 1 };
                                 let mut w = write_half.lock().await;
-                                let _ = write_msg(&mut *w, &P2pMessage::GetBlocks { from_height: next_from }).await;
+                                let _ = transport::write_message(&mut *w, &P2pMessage::GetBlocks { from_height: next_from }).await;
                             } else if applied_count == batch_len {
                                 // Block sync just finished - active_validators isn't part of
                                 // block history, so catch up on it now that we have the UTXOs
                                 // needed to verify each entry (see ChainState::adopt_validator).
                                 let mut w = write_half.lock().await;
-                                let _ = write_msg(&mut *w, &P2pMessage::GetValidators).await;
+                                let _ = transport::write_message(&mut *w, &P2pMessage::GetValidators).await;
                             }
                         }
                         P2pMessage::GetValidators => {
                             let validators = { chain.lock().unwrap().active_validators.clone() };
                             let mut w = write_half.lock().await;
-                            let _ = write_msg(&mut *w, &P2pMessage::ValidatorsList(validators)).await;
+                            let _ = transport::write_message(&mut *w, &P2pMessage::ValidatorsList(validators)).await;
                         }
                         P2pMessage::ValidatorsList(validators) => {
                             let adopted = {
@@ -586,7 +623,7 @@ async fn handle_peer_connection(
                         P2pMessage::GetPeers => {
                             let peers_list = pm.known_peers_snapshot();
                             let mut w = write_half.lock().await;
-                            let _ = write_msg(&mut *w, &P2pMessage::PeersList(peers_list)).await;
+                            let _ = transport::write_message(&mut *w, &P2pMessage::PeersList(peers_list)).await;
                         }
                         P2pMessage::PeersList(addrs) => {
                             for candidate in addrs {
@@ -610,11 +647,8 @@ async fn handle_peer_connection(
                             }
                         }
                     }
-                }
             }
-            Err(_) => {
-                break;
-            }
+            None => break,
         }
     }
     println!("P2P: Connection with {} closed.", peer_addr);
