@@ -1,0 +1,134 @@
+name: Release
+
+# Only runs on a pushed tag (e.g. v0.3.0-devnet) - this is a deliberate
+# publish action, not something that should fire on every commit to main
+# the way the CI workflow does.
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  CARGO_TERM_COLOR: always
+  BIN_NAME: haze
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            asset_name: haze-devnet-windows-x86_64
+            archive_ext: zip
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            asset_name: haze-devnet-linux-x86_64
+            archive_ext: tar.gz
+          - target: x86_64-apple-darwin
+            os: macos-13 # Intel runner - native build, no cross toolchain needed
+            asset_name: haze-devnet-macos-x86_64
+            archive_ext: tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-14 # Apple Silicon runner - native build, no cross toolchain needed
+            asset_name: haze-devnet-macos-aarch64
+            archive_ext: tar.gz
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Build node binary (release)
+        run: cargo build --release --bin ${{ env.BIN_NAME }} --target ${{ matrix.target }}
+
+      - name: Render README.txt from template
+        shell: bash
+        run: |
+          sed "s/{{TAG}}/${{ github.ref_name }}/g" release/README.txt.tmpl > README.txt
+
+      - name: Stage package contents (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist/${{ matrix.asset_name }}
+          cp target/${{ matrix.target }}/release/${{ env.BIN_NAME }} dist/${{ matrix.asset_name }}/
+          cp README.txt dist/${{ matrix.asset_name }}/
+
+      - name: Stage package contents (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "dist/${{ matrix.asset_name }}"
+          Copy-Item "target/${{ matrix.target }}/release/${{ env.BIN_NAME }}.exe" "dist/${{ matrix.asset_name }}/"
+          Copy-Item "README.txt" "dist/${{ matrix.asset_name }}/"
+
+      - name: Create archive (tar.gz)
+        if: matrix.archive_ext == 'tar.gz'
+        shell: bash
+        working-directory: dist
+        run: tar -czf ${{ matrix.asset_name }}.tar.gz ${{ matrix.asset_name }}
+
+      - name: Create archive (zip)
+        if: matrix.archive_ext == 'zip'
+        shell: pwsh
+        working-directory: dist
+        run: Compress-Archive -Path "${{ matrix.asset_name }}" -DestinationPath "${{ matrix.asset_name }}.zip"
+
+      - name: Generate SHA-256 checksum
+        shell: bash
+        working-directory: dist
+        run: |
+          ARCHIVE="${{ matrix.asset_name }}.${{ matrix.archive_ext }}"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            certutil -hashfile "$ARCHIVE" SHA256 | sed -n '2p' | tr -d ' \r' > "$ARCHIVE.sha256.tmp"
+            echo "$(cat "$ARCHIVE.sha256.tmp")  $ARCHIVE" > "$ARCHIVE.sha256"
+            rm "$ARCHIVE.sha256.tmp"
+          else
+            shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
+          fi
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: |
+            dist/${{ matrix.asset_name }}.${{ matrix.archive_ext }}
+            dist/${{ matrix.asset_name }}.${{ matrix.archive_ext }}.sha256
+
+  publish-release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Haze devnet ${{ github.ref_name }}"
+          body: |
+            Public devnet build of the Haze node binary for Windows, macOS (Intel + Apple Silicon), and Linux.
+
+            **This is devnet software.** See the included README.txt before running - HAZE has no value, and the chain may be reset without notice.
+
+            Each archive includes a `.sha256` checksum file - verify your download before running it.
+          files: artifacts/**
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
