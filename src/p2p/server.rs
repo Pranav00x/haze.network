@@ -8,6 +8,7 @@ use futures_util::StreamExt;
 use crate::core::mempool::Mempool;
 use crate::core::chain::{ChainState, ApplyResult};
 use crate::core::block::Block;
+use crate::core::transaction::Transaction;
 use crate::core::storage::Storage;
 use crate::crypto::pedersen::Commitment;
 use super::dandelion::{DandelionRouter, TxState, compute_tx_id};
@@ -134,6 +135,13 @@ impl P2pServer {
     pub async fn broadcast_block(&self, block: Block) {
         println!("P2P: Broadcasting newly proposed Block #{} to the network...", block.header.height);
         self.peer_manager.broadcast(&P2pMessage::NewBlock(block)).await;
+    }
+
+    /// Entry point for a transaction that just originated on this node (via
+    /// POST /v1/transactions) into Dandelion++ routing - see
+    /// dispatch_dandelion_tx for why this can't just be a flat broadcast.
+    pub async fn propagate_new_transaction(&self, tx: Transaction, already_in_mempool: bool) {
+        dispatch_dandelion_tx(tx, already_in_mempool, &self.mempool, &self.peer_manager, &self.router).await;
     }
 
     /// Hands an inbound WebSocket connection (accepted via warp::ws() in
@@ -307,6 +315,69 @@ async fn connect_to_ws_peer(
     }
 }
 
+/// Routes a transaction through Dandelion++ stem/fluff, exactly the same
+/// way regardless of whether it was just received from a peer as a
+/// StemTx (already_in_mempool: false - a mid-path relay hop doesn't add it
+/// to its own mempool until it actually fluffs) or just originated locally
+/// via POST /v1/transactions (already_in_mempool: true - the HTTP handler
+/// already added it to the mempool before this runs, so the wallet gets an
+/// immediate accept/reject response). A brand-new local transaction must
+/// enter the stem phase the same way any relayed hop does - broadcasting it
+/// immediately would defeat Dandelion's entire purpose of making the
+/// originating node indistinguishable from a relay.
+async fn dispatch_dandelion_tx(
+    tx: Transaction,
+    already_in_mempool: bool,
+    mempool: &Arc<Mutex<Mempool>>,
+    pm: &Arc<PeerManager>,
+    router: &Arc<DandelionRouter>,
+) {
+    let tx_id = compute_tx_id(&tx);
+    if router.is_fluffed(tx_id) {
+        return;
+    }
+    match router.next_state() {
+        TxState::Stem => {
+            println!("Dandelion++: Routing stem transaction {:?} to next stem hop", tx_id);
+            let forwarded = pm.send_to_random_peer(&P2pMessage::StemTx(tx.clone())).await;
+
+            // Fallback timer: if we don't hear a fluff within 15s, self-fluff
+            let pm_fallback = Arc::clone(pm);
+            let tx_fallback = tx.clone();
+            router.register_stem_tx(tx_id, 15, move || {
+                tokio::spawn(async move {
+                    println!("Dandelion++: Fallback fluff triggered for {:?}", tx_id);
+                    pm_fallback.broadcast(&P2pMessage::FluffTx(tx_fallback)).await;
+                });
+            });
+
+            if !forwarded {
+                // No peers available to stem, so fluff immediately
+                println!("Dandelion++: No peers available to stem routing. Fluffing immediately!");
+                router.mark_fluffed(tx_id);
+                if !already_in_mempool {
+                    let mut mp = mempool.lock().unwrap();
+                    mp.add_transaction(tx.clone());
+                }
+                pm.broadcast(&P2pMessage::FluffTx(tx)).await;
+            }
+        }
+        TxState::Fluff => {
+            println!("Dandelion++: Fluffing stem transaction {:?} (broadcasting)", tx_id);
+            router.mark_fluffed(tx_id);
+            let added = if already_in_mempool {
+                true
+            } else {
+                let mut mp = mempool.lock().unwrap();
+                mp.add_transaction(tx.clone())
+            };
+            if added {
+                pm.broadcast(&P2pMessage::FluffTx(tx)).await;
+            }
+        }
+    }
+}
+
 /// Persists an ApplyResult's deltas to storage, logging (but not failing on) any error.
 fn persist_apply_result(storage: &Storage, result: &ApplyResult) {
     match result {
@@ -365,52 +436,8 @@ async fn handle_peer_connection(
                             // Alive confirmation
                         }
                         P2pMessage::StemTx(tx) => {
-                            let tx_id = compute_tx_id(&tx);
-                            println!("P2P: Received StemTx {:?} from {}", tx_id, peer_addr);
-
-                            let already_fluffed = router.is_fluffed(tx_id);
-                            if !already_fluffed {
-                                // Decide next dandelion state
-                                match router.next_state() {
-                                    TxState::Stem => {
-                                        println!("Dandelion++: Routing stem transaction {:?} to next stem hop", tx_id);
-                                        // Forward to a random peer
-                                        let forwarded = pm.send_to_random_peer(&P2pMessage::StemTx(tx.clone())).await;
-
-                                        // Fallback timer: if we don't hear a fluff within 15s, self-fluff
-                                        let pm_fallback = Arc::clone(&pm);
-                                        let tx_fallback = tx.clone();
-                                        router.register_stem_tx(tx_id, 15, move || {
-                                            tokio::spawn(async move {
-                                                println!("Dandelion++: Fallback fluff triggered for {:?}", tx_id);
-                                                pm_fallback.broadcast(&P2pMessage::FluffTx(tx_fallback)).await;
-                                            });
-                                        });
-
-                                        if !forwarded {
-                                            // No peers available to stem, so fluff immediately
-                                            println!("Dandelion++: No peers available to stem routing. Fluffing immediately!");
-                                            router.mark_fluffed(tx_id);
-                                            {
-                                                let mut mp = mempool.lock().unwrap();
-                                                mp.add_transaction(tx.clone());
-                                            }
-                                            pm.broadcast(&P2pMessage::FluffTx(tx)).await;
-                                        }
-                                    }
-                                    TxState::Fluff => {
-                                        println!("Dandelion++: Fluffing stem transaction {:?} (broadcasting)", tx_id);
-                                        router.mark_fluffed(tx_id);
-                                        let added = {
-                                            let mut mp = mempool.lock().unwrap();
-                                            mp.add_transaction(tx.clone())
-                                        };
-                                        if added {
-                                            pm.broadcast(&P2pMessage::FluffTx(tx)).await;
-                                        }
-                                    }
-                                }
-                            }
+                            println!("P2P: Received StemTx {:?} from {}", compute_tx_id(&tx), peer_addr);
+                            dispatch_dandelion_tx(tx, false, &mempool, &pm, &router).await;
                         }
                         P2pMessage::FluffTx(tx) => {
                             let tx_id = compute_tx_id(&tx);

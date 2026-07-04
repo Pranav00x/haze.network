@@ -48,6 +48,7 @@ impl ApiServer {
         let p2p_filter_5 = p2p_filter.clone();
         let p2p_filter_6 = p2p_filter.clone();
         let p2p_filter_7 = p2p_filter.clone();
+        let p2p_filter_8 = p2p_filter.clone();
 
         let inbox_state = Arc::new(InboxState::new());
         let inbox_filter = warp::any().map(move || Arc::clone(&inbox_state));
@@ -59,12 +60,18 @@ impl ApiServer {
         // guards against on the P2P side (src/p2p/server.rs).
         const MAX_BODY_SIZE: u64 = 1024 * 1024; // 1MB
 
-        // POST /v1/transactions
+        // POST /v1/transactions - queued into the local mempool immediately
+        // (for a fast accept/reject response to the wallet), then routed
+        // into Dandelion++ stem/fluff the same way any relayed transaction
+        // is (see p2p::server::dispatch_dandelion_tx) so it actually
+        // reaches the network instead of sitting only in this node's
+        // mempool forever if this node never happens to be the proposer.
         let tx_route = warp::post()
             .and(warp::path!("v1" / "transactions"))
             .and(warp::body::content_length_limit(MAX_BODY_SIZE))
             .and(warp::body::json())
             .and(mempool_filter)
+            .and(p2p_filter_8)
             .and_then(handle_submit_transaction);
 
         // POST /v1/stake
@@ -352,6 +359,7 @@ struct StakeRequest {
 async fn handle_submit_transaction(
     tx: Transaction,
     mempool: Arc<Mutex<Mempool>>,
+    p2p_server: Arc<P2pServer>,
 ) -> Result<impl warp::Reply, Infallible> {
     // Validate the transaction mathematically first
     if !tx.validate() {
@@ -365,10 +373,14 @@ async fn handle_submit_transaction(
     // Try to add to mempool
     let added = {
         let mut mp = mempool.lock().unwrap();
-        mp.add_transaction(tx)
+        mp.add_transaction(tx.clone())
     };
 
     if added {
+        tokio::spawn(async move {
+            p2p_server.propagate_new_transaction(tx, true).await;
+        });
+
         let response = ApiResponse {
             status: "success".to_string(),
             message: "Transaction accepted into the mempool".to_string(),
