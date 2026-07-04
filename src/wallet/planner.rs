@@ -62,13 +62,16 @@ pub(crate) fn blinding_for(keystore: &Keystore, index: u32) -> Scalar {
     }
 }
 
-/// Greedily selects confirmed, on-chain-verified outputs covering `target`,
-/// shared by both self-pay (plan_send) and the interactive slate flow
-/// (wallet/slate.rs).
+/// Greedily selects confirmed-or-pending, on-chain-verified outputs covering
+/// `target`, shared by both self-pay (plan_send) and the interactive slate
+/// flow (wallet/slate.rs). Includes the wallet's own still-unconfirmed
+/// outputs (change from a prior send, or an incoming payment not yet mined)
+/// so a second send doesn't have to wait for the first to confirm - see
+/// WalletStore::spendable_including_pending for why this is safe.
 pub(crate) fn select_spendable(store: &WalletStore, target: u64) -> Result<Vec<PlannedOutput>, PlanError> {
     let mut selected: Vec<PlannedOutput> = Vec::new();
     let mut selected_total = 0u64;
-    for output in store.spendable() {
+    for output in store.spendable_including_pending() {
         if selected_total >= target {
             break;
         }
@@ -77,7 +80,7 @@ pub(crate) fn select_spendable(store: &WalletStore, target: u64) -> Result<Vec<P
     }
 
     if selected_total < target {
-        return Err(PlanError::InsufficientBalance { have: store.balance(), need: target });
+        return Err(PlanError::InsufficientBalance { have: store.balance() + store.pending_balance(), need: target });
     }
 
     Ok(selected)
@@ -227,8 +230,12 @@ mod tests {
         assert_eq!(err, PlanError::InsufficientBalance { have: 50, need: 105 });
     }
 
+    /// A wallet's own not-yet-mined change/incoming output must still be
+    /// spendable - otherwise a second send has to wait for the first to
+    /// confirm even though the funds are already, provably, the wallet's own
+    /// (see WalletStore::spendable_including_pending for why this is safe).
     #[test]
-    fn plan_send_ignores_unconfirmed_outputs() {
+    fn plan_send_can_spend_own_pending_outputs() {
         let mut keystore = Keystore::generate();
         let mut store = WalletStore::default();
         let index = keystore.allocate_index();
@@ -236,8 +243,27 @@ mod tests {
         let commitment = Commitment::new(1000, blinding);
         store.add_output(index, 1000, commitment, OutputStatus::Pending);
 
+        let plan = plan_send(&mut keystore, &store, 100, 5).expect("plan should succeed using the pending output");
+
+        assert!(plan.transaction.validate());
+        assert_eq!(plan.spent_commitments, vec![commitment]);
+    }
+
+    /// The insufficient-balance error must report the true total available
+    /// (confirmed + pending), not just the confirmed portion, now that both
+    /// are eligible for spending.
+    #[test]
+    fn plan_send_insufficient_balance_error_sums_confirmed_and_pending() {
+        let mut keystore = Keystore::generate();
+        let mut store = WalletStore::default();
+        seed_store_with_output(&mut keystore, &mut store, 20);
+        let index = keystore.allocate_index();
+        let blinding = keystore.derive_blinding(index);
+        let commitment = Commitment::new(20, blinding);
+        store.add_output(index, 20, commitment, OutputStatus::Pending);
+
         let err = plan_send(&mut keystore, &store, 100, 5).unwrap_err();
 
-        assert_eq!(err, PlanError::InsufficientBalance { have: 0, need: 105 });
+        assert_eq!(err, PlanError::InsufficientBalance { have: 40, need: 105 });
     }
 }

@@ -123,10 +123,40 @@ impl WalletStore {
             .sum()
     }
 
-    /// Confirmed outputs, sorted descending by value, suitable for coin selection.
+    /// Confirmed outputs, sorted descending by value. Used for validator
+    /// staking specifically (see planner::blinding_for's callers in
+    /// ffi.rs/wasm.rs) - staking reveals a blinding factor for a commitment
+    /// the node checks against its real, already-confirmed UTXO set, so a
+    /// Pending output (which doesn't exist on-chain yet) would be rejected
+    /// there regardless of what this method returns.
     pub fn spendable(&self) -> Vec<&OwnedOutput> {
         let mut outputs: Vec<&OwnedOutput> = self.outputs.iter()
             .filter(|o| o.status == OutputStatus::Confirmed)
+            .collect();
+        outputs.sort_by(|a, b| b.value.cmp(&a.value));
+        outputs
+    }
+
+    /// Confirmed AND Pending outputs, sorted descending by value - used for
+    /// ordinary coin selection (planner::select_spendable), so a wallet can
+    /// chain a new send off its own not-yet-mined change/incoming output
+    /// instead of blocking until it confirms. Safe because Mimblewimble
+    /// mempool admission only validates a transaction's own internal math
+    /// (see core::mempool::add_transaction - no chain-UTXO check at
+    /// admission time), and cut-through aggregation cancels matching
+    /// input/output commitments across every transaction pulled into a block
+    /// regardless of which one produced them (see
+    /// core::cut_through::aggregate_and_cut_through) - so a child spending a
+    /// still-pending parent output is valid whether they land in the same
+    /// block (cut through cancels the intermediate hop) or sequential ones
+    /// (the parent is already confirmed by then). One residual edge case:
+    /// if fee-priority mempool selection ever pulls a child into an earlier
+    /// block than its own parent, that block would fail to apply (the input
+    /// doesn't exist yet) - a pre-existing mempool-ordering gap, not
+    /// something this method introduces, and unlikely at real traffic levels.
+    pub fn spendable_including_pending(&self) -> Vec<&OwnedOutput> {
+        let mut outputs: Vec<&OwnedOutput> = self.outputs.iter()
+            .filter(|o| o.status == OutputStatus::Confirmed || o.status == OutputStatus::Pending)
             .collect();
         outputs.sort_by(|a, b| b.value.cmp(&a.value));
         outputs
