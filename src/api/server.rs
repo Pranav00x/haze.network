@@ -139,11 +139,15 @@ impl ApiServer {
 
         // POST /v1/faucet - devnet-only repeatable faucet (see api/faucet.rs),
         // step 1: server builds a slate paying the requester from its own
-        // faucet reserve, hands back the slate JSON to respond to.
+        // faucet reserve, hands back the slate JSON to respond to. Rate
+        // limited per requester IP (see faucet::client_ip) - X-Forwarded-For
+        // first, since this node runs behind a reverse proxy in production.
         let faucet_request_route = warp::post()
             .and(warp::path!("v1" / "faucet"))
             .and(warp::body::content_length_limit(MAX_BODY_SIZE))
             .and(warp::body::json())
+            .and(warp::header::optional::<String>("x-forwarded-for"))
+            .and(warp::addr::remote())
             .and(faucet_filter)
             .and(chain_filter.clone())
             .and_then(faucet::handle_faucet_request);

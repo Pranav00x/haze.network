@@ -8,7 +8,8 @@
 //! HAZE_TREASURY_BLINDING (see wallet::planner::treasury_blinding_from_env)
 //! rather than committed to source.
 use std::sync::Mutex;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::net::IpAddr;
 use std::time::{Duration, Instant};
 use serde::{Serialize, Deserialize};
 use warp::http::StatusCode;
@@ -38,6 +39,14 @@ const MAX_FAUCET_AMOUNT: u64 = 1000;
 /// round-trip actually takes (seconds), since this is only a safety net.
 const PENDING_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Per-IP rate limit: at most this many /v1/faucet requests within
+/// RATE_LIMIT_WINDOW. Devnet-scale anti-abuse, same tier as
+/// MAX_FAUCET_AMOUNT - not meant to withstand a determined attacker with
+/// many IPs, just to stop a single careless script (or accidental retry
+/// loop) from draining the reserve or spamming the mempool.
+const RATE_LIMIT_MAX_REQUESTS: usize = 5;
+const RATE_LIMIT_WINDOW: Duration = Duration::from_secs(3600);
+
 pub struct FaucetState {
     keystore: Mutex<Keystore>,
     store: Mutex<WalletStore>,
@@ -51,6 +60,8 @@ pub struct FaucetState {
     /// running normally, only /v1/faucet is unavailable (see
     /// handle_faucet_request).
     enabled: bool,
+    /// Sliding-window request log per client IP (see RATE_LIMIT_MAX_REQUESTS).
+    rate_limits: Mutex<HashMap<IpAddr, VecDeque<Instant>>>,
 }
 
 impl FaucetState {
@@ -62,14 +73,14 @@ impl FaucetState {
             Some(s) => s,
             None => {
                 println!("Note: HAZE_TREASURY_BLINDING not set - devnet faucet disabled on this node (everything else runs normally).");
-                return Self { keystore: Mutex::new(keystore), store: Mutex::new(store), pending: Mutex::new(None), enabled: false };
+                return Self { keystore: Mutex::new(keystore), store: Mutex::new(store), pending: Mutex::new(None), enabled: false, rate_limits: Mutex::new(HashMap::new()) };
             }
         };
 
         let commitment = Commitment::new(TREASURY_ALLOCATION, secret);
         if commitment != crate::core::genesis::TREASURY_OUTPUT.commitment() {
             println!("Warning: HAZE_TREASURY_BLINDING does not match the real genesis treasury output - devnet faucet disabled on this node.");
-            return Self { keystore: Mutex::new(keystore), store: Mutex::new(store), pending: Mutex::new(None), enabled: false };
+            return Self { keystore: Mutex::new(keystore), store: Mutex::new(store), pending: Mutex::new(None), enabled: false, rate_limits: Mutex::new(HashMap::new()) };
         }
 
         store.add_output(FAUCET_INDEX, TREASURY_ALLOCATION, commitment, OutputStatus::Confirmed);
@@ -78,12 +89,36 @@ impl FaucetState {
             store: Mutex::new(store),
             pending: Mutex::new(None),
             enabled: true,
+            rate_limits: Mutex::new(HashMap::new()),
         }
     }
 
     pub(crate) fn reconcile(&self, chain: &ChainState) {
         let utxos: HashSet<Commitment> = chain.utxos.iter().cloned().collect();
         self.store.lock().unwrap().reconcile(&utxos);
+    }
+
+    /// True (and records this request) if `ip` is still under
+    /// RATE_LIMIT_MAX_REQUESTS within RATE_LIMIT_WINDOW; false if it should
+    /// be rejected. Sliding window: prunes timestamps older than the window
+    /// on every check rather than resetting on a fixed boundary, so a burst
+    /// right at a window edge can't double an effective limit.
+    fn check_rate_limit(&self, ip: IpAddr) -> bool {
+        let mut limits = self.rate_limits.lock().unwrap();
+        let now = Instant::now();
+        let entry = limits.entry(ip).or_default();
+        while let Some(&oldest) = entry.front() {
+            if now.duration_since(oldest) > RATE_LIMIT_WINDOW {
+                entry.pop_front();
+            } else {
+                break;
+            }
+        }
+        if entry.len() >= RATE_LIMIT_MAX_REQUESTS {
+            return false;
+        }
+        entry.push_back(now);
+        true
     }
 
     /// Builds a plain fee-paying transaction from the faucet's own reserve -
@@ -158,8 +193,26 @@ fn error_reply(status: StatusCode, message: impl Into<String>) -> Box<dyn warp::
     Box::new(warp::reply::with_status(warp::reply::json(&FaucetErrorResponse { error: message.into() }), status))
 }
 
+/// The requester's real IP, preferring the leftmost X-Forwarded-For entry
+/// (the original client, by convention) over the raw socket peer - this
+/// node runs behind a reverse proxy in production (Render), so the socket
+/// peer alone would just be the proxy's address for every request, making
+/// per-IP rate limiting a no-op there.
+fn client_ip(forwarded_for: Option<String>, remote: Option<std::net::SocketAddr>) -> Option<IpAddr> {
+    if let Some(header) = forwarded_for {
+        if let Some(first) = header.split(',').next() {
+            if let Ok(ip) = first.trim().parse::<IpAddr>() {
+                return Some(ip);
+            }
+        }
+    }
+    remote.map(|addr| addr.ip())
+}
+
 pub async fn handle_faucet_request(
     req: FaucetRequest,
+    forwarded_for: Option<String>,
+    remote_addr: Option<std::net::SocketAddr>,
     faucet: std::sync::Arc<FaucetState>,
     chain: std::sync::Arc<Mutex<ChainState>>,
 ) -> Result<Box<dyn warp::Reply>, std::convert::Infallible> {
@@ -169,6 +222,20 @@ pub async fn handle_faucet_request(
 
     if req.amount == 0 || req.amount > MAX_FAUCET_AMOUNT {
         return Ok(error_reply(StatusCode::BAD_REQUEST, format!("amount must be between 1 and {}", MAX_FAUCET_AMOUNT)));
+    }
+
+    match client_ip(forwarded_for, remote_addr) {
+        Some(ip) => {
+            if !faucet.check_rate_limit(ip) {
+                return Ok(error_reply(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    format!("rate limit exceeded - at most {} faucet requests per hour per IP", RATE_LIMIT_MAX_REQUESTS),
+                ));
+            }
+        }
+        // No IP could be determined at all (shouldn't happen for a real HTTP
+        // connection) - fail closed rather than silently skipping the limit.
+        None => return Ok(error_reply(StatusCode::BAD_REQUEST, "could not determine requester IP")),
     }
 
     {
@@ -265,4 +332,70 @@ pub async fn handle_faucet_complete(
     }
 
     Ok(Box::new(warp::reply::json(&FaucetCompleteResponse { status: "success".to_string() })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn client_ip_prefers_leftmost_forwarded_for_entry() {
+        let forwarded = Some("203.0.113.5, 10.0.0.1, 10.0.0.2".to_string());
+        let remote = Some("127.0.0.1:12345".parse().unwrap());
+        assert_eq!(client_ip(forwarded, remote), Some("203.0.113.5".parse().unwrap()));
+    }
+
+    #[test]
+    fn client_ip_falls_back_to_remote_addr_when_header_absent() {
+        let remote = Some("198.51.100.7:8332".parse().unwrap());
+        assert_eq!(client_ip(None, remote), Some("198.51.100.7".parse().unwrap()));
+    }
+
+    #[test]
+    fn client_ip_falls_back_to_remote_addr_when_header_unparseable() {
+        let forwarded = Some("not-an-ip".to_string());
+        let remote = Some("198.51.100.7:8332".parse().unwrap());
+        assert_eq!(client_ip(forwarded, remote), Some("198.51.100.7".parse().unwrap()));
+    }
+
+    #[test]
+    fn client_ip_is_none_when_nothing_available() {
+        assert_eq!(client_ip(None, None), None);
+    }
+
+    #[test]
+    fn rate_limit_allows_up_to_max_then_rejects() {
+        let faucet = blank_faucet_state();
+        let ip: IpAddr = "203.0.113.9".parse().unwrap();
+
+        for _ in 0..RATE_LIMIT_MAX_REQUESTS {
+            assert!(faucet.check_rate_limit(ip), "requests under the limit must be allowed");
+        }
+        assert!(!faucet.check_rate_limit(ip), "the request that exceeds the limit must be rejected");
+    }
+
+    #[test]
+    fn rate_limit_is_tracked_independently_per_ip() {
+        let faucet = blank_faucet_state();
+        let ip_a: IpAddr = "203.0.113.1".parse().unwrap();
+        let ip_b: IpAddr = "203.0.113.2".parse().unwrap();
+
+        for _ in 0..RATE_LIMIT_MAX_REQUESTS {
+            assert!(faucet.check_rate_limit(ip_a));
+        }
+        assert!(!faucet.check_rate_limit(ip_a), "ip_a must now be limited");
+        assert!(faucet.check_rate_limit(ip_b), "a different IP must be unaffected by ip_a's limit");
+    }
+
+    /// A FaucetState with the faucet itself disabled (no HAZE_TREASURY_BLINDING
+    /// needed) - these tests only exercise the rate limiter, not real payouts.
+    fn blank_faucet_state() -> FaucetState {
+        FaucetState {
+            keystore: Mutex::new(Keystore::generate()),
+            store: Mutex::new(WalletStore::default()),
+            pending: Mutex::new(None),
+            enabled: false,
+            rate_limits: Mutex::new(HashMap::new()),
+        }
+    }
 }
