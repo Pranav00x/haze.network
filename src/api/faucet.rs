@@ -9,6 +9,7 @@
 //! rather than committed to source.
 use std::sync::Mutex;
 use std::collections::HashSet;
+use std::time::{Duration, Instant};
 use serde::{Serialize, Deserialize};
 use warp::http::StatusCode;
 
@@ -29,12 +30,22 @@ use curve25519_dalek_ng::scalar::Scalar;
 /// reserve, not a real anti-abuse measure.
 const MAX_FAUCET_AMOUNT: u64 = 1000;
 
+/// How long a pending faucet request is held before it's treated as
+/// abandoned and released - without this, a caller who requests a slate
+/// and never completes it (network drop, closed tab, or just testing the
+/// endpoint) would permanently lock every other requester out until the
+/// node restarts. Generous relative to how long an honest two-party
+/// round-trip actually takes (seconds), since this is only a safety net.
+const PENDING_TIMEOUT: Duration = Duration::from_secs(60);
+
 pub struct FaucetState {
     keystore: Mutex<Keystore>,
     store: Mutex<WalletStore>,
     /// Only one faucet payout in flight at a time - simpler than juggling
     /// concurrent PendingSlates, and faucet requests aren't latency-sensitive.
-    pending: Mutex<Option<PendingSlate>>,
+    /// Paired with when it was created so an abandoned request can be
+    /// released after PENDING_TIMEOUT instead of locking the faucet forever.
+    pending: Mutex<Option<(PendingSlate, Instant)>>,
     /// False when HAZE_TREASURY_BLINDING wasn't set (or didn't match the
     /// real genesis treasury output) at startup - the rest of the API keeps
     /// running normally, only /v1/faucet is unavailable (see
@@ -166,8 +177,12 @@ pub async fn handle_faucet_request(
     }
 
     let mut pending_guard = faucet.pending.lock().unwrap();
-    if pending_guard.is_some() {
-        return Ok(error_reply(StatusCode::CONFLICT, "faucet is completing another request, try again in a few seconds"));
+    if let Some((_, created_at)) = pending_guard.as_ref() {
+        if created_at.elapsed() < PENDING_TIMEOUT {
+            return Ok(error_reply(StatusCode::CONFLICT, "faucet is completing another request, try again in a few seconds"));
+        }
+        // Older than PENDING_TIMEOUT - treat as abandoned and fall through
+        // to replace it with this new request.
     }
 
     let mut keystore = faucet.keystore.lock().unwrap();
@@ -182,7 +197,7 @@ pub async fn handle_faucet_request(
     // a real fee to even enter a mempool.
     match slate::create_slate(&mut keystore, &store, req.amount, crate::core::mempool::MIN_FEE) {
         Ok((built_slate, pending)) => {
-            *pending_guard = Some(pending);
+            *pending_guard = Some((pending, Instant::now()));
             let slate_json = serde_json::to_string(&built_slate).unwrap();
             Ok(Box::new(warp::reply::json(&FaucetSlateResponse { slate_json })))
         }
@@ -210,7 +225,7 @@ pub async fn handle_faucet_complete(
     let pending = {
         let mut pending_guard = faucet.pending.lock().unwrap();
         match pending_guard.take() {
-            Some(p) => p,
+            Some((p, _)) => p,
             None => return Ok(error_reply(StatusCode::BAD_REQUEST, "no pending faucet request - call /v1/faucet first")),
         }
     };
