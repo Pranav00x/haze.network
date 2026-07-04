@@ -178,6 +178,28 @@ impl Storage {
                     state.name_registry.insert(op.name.clone(), updated);
                 }
             }
+            // Asset registry (see core::assets) rebuilt the same way, from
+            // the same already-persisted blocks - no separate sled tree
+            // needed, same reasoning as name_registry above.
+            for op in &block.mint_ops {
+                state.asset_registry.insert(op.asset_id.clone(), super::assets::AssetRecord {
+                    asset_id: op.asset_id.clone(),
+                    owner_pubkey: op.owner_pubkey,
+                    metadata_hash: op.metadata_hash,
+                    minted_at_block: block.header.height,
+                });
+            }
+            for op in &block.transfer_asset_ops {
+                if let Some(existing) = state.asset_registry.get(&op.asset_id) {
+                    let updated = super::assets::AssetRecord {
+                        asset_id: op.asset_id.clone(),
+                        owner_pubkey: op.new_owner_pubkey,
+                        metadata_hash: existing.metadata_hash,
+                        minted_at_block: existing.minted_at_block,
+                    };
+                    state.asset_registry.insert(op.asset_id.clone(), updated);
+                }
+            }
         }
 
         state

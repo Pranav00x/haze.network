@@ -295,6 +295,7 @@ mod tests {
             validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
             name_registry_root: empty_registry_root(),
             chain_id: crate::core::genesis::CHAIN_ID,
+            asset_registry_root: crate::core::assets::compute_asset_registry_root(&std::collections::HashMap::new()),
         };
         let msg = header.hash();
         header.validator_signature = Signature::sign(&msg, &private_key);
@@ -304,6 +305,8 @@ mod tests {
             body: Transaction { inputs, outputs: vec![output], kernels: vec![kernel] },
             name_ops: vec![],
             transfer_ops: vec![],
+            mint_ops: vec![],
+            transfer_asset_ops: vec![],
         };
 
         (block, r_out, out_commitment)

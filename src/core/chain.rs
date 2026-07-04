@@ -4,6 +4,7 @@ use crate::crypto::schnorr::Signature;
 use super::transaction::{TxKernel, Output};
 use super::block::Block;
 use super::registry::{NameRecord, compute_registry_root};
+use super::assets::{AssetRecord, compute_asset_registry_root};
 use super::compaction::BlockPruneMeta;
 use serde::{Serialize, Deserialize};
 use curve25519_dalek_ng::scalar::Scalar;
@@ -36,6 +37,13 @@ pub struct ChainState {
     /// same purpose as validator_snapshots: apply_linear_block populates it,
     /// rollback_block consumes it to restore the exact prior record.
     pub transfer_snapshots: HashMap<u64, Vec<(String, NameRecord)>>,
+    /// The Haze Asset Registry (NFTs) - asset_id -> record, committed into
+    /// consensus state via BlockHeader::asset_registry_root (see
+    /// core::assets). A separate namespace from name_registry.
+    pub asset_registry: HashMap<String, AssetRecord>,
+    /// Pre-transfer AssetRecord for each asset transferred at a given height -
+    /// same purpose/pattern as transfer_snapshots.
+    pub asset_transfer_snapshots: HashMap<u64, Vec<(String, AssetRecord)>>,
     /// Per-block bookkeeping for horizon-based cut-through (see
     /// core::compaction::compact) - which blocks have had inputs/outputs
     /// physically removed, and how many. Purely a display aid (see
@@ -60,6 +68,11 @@ pub struct AppliedDelta {
     /// Names transferred by this block, paired with their PRE-transfer
     /// record so a rollback can restore it exactly.
     pub transferred_names: Vec<(String, NameRecord)>,
+    /// Assets minted by this block (empty for most blocks).
+    pub new_assets: Vec<(String, AssetRecord)>,
+    /// Assets transferred by this block, paired with their PRE-transfer
+    /// record so a rollback can restore it exactly.
+    pub transferred_assets: Vec<(String, AssetRecord)>,
     pub height: u64,
     pub tip_hash: [u8; 32],
 }
@@ -74,6 +87,8 @@ pub struct RollbackDelta {
     pub active_validators_after: Vec<Validator>,
     /// Names un-registered by this rollback.
     pub removed_names: Vec<String>,
+    /// Assets un-minted by this rollback.
+    pub removed_assets: Vec<String>,
     pub new_height: u64,
     pub new_tip: [u8; 32],
 }
@@ -398,6 +413,58 @@ impl ChainState {
             return None;
         }
 
+        // 4d. Validate asset mints (see core::assets) - same shape as 4b,
+        // separate namespace from names. `spent_this_block` is shared with
+        // names/body so an asset mint's fee-payment can't double-spend an
+        // input already claimed by any of them earlier in this same block.
+        let mut assets_this_block: HashSet<&str> = HashSet::new();
+        let mut candidate_asset_registry = self.asset_registry.clone();
+        for op in &block.mint_ops {
+            if op.validate_standalone().is_err() {
+                return None;
+            }
+            if self.asset_registry.contains_key(&op.asset_id) || !assets_this_block.insert(op.asset_id.as_str()) {
+                return None;
+            }
+            for input in &op.fee_payment.inputs {
+                if !self.utxos.contains(&input.commitment) || spent_this_block.contains(&input.commitment) {
+                    return None;
+                }
+                spent_this_block.insert(input.commitment);
+            }
+            candidate_asset_registry.insert(op.asset_id.clone(), AssetRecord {
+                asset_id: op.asset_id.clone(),
+                owner_pubkey: op.owner_pubkey,
+                metadata_hash: op.metadata_hash,
+                minted_at_block: block.header.height,
+            });
+        }
+
+        // 4e. Validate asset transfers - same shape as 4c.
+        for op in &block.transfer_asset_ops {
+            if !assets_this_block.insert(op.asset_id.as_str()) {
+                return None;
+            }
+            let current = match self.asset_registry.get(&op.asset_id) {
+                Some(r) => r,
+                None => return None,
+            };
+            let msg = super::assets::TransferAssetOp::signing_message(&op.asset_id, &op.new_owner_pubkey);
+            if !op.signature.verify(&msg, &current.owner_pubkey) {
+                return None;
+            }
+            candidate_asset_registry.insert(op.asset_id.clone(), AssetRecord {
+                asset_id: op.asset_id.clone(),
+                owner_pubkey: op.new_owner_pubkey,
+                metadata_hash: current.metadata_hash,
+                minted_at_block: current.minted_at_block,
+            });
+        }
+
+        if compute_asset_registry_root(&candidate_asset_registry) != block.header.asset_registry_root {
+            return None;
+        }
+
         // 5. Save the snapshot of active validators BEFORE applying state transitions
         let validator_snapshot = (block.header.height, self.active_validators.clone());
         self.validator_snapshots.insert(validator_snapshot.0, validator_snapshot.1.clone());
@@ -446,11 +513,44 @@ impl ChainState {
             self.transfer_snapshots.insert(block.header.height, transferred_names.clone());
         }
 
+        // 7d. Apply each asset mint's fee-payment transaction and commit the
+        // registry entry itself - same shape as 7b.
+        let mut new_assets = Vec::new();
+        for op in &block.mint_ops {
+            for input in &op.fee_payment.inputs {
+                self.utxos.remove(&input.commitment);
+                spent_commitments.push(input.commitment);
+            }
+            for output in &op.fee_payment.outputs {
+                self.utxos.insert(output.commitment);
+            }
+            let record = candidate_asset_registry[&op.asset_id].clone();
+            self.asset_registry.insert(op.asset_id.clone(), record.clone());
+            new_assets.push((op.asset_id.clone(), record));
+        }
+
+        // 7e. Apply asset transfers - same shape as 7c.
+        let mut transferred_assets = Vec::new();
+        for op in &block.transfer_asset_ops {
+            let old_record = self.asset_registry[&op.asset_id].clone();
+            let new_record = candidate_asset_registry[&op.asset_id].clone();
+            self.asset_registry.insert(op.asset_id.clone(), new_record);
+            transferred_assets.push((op.asset_id.clone(), old_record));
+        }
+        if !transferred_assets.is_empty() {
+            self.asset_transfer_snapshots.insert(block.header.height, transferred_assets.clone());
+        }
+
         // 8. Save the kernels forever
         for kernel in &block.body.kernels {
             self.kernels.push(kernel.clone());
         }
         for op in &block.name_ops {
+            for kernel in &op.fee_payment.kernels {
+                self.kernels.push(kernel.clone());
+            }
+        }
+        for op in &block.mint_ops {
             for kernel in &op.fee_payment.kernels {
                 self.kernels.push(kernel.clone());
             }
@@ -467,6 +567,8 @@ impl ChainState {
             new_kernels: block.body.kernels.clone(),
             new_names,
             transferred_names,
+            new_assets,
+            transferred_assets,
             validator_snapshot,
             active_validators_after: self.active_validators.clone(),
             height: self.current_height,
@@ -532,6 +634,31 @@ impl ChainState {
             }
         }
 
+        // 3d. Revert each asset mint's fee-payment transaction and registry
+        // entry - same shape as 3b.
+        let mut removed_assets = Vec::new();
+        for op in &tip_block.mint_ops {
+            for output in &op.fee_payment.outputs {
+                self.utxos.remove(&output.commitment);
+            }
+            for input in &op.fee_payment.inputs {
+                self.utxos.insert(input.commitment);
+                restored_inputs.push(input.commitment);
+            }
+            for kernel in &op.fee_payment.kernels {
+                self.kernels.retain(|k| k.excess != kernel.excess);
+            }
+            self.asset_registry.remove(&op.asset_id);
+            removed_assets.push(op.asset_id.clone());
+        }
+
+        // 3e. Revert each asset transfer back to its pre-transfer record.
+        if let Some(pre_transfer) = self.asset_transfer_snapshots.remove(&self.current_height) {
+            for (asset_id, old_record) in pre_transfer {
+                self.asset_registry.insert(asset_id, old_record);
+            }
+        }
+
         // 4. Restore active validator registry snapshot from height H-1
         let prev_height = self.current_height - 1;
         self.active_validators = self.validator_snapshots.get(&prev_height).cloned().unwrap_or_default();
@@ -549,6 +676,7 @@ impl ChainState {
             removed_kernel_excesses,
             active_validators_after: self.active_validators.clone(),
             removed_names,
+            removed_assets,
             new_height: self.current_height,
             new_tip: self.last_block_hash,
         })

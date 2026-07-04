@@ -2,6 +2,7 @@ use crate::crypto::pedersen::Commitment;
 use crate::crypto::schnorr::Signature;
 use super::transaction::Transaction;
 use super::registry::{RegisterNameOp, TransferNameOp};
+use super::assets::{MintAssetOp, TransferAssetOp};
 use serde::{Serialize, Deserialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -25,6 +26,11 @@ pub struct BlockHeader {
     /// already prevents this in practice, but this makes the intent
     /// explicit and checkable on every block, not just genesis).
     pub chain_id: u64,
+    /// Commitment to the full asset-registry state after this block is
+    /// applied (see core::assets::compute_asset_registry_root) - same
+    /// pattern and same reasoning as name_registry_root, kept as a separate
+    /// field/root since assets and names are unrelated namespaces.
+    pub asset_registry_root: [u8; 32],
 }
 
 impl BlockHeader {
@@ -41,6 +47,7 @@ impl BlockHeader {
         hasher.update(self.validator_signature.e.as_bytes());
         hasher.update(&self.name_registry_root);
         hasher.update(&self.chain_id.to_le_bytes());
+        hasher.update(&self.asset_registry_root);
         let result = hasher.finalize();
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&result);
@@ -76,6 +83,14 @@ pub struct Block {
     /// kept separate from name_ops since they have no fee-payment sub-transaction.
     #[serde(default)]
     pub transfer_ops: Vec<TransferNameOp>,
+    /// Asset mints included in this block (see core::assets::MintAssetOp) -
+    /// same shape as name_ops, a separate namespace from names.
+    #[serde(default)]
+    pub mint_ops: Vec<MintAssetOp>,
+    /// Asset ownership transfers included in this block (see
+    /// core::assets::TransferAssetOp) - same shape as transfer_ops.
+    #[serde(default)]
+    pub transfer_asset_ops: Vec<TransferAssetOp>,
 }
 
 impl Block {

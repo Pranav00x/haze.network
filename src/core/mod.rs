@@ -5,6 +5,7 @@ pub mod chain;
 pub mod mempool;
 pub mod genesis;
 pub mod registry;
+pub mod assets;
 pub mod compaction;
 pub mod vesting;
 

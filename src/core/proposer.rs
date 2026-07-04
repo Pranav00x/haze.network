@@ -236,7 +236,67 @@ impl Proposer {
 
                     let name_registry_root = crate::core::registry::compute_registry_root(&name_registry_snapshot);
 
-                    println!("We are chosen proposer for block #{}! Proposing block with {} user transactions, {} name registrations, {} name transfers...", next_height, tx.kernels.len(), name_ops.len(), transfer_ops.len());
+                    // Pull pending asset mints/transfers - same filtering
+                    // pattern as name_ops/transfer_ops above, separate
+                    // namespace (see core::assets).
+                    let candidate_mint_ops = {
+                        let mut mp = self.mempool.lock().unwrap();
+                        mp.take_mint_ops()
+                    };
+                    let mut asset_registry_snapshot = {
+                        let c = self.chain.lock().unwrap();
+                        c.asset_registry.clone()
+                    };
+                    let mut mint_ops = Vec::new();
+                    for op in candidate_mint_ops {
+                        let inputs_ok = op.fee_payment.inputs.iter()
+                            .all(|i| utxos_snapshot.contains(&i.commitment) && !spent_this_block.contains(&i.commitment));
+                        if !inputs_ok || asset_registry_snapshot.contains_key(&op.asset_id) {
+                            continue;
+                        }
+                        for i in &op.fee_payment.inputs {
+                            spent_this_block.insert(i.commitment);
+                        }
+                        asset_registry_snapshot.insert(op.asset_id.clone(), crate::core::assets::AssetRecord {
+                            asset_id: op.asset_id.clone(),
+                            owner_pubkey: op.owner_pubkey,
+                            metadata_hash: op.metadata_hash,
+                            minted_at_block: next_height,
+                        });
+                        mint_ops.push(op);
+                    }
+                    let candidate_transfer_asset_ops = {
+                        let mut mp = self.mempool.lock().unwrap();
+                        mp.take_transfer_asset_ops()
+                    };
+                    let original_asset_registry = {
+                        let c = self.chain.lock().unwrap();
+                        c.asset_registry.clone()
+                    };
+                    let mut assets_touched: std::collections::HashSet<String> = mint_ops.iter().map(|op| op.asset_id.clone()).collect();
+                    let mut transfer_asset_ops = Vec::new();
+                    for op in candidate_transfer_asset_ops {
+                        if assets_touched.contains(&op.asset_id) {
+                            continue;
+                        }
+                        let Some(current) = original_asset_registry.get(&op.asset_id) else { continue };
+                        let msg = crate::core::assets::TransferAssetOp::signing_message(&op.asset_id, &op.new_owner_pubkey);
+                        if !op.signature.verify(&msg, &current.owner_pubkey) {
+                            continue;
+                        }
+                        assets_touched.insert(op.asset_id.clone());
+                        asset_registry_snapshot.insert(op.asset_id.clone(), crate::core::assets::AssetRecord {
+                            asset_id: op.asset_id.clone(),
+                            owner_pubkey: op.new_owner_pubkey,
+                            metadata_hash: current.metadata_hash,
+                            minted_at_block: current.minted_at_block,
+                        });
+                        transfer_asset_ops.push(op);
+                    }
+
+                    let asset_registry_root = crate::core::assets::compute_asset_registry_root(&asset_registry_snapshot);
+
+                    println!("We are chosen proposer for block #{}! Proposing block with {} user transactions, {} name registrations, {} name transfers, {} asset mints, {} asset transfers...", next_height, tx.kernels.len(), name_ops.len(), transfer_ops.len(), mint_ops.len(), transfer_asset_ops.len());
                     
                     // 1. Calculate total fees and coinbase value
                     let total_fees: u64 = tx.kernels.iter().map(|k| k.fee).sum();
@@ -295,6 +355,7 @@ impl Proposer {
                         validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
                         name_registry_root,
                         chain_id: crate::core::genesis::CHAIN_ID,
+                        asset_registry_root,
                     };
 
                     // Sign the block header
@@ -306,6 +367,8 @@ impl Proposer {
                         body: tx,
                         name_ops,
                         transfer_ops,
+                        mint_ops,
+                        transfer_asset_ops,
                     };
 
                     // Apply locally

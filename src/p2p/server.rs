@@ -456,6 +456,28 @@ async fn handle_peer_connection(
                                 pm.broadcast(&P2pMessage::NewTransferOp(op)).await;
                             }
                         }
+                        P2pMessage::NewMintOp(op) => {
+                            let asset_id = op.asset_id.clone();
+                            let added = {
+                                let mut mp = mempool.lock().unwrap();
+                                mp.add_mint_op(op.clone())
+                            };
+                            if added {
+                                println!("P2P: Queued asset mint '{}' from {}, propagating.", asset_id, peer_addr);
+                                pm.broadcast(&P2pMessage::NewMintOp(op)).await;
+                            }
+                        }
+                        P2pMessage::NewTransferAssetOp(op) => {
+                            let asset_id = op.asset_id.clone();
+                            let added = {
+                                let mut mp = mempool.lock().unwrap();
+                                mp.add_transfer_asset_op(op.clone())
+                            };
+                            if added {
+                                println!("P2P: Queued asset transfer '{}' from {}, propagating.", asset_id, peer_addr);
+                                pm.broadcast(&P2pMessage::NewTransferAssetOp(op)).await;
+                            }
+                        }
                         P2pMessage::ChainInfo { height, tip_hash } => {
                             let our_height = { chain.lock().unwrap().current_height };
                             println!("P2P: Peer {} reports chain height {} (tip {:?}, ours: {})", peer_addr, height, tip_hash, our_height);

@@ -11,6 +11,7 @@ use crate::p2p::server::P2pServer;
 use super::explorer;
 use super::faucet::{self, FaucetState};
 use super::names;
+use super::assets;
 use super::inbox::{self, InboxState};
 
 pub struct ApiServer;
@@ -38,9 +39,13 @@ impl ApiServer {
         let mempool_filter_5 = mempool_filter.clone();
         let mempool_filter_6 = mempool_filter.clone();
         let mempool_filter_7 = mempool_filter.clone();
+        let mempool_filter_8 = mempool_filter.clone();
+        let mempool_filter_9 = mempool_filter.clone();
         let p2p_filter_2 = p2p_filter.clone();
         let p2p_filter_3 = p2p_filter.clone();
         let p2p_filter_4 = p2p_filter.clone();
+        let p2p_filter_5 = p2p_filter.clone();
+        let p2p_filter_6 = p2p_filter.clone();
 
         let inbox_state = Arc::new(InboxState::new());
         let inbox_filter = warp::any().map(move || Arc::clone(&inbox_state));
@@ -211,8 +216,44 @@ impl ApiServer {
         let list_names_route = warp::get()
             .and(warp::path!("v1" / "names"))
             .and(warp::query::<names::NamesListQuery>())
-            .and(chain_filter)
+            .and(chain_filter.clone())
             .and_then(names::handle_list_names);
+
+        // POST /v1/assets/mint - queues an NFT mint (see api/assets.rs and
+        // core::assets) into the mempool and broadcasts it - separate
+        // namespace from /v1/names, same shape.
+        let mint_asset_route = warp::post()
+            .and(warp::path!("v1" / "assets" / "mint"))
+            .and(warp::body::content_length_limit(MAX_BODY_SIZE))
+            .and(warp::body::json())
+            .and(mempool_filter_8)
+            .and(p2p_filter_5)
+            .and(chain_filter.clone())
+            .and_then(assets::handle_mint_asset);
+
+        // POST /v1/assets/transfer - queues an NFT ownership transfer,
+        // signed by the asset's current owner.
+        let transfer_asset_route = warp::post()
+            .and(warp::path!("v1" / "assets" / "transfer"))
+            .and(warp::body::content_length_limit(MAX_BODY_SIZE))
+            .and(warp::body::json())
+            .and(mempool_filter_9)
+            .and(p2p_filter_6)
+            .and(chain_filter.clone())
+            .and_then(assets::handle_transfer_asset);
+
+        // GET /v1/assets/:asset_id - resolves a single minted asset.
+        let resolve_asset_route = warp::get()
+            .and(warp::path!("v1" / "assets" / String))
+            .and(chain_filter.clone())
+            .and_then(assets::handle_resolve_asset);
+
+        // GET /v1/assets?limit=N - lists minted assets, newest first.
+        let list_assets_route = warp::get()
+            .and(warp::path!("v1" / "assets"))
+            .and(warp::query::<assets::AssetsListQuery>())
+            .and(chain_filter.clone())
+            .and_then(assets::handle_list_assets);
 
         // POST /v1/inbox/:pubkey_hex - drops a slate/response off for a
         // recipient (see api/inbox.rs). Not part of consensus - pure message
@@ -249,6 +290,10 @@ impl ApiServer {
             .or(sponsored_register_name_route)
             .or(resolve_name_route)
             .or(list_names_route)
+            .or(mint_asset_route)
+            .or(transfer_asset_route)
+            .or(resolve_asset_route)
+            .or(list_assets_route)
             .or(post_inbox_route)
             .or(get_inbox_route)
             .with(
@@ -261,7 +306,7 @@ impl ApiServer {
                     .allow_methods(vec!["GET", "POST"])
                     .allow_headers(vec!["content-type"]),
             );
-        
+
         // Binds all interfaces, not just loopback - required for this to be
         // reachable at all once deployed behind a cloud provider's proxy
         // (e.g. Fly.io), which connects over the network, not localhost.

@@ -2,6 +2,7 @@ use serde::{Serialize, Deserialize};
 use crate::core::transaction::Transaction;
 use crate::core::block::Block;
 use crate::core::registry::{RegisterNameOp, TransferNameOp};
+use crate::core::assets::{MintAssetOp, TransferAssetOp};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum P2pMessage {
@@ -43,4 +44,9 @@ pub enum P2pMessage {
     NewNameOp(RegisterNameOp),
     /// A pending name transfer, gossiped the same way (no Dandelion).
     NewTransferOp(TransferNameOp),
+    /// A pending asset mint (see core::assets) - gossiped the same way as
+    /// NewNameOp, same reasoning (asset ownership is intentionally public).
+    NewMintOp(MintAssetOp),
+    /// A pending asset transfer, gossiped the same way as NewTransferOp.
+    NewTransferAssetOp(TransferAssetOp),
 }

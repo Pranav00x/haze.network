@@ -1,3 +1,9 @@
+// Raised from the default (128) - warp's Or<> combinator nests one generic
+// layer per route joined via .or(), and with ~25 routes now registered
+// (see api::server::ApiServer::start), the compiler's default recursion
+// limit for proving the resulting filter's Future: Unpin is exceeded.
+#![recursion_limit = "512"]
+
 use std::sync::{Arc, Mutex};
 use clap::Parser;
 
