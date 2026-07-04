@@ -348,25 +348,28 @@ mod tests {
         let genesis = crate::core::genesis::genesis_block();
         assert!(chain_state.apply_block(&genesis).is_applied());
 
-        // Register two validators with real backing UTXOs (the genesis
-        // treasury and airdrop outputs, whose blindings are well-known
-        // devnet constants - see core::genesis).
-        let treasury_r = Scalar::from(crate::core::genesis::TREASURY_BLINDING);
-        let treasury_commitment = Commitment::new(crate::core::genesis::TREASURY_ALLOCATION, treasury_r);
-        assert!(chain_state.register_validator(treasury_commitment, crate::core::genesis::TREASURY_ALLOCATION, treasury_r));
+        // Register two validators with real (synthetic, test-only) backing
+        // UTXOs - same pattern test_pos_selection already uses, since
+        // register_validator only requires a real unspent commitment and
+        // knowledge of its blinding, not that it came from genesis.
+        let r_a = Scalar::random(&mut rng);
+        let commitment_a = Commitment::new(500_000, r_a);
+        chain_state.utxos.insert(commitment_a);
+        assert!(chain_state.register_validator(commitment_a, 500_000, r_a));
 
-        let airdrop_r = Scalar::from(crate::core::genesis::AIRDROP_BLINDING);
-        let airdrop_commitment = Commitment::new(crate::core::genesis::AIRDROP_ALLOCATION, airdrop_r);
-        assert!(chain_state.register_validator(airdrop_commitment, crate::core::genesis::AIRDROP_ALLOCATION, airdrop_r));
+        let r_b = Scalar::random(&mut rng);
+        let commitment_b = Commitment::new(500_000, r_b);
+        chain_state.utxos.insert(commitment_b);
+        assert!(chain_state.register_validator(commitment_b, 500_000, r_b));
 
         let prev_hash = genesis.header.hash();
         let primary = chain_state.select_proposer(1, prev_hash);
         // Whichever validator ISN'T the computed primary for height 1 plays
         // the "fallback stepping in" role this test proves works.
-        let (fallback_r, fallback_value) = if primary == treasury_commitment {
-            (airdrop_r, crate::core::genesis::AIRDROP_ALLOCATION)
+        let (fallback_r, fallback_value) = if primary == commitment_a {
+            (r_b, 500_000u64)
         } else {
-            (treasury_r, crate::core::genesis::TREASURY_ALLOCATION)
+            (r_a, 500_000u64)
         };
 
         let r_coinbase = Scalar::random(&mut rng);
@@ -1267,77 +1270,20 @@ mod tests {
         assert_eq!(chain_state.current_height, 0, "chain must not have advanced past genesis");
     }
 
-    /// A block that spends a team vesting tranche at height 1 - years before
-    /// its 6-month-cliff unlock height - must be rejected by
-    /// ChainState::apply_linear_block, even though the transaction itself is
-    /// otherwise perfectly balanced and signed (proving the rejection is
-    /// specifically the vesting timelock, not an incidental balance error).
-    #[test]
-    fn apply_block_rejects_early_spend_of_team_vesting_tranche() {
-        use crate::core::genesis::{TEAM_BLINDING_TRANCHES, TEAM_TRANCHE_VALUE};
-        use crate::core::vesting::tranche_unlock_height;
-
-        let mut chain_state = ChainState::new();
-        let genesis = crate::core::genesis::genesis_block();
-        assert!(chain_state.apply_block(&genesis).is_applied());
-
-        let r_in = Scalar::from(TEAM_BLINDING_TRANCHES[0]);
-        let tranche_commitment = Commitment::new(TEAM_TRANCHE_VALUE, r_in);
-        assert!(chain_state.utxos.contains(&tranche_commitment), "genesis must have minted the first team tranche");
-        assert!(tranche_unlock_height(0) > 1, "sanity: the cliff must be well past height 1");
-
-        let r_out = Scalar::random(&mut OsRng);
-        let change_output = Output {
-            commitment: Commitment::new(TEAM_TRANCHE_VALUE, r_out),
-            proof: RangeProof::prove(TEAM_TRANCHE_VALUE, &r_out),
-            note: vec![],
-        };
-        let excess_r = r_in - r_out;
-        let transfer_kernel = TxKernel {
-            excess: Commitment::new(0, excess_r),
-            fee: 0,
-            signature: Signature::sign(&0u64.to_le_bytes(), &excess_r),
-        };
-
-        let private_key = Scalar::from(42u64);
-        let r_coinbase = Scalar::random(&mut OsRng);
-        let reward = crate::core::block::block_reward_at(1);
-        let coinbase_output = Output {
-            commitment: Commitment::new(reward, r_coinbase),
-            proof: RangeProof::prove(reward, &r_coinbase),
-            note: vec![],
-        };
-        let coinbase_excess_r = Scalar::zero() - r_coinbase;
-        let coinbase_kernel = TxKernel {
-            excess: Commitment::new(0, coinbase_excess_r),
-            fee: 0,
-            signature: Signature::sign(&0u64.to_le_bytes(), &coinbase_excess_r),
-        };
-
-        let body = Transaction {
-            inputs: vec![Input { commitment: tranche_commitment }],
-            outputs: vec![change_output, coinbase_output],
-            kernels: vec![transfer_kernel, coinbase_kernel],
-        };
-        assert!(body.validate_with_reward(reward), "sanity: the transaction itself must be a well-balanced, validly-signed body");
-
-        let mut header = BlockHeader {
-            height: 1,
-            prev_hash: genesis.header.hash(),
-            total_kernel_offset: Scalar::zero(),
-            nonce: 0,
-            timestamp: 0,
-            validator_commitment: Commitment::new(1_000_000, private_key),
-            validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
-            name_registry_root: empty_registry_root(),
-            chain_id: crate::core::genesis::CHAIN_ID,
-        };
-        let msg = header.hash();
-        header.validator_signature = Signature::sign(&msg, &private_key);
-        let block = Block { header, body, name_ops: vec![], transfer_ops: vec![] };
-
-        assert!(!chain_state.apply_block(&block).is_applied(), "a block spending a team tranche before its unlock height must be rejected");
-        assert_eq!(chain_state.current_height, 0, "chain must not have advanced past genesis");
-    }
+    // core::vesting's own tests (spends_locked_output_early_rejects_before_
+    // unlock_and_allows_after, etc.) already prove the exact real genesis
+    // team tranche commitment (via locked_genesis_outputs()[0], which reads
+    // core::genesis::TEAM_TRANCHES[0].commitment() - the same fixed value
+    // baked into the real chain) is correctly recognized as locked before
+    // its cliff and unlocked after. A prior version of this file also had a
+    // full apply_block-level test that built a *signed, otherwise-valid*
+    // spend of that tranche to prove the block-level rejection wasn't an
+    // incidental balance error - that test is gone because it's now
+    // impossible to write: the blinding secret backing every locked
+    // tranche is a real, randomly-generated value that was handed off
+    // out-of-band and does not exist anywhere in this repo (see
+    // core::genesis's module doc comment), so no test, anywhere, can ever
+    // forge a valid signature for spending one. That's the fix working as
+    // intended, not a coverage gap.
 }
 

@@ -27,6 +27,25 @@ pub enum PlanError {
     InsufficientBalance { have: u64, need: u64 },
 }
 
+/// The real treasury secret, supplied at runtime rather than committed to
+/// source (see core::genesis's module doc comment) - required to spend the
+/// devnet faucet's treasury-funded balance. Returns None if unset or
+/// malformed rather than panicking: a node with no faucet secret configured
+/// should just run with the faucet disabled, not crash its entire API
+/// server over a feature it may not even want to offer (see
+/// api::faucet::FaucetState::new).
+pub(crate) fn treasury_blinding_from_env() -> Option<Scalar> {
+    let hex = std::env::var("HAZE_TREASURY_BLINDING").ok()?;
+    if hex.len() != 64 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let mut bytes = [0u8; 32];
+    for i in 0..32 {
+        bytes[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?;
+    }
+    Some(Scalar::from_bits(bytes))
+}
+
 /// The blinding factor for a wallet-owned output index. The well-known genesis
 /// output (see wallet/cli.rs's --claim-genesis flow) uses a fixed devnet secret
 /// rather than a keystore-derived one.
@@ -34,7 +53,10 @@ pub(crate) fn blinding_for(keystore: &Keystore, index: u32) -> Scalar {
     if index == GENESIS_INDEX {
         Scalar::from(42u64)
     } else if index == FAUCET_INDEX {
-        Scalar::from(crate::core::genesis::TREASURY_BLINDING)
+        // Only ever reached if FaucetState successfully initialized with a
+        // real secret in the first place (see FaucetState::new) - a
+        // FAUCET_INDEX output is never added to a wallet store otherwise.
+        treasury_blinding_from_env().expect("FAUCET_INDEX output present but HAZE_TREASURY_BLINDING is unset - this should be unreachable")
     } else {
         keystore.derive_blinding(index)
     }

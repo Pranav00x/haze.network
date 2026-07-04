@@ -1,16 +1,19 @@
 //! Repeatable devnet faucet, distinct from the wallet's single-use
-//! claim-genesis convenience. Funded by the treasury genesis allocation (see
-//! core::genesis::TREASURY_BLINDING) that only this node's own embedded
-//! wallet identity ever spends from - every request runs the same two-party
-//! slate protocol (wallet::slate) the web wallet already uses for
-//! peer-to-peer payments, just with this node playing the sender.
+//! claim-genesis convenience. Funded by the treasury genesis allocation
+//! (see core::genesis::TREASURY_OUTPUT) that only this node's own embedded
+//! wallet identity ever spends from - every request runs the same
+//! two-party slate protocol (wallet::slate) the web wallet already uses
+//! for peer-to-peer payments, just with this node playing the sender.
+//! Unlike earlier revisions, the treasury secret is supplied at runtime via
+//! HAZE_TREASURY_BLINDING (see wallet::planner::treasury_blinding_from_env)
+//! rather than committed to source.
 use std::sync::Mutex;
 use std::collections::HashSet;
 use serde::{Serialize, Deserialize};
 use warp::http::StatusCode;
 
 use crate::core::chain::ChainState;
-use crate::core::genesis::{TREASURY_BLINDING, TREASURY_ALLOCATION};
+use crate::core::genesis::TREASURY_ALLOCATION;
 use crate::core::mempool::Mempool;
 use crate::core::transaction::{Transaction, Input, Output, TxKernel};
 use crate::crypto::pedersen::Commitment;
@@ -32,18 +35,38 @@ pub struct FaucetState {
     /// Only one faucet payout in flight at a time - simpler than juggling
     /// concurrent PendingSlates, and faucet requests aren't latency-sensitive.
     pending: Mutex<Option<PendingSlate>>,
+    /// False when HAZE_TREASURY_BLINDING wasn't set (or didn't match the
+    /// real genesis treasury output) at startup - the rest of the API keeps
+    /// running normally, only /v1/faucet is unavailable (see
+    /// handle_faucet_request).
+    enabled: bool,
 }
 
 impl FaucetState {
     pub fn new() -> Self {
         let keystore = Keystore::generate();
         let mut store = WalletStore::default();
-        let commitment = Commitment::new(TREASURY_ALLOCATION, curve25519_dalek_ng::scalar::Scalar::from(TREASURY_BLINDING));
+
+        let secret = match planner::treasury_blinding_from_env() {
+            Some(s) => s,
+            None => {
+                println!("Note: HAZE_TREASURY_BLINDING not set - devnet faucet disabled on this node (everything else runs normally).");
+                return Self { keystore: Mutex::new(keystore), store: Mutex::new(store), pending: Mutex::new(None), enabled: false };
+            }
+        };
+
+        let commitment = Commitment::new(TREASURY_ALLOCATION, secret);
+        if commitment != crate::core::genesis::TREASURY_OUTPUT.commitment() {
+            println!("Warning: HAZE_TREASURY_BLINDING does not match the real genesis treasury output - devnet faucet disabled on this node.");
+            return Self { keystore: Mutex::new(keystore), store: Mutex::new(store), pending: Mutex::new(None), enabled: false };
+        }
+
         store.add_output(FAUCET_INDEX, TREASURY_ALLOCATION, commitment, OutputStatus::Confirmed);
         Self {
             keystore: Mutex::new(keystore),
             store: Mutex::new(store),
             pending: Mutex::new(None),
+            enabled: true,
         }
     }
 
@@ -129,6 +152,10 @@ pub async fn handle_faucet_request(
     faucet: std::sync::Arc<FaucetState>,
     chain: std::sync::Arc<Mutex<ChainState>>,
 ) -> Result<Box<dyn warp::Reply>, std::convert::Infallible> {
+    if !faucet.enabled {
+        return Ok(error_reply(StatusCode::SERVICE_UNAVAILABLE, "faucet is not configured on this node (HAZE_TREASURY_BLINDING unset)"));
+    }
+
     if req.amount == 0 || req.amount > MAX_FAUCET_AMOUNT {
         return Ok(error_reply(StatusCode::BAD_REQUEST, format!("amount must be between 1 and {}", MAX_FAUCET_AMOUNT)));
     }

@@ -5,18 +5,11 @@
 //! outright by ChainState::apply_linear_block - the same call site that
 //! already enforces chain_id and range proofs.
 //!
-//! KNOWN, DISCLOSED GAP this does NOT solve: the blinding factors backing
-//! these tranches (core::genesis::{TEAM,INVESTOR}_BLINDING_TRANCHES) are
-//! small, hardcoded integers committed to this public repo - fine for
-//! devnet/testnet (same convention as the genesis claim blinding=42), but
-//! before any of this holds real value those blindings must be replaced
-//! with genuinely random secrets generated and held privately by whoever
-//! actually controls team/investor funds. This module only enforces WHEN a
-//! tranche can be spent, not WHO can spend it - a timelock on a public key
-//! only delays a theft, it doesn't prevent one.
+//! This module only enforces WHEN a tranche can be spent, not WHO can spend
+//! it - see core::genesis's module doc comment for how the blinding
+//! secrets backing these tranches are kept out of this repo entirely.
 use crate::core::transaction::Input;
 use crate::crypto::pedersen::Commitment;
-use curve25519_dalek_ng::scalar::Scalar;
 
 /// 365 days at this chain's 10s block time (see core::genesis's halving
 /// schedule for the same block-time assumption).
@@ -36,17 +29,15 @@ pub fn tranche_unlock_height(tranche_index: usize) -> u64 {
 /// not locked, see core::genesis). Recomputed on demand rather than cached:
 /// it's only ~14 curve operations and this only runs once per block apply.
 pub fn locked_genesis_outputs() -> Vec<(Commitment, u64)> {
-    let team = &super::genesis::TEAM_BLINDING_TRANCHES;
-    let investor = &super::genesis::INVESTOR_BLINDING_TRANCHES;
+    let team = &super::genesis::TEAM_TRANCHES;
+    let investor = &super::genesis::INVESTOR_TRANCHES;
     let mut locked = Vec::with_capacity(team.len() + investor.len());
 
-    for (i, blinding) in team.iter().enumerate() {
-        let commitment = Commitment::new(super::genesis::TEAM_TRANCHE_VALUE, Scalar::from(*blinding));
-        locked.push((commitment, tranche_unlock_height(i)));
+    for (i, data) in team.iter().enumerate() {
+        locked.push((data.commitment(), tranche_unlock_height(i)));
     }
-    for (i, blinding) in investor.iter().enumerate() {
-        let commitment = Commitment::new(super::genesis::INVESTOR_TRANCHE_VALUE, Scalar::from(*blinding));
-        locked.push((commitment, tranche_unlock_height(i)));
+    for (i, data) in investor.iter().enumerate() {
+        locked.push((data.commitment(), tranche_unlock_height(i)));
     }
 
     locked
@@ -81,7 +72,7 @@ mod tests {
         let locked = locked_genesis_outputs();
         assert_eq!(
             locked.len(),
-            super::super::genesis::TEAM_BLINDING_TRANCHES.len() + super::super::genesis::INVESTOR_BLINDING_TRANCHES.len()
+            super::super::genesis::TEAM_TRANCHES.len() + super::super::genesis::INVESTOR_TRANCHES.len()
         );
     }
 

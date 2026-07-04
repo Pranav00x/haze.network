@@ -312,14 +312,15 @@ mod tests {
     /// Builds a chain with real prunable history: the real genesis block
     /// (its special GENESIS_TOTAL_MINTED reward doesn't match an arbitrary
     /// test value, so it's reused as-is rather than faked), then spends its
-    /// well-known treasury-allocation output at height 1, followed by enough
-    /// further single-input-single-output blocks (each spending the previous
-    /// one's output and growing the value by the per-height block reward,
-    /// matching the per-block reward apply_linear_block's balance check
-    /// expects at any height > 0) to push that height-1 spend well past
-    /// TEST_HORIZON.
+    /// well-known validator-stake output (blinding=42, the one genesis
+    /// output intentionally left public - see core::genesis) at height 1,
+    /// followed by enough further single-input-single-output blocks (each
+    /// spending the previous one's output and growing the value by the
+    /// per-height block reward, matching the per-block reward
+    /// apply_linear_block's balance check expects at any height > 0) to
+    /// push that height-1 spend well past TEST_HORIZON.
     fn build_test_chain() -> ChainState {
-        use crate::core::genesis::{genesis_block, TREASURY_BLINDING, TREASURY_ALLOCATION};
+        use crate::core::genesis::genesis_block;
         use crate::core::block::block_reward_at;
 
         let mut chain = ChainState::new();
@@ -327,9 +328,9 @@ mod tests {
         assert!(chain.apply_block(&genesis).is_applied());
 
         let mut prev_hash = genesis.header.hash();
-        let mut r_prev = Scalar::from(TREASURY_BLINDING);
-        let mut c_prev = Commitment::new(TREASURY_ALLOCATION, r_prev);
-        let mut value = TREASURY_ALLOCATION;
+        let mut r_prev = Scalar::from(42u64);
+        let mut c_prev = Commitment::new(1_000_000, r_prev);
+        let mut value = 1_000_000u64;
         for h in 1..=(TEST_HORIZON + 10) {
             let next_value = value + block_reward_at(h);
             let (block, r_next, c_next) = make_block(h, prev_hash, Some((c_prev, r_prev)), next_value);
