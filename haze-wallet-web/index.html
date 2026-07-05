@@ -1041,6 +1041,13 @@ function renderDashboard() {
           <button class="btn-primary" id="transfer-name-btn">Transfer</button>
           <div id="transfer-name-message"></div>
         </div>
+
+        <div class="panel">
+          <h2>Names I own</h2>
+          <div class="sub">Looks up every name registered to your identity pubkey directly on-chain - useful after restoring a wallet from its recovery phrase, since restore recovers your funds and your identity key but has no local memory of which names you registered.</div>
+          <button class="btn-primary" id="find-my-names-btn">Find my names</button>
+          <div id="find-my-names-result"></div>
+        </div>
       </div>
 
       <div class="tab-panel" data-tab="assets">
@@ -1074,6 +1081,13 @@ function renderDashboard() {
           <input type="text" id="transfer-asset-new-owner-input" placeholder="hex pubkey" autocomplete="off" />
           <button class="btn-primary" id="transfer-asset-btn">Transfer</button>
           <div id="transfer-asset-message"></div>
+        </div>
+
+        <div class="panel">
+          <h2>Assets I own</h2>
+          <div class="sub">Looks up every asset minted to your identity pubkey directly on-chain - same rediscovery purpose as "Names I own" on the Names tab.</div>
+          <button class="btn-primary" id="find-my-assets-btn">Find my assets</button>
+          <div id="find-my-assets-result"></div>
         </div>
       </div>
 
@@ -1368,6 +1382,23 @@ function renderDashboard() {
     }
   });
 
+  document.getElementById("find-my-names-btn").addEventListener("click", async () => {
+    const resultEl = document.getElementById("find-my-names-result");
+    resultEl.innerHTML = `<div class="message">Searching&hellip;</div>`;
+    try {
+      const pubkeyHex = wallet_identity_pubkey_hex(sessionKeystoreBytes);
+      const records = await fetchJson("/v1/names?owner=" + encodeURIComponent(pubkeyHex) + "&limit=500");
+      if (records.length === 0) {
+        resultEl.innerHTML = `<div class="message">No names found for your identity pubkey.</div>`;
+        return;
+      }
+      const list = records.map(r => `"${displayName(r.name)}" (registered at block ${r.registered_at_block})`).join("<br>");
+      resultEl.innerHTML = `<div class="message success">${list}</div>`;
+    } catch (e) {
+      resultEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+    }
+  });
+
   // ---------- Haze Asset Registry (NFTs) ----------
   try {
     const assetPubkeyHex = wallet_identity_pubkey_hex(sessionKeystoreBytes);
@@ -1476,6 +1507,23 @@ function renderDashboard() {
       }, { isConfirmed: (record) => bytesToHex(record.owner_pubkey) === newOwnerHex.toLowerCase() });
     } catch (e) {
       messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+    }
+  });
+
+  document.getElementById("find-my-assets-btn").addEventListener("click", async () => {
+    const resultEl = document.getElementById("find-my-assets-result");
+    resultEl.innerHTML = `<div class="message">Searching&hellip;</div>`;
+    try {
+      const pubkeyHex = wallet_identity_pubkey_hex(sessionKeystoreBytes);
+      const records = await fetchJson("/v1/assets?owner=" + encodeURIComponent(pubkeyHex) + "&limit=500");
+      if (records.length === 0) {
+        resultEl.innerHTML = `<div class="message">No assets found for your identity pubkey.</div>`;
+        return;
+      }
+      const list = records.map(r => `"${r.asset_id}" (minted at block ${r.minted_at_block})`).join("<br>");
+      resultEl.innerHTML = `<div class="message success">${list}</div>`;
+    } catch (e) {
+      resultEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
     }
   });
 

@@ -202,6 +202,16 @@ pub async fn handle_resolve_name(
 pub struct NamesListQuery {
     #[serde(default)]
     pub limit: Option<usize>,
+    /// Filters to names owned by this identity pubkey (hex) - lets a wallet
+    /// restored from only its BIP39 phrase rediscover which names it
+    /// registered. Restore-from-phrase recovers funds (every output carries
+    /// a recoverable note - see wallet::note) but has no way to recover
+    /// *which* names it registered, since a NameRecord is a public registry
+    /// entry keyed by the name string, not something derived from the seed
+    /// - this filter is the other half: the identity_key itself IS
+    /// recoverable from the phrase, so querying by it closes the gap.
+    #[serde(default)]
+    pub owner: Option<String>,
 }
 
 pub async fn handle_list_names(
@@ -209,9 +219,18 @@ pub async fn handle_list_names(
     chain: Arc<Mutex<ChainState>>,
 ) -> Result<Box<dyn warp::Reply>, std::convert::Infallible> {
     let limit = query.limit.unwrap_or(50).min(500);
+    let owner_filter = match &query.owner {
+        Some(hex) => match Commitment::from_hex(hex) {
+            Some(c) => Some(c),
+            None => return Ok(error_reply(StatusCode::BAD_REQUEST, "invalid owner pubkey hex")),
+        },
+        None => None,
+    };
     let mut records: Vec<NameRecord> = {
         let c = chain.lock().unwrap();
-        c.name_registry.values().cloned().collect()
+        c.name_registry.values()
+            .filter(|r| owner_filter.map(|o| r.owner_pubkey == o).unwrap_or(true))
+            .cloned().collect()
     };
     records.sort_by(|a, b| b.registered_at_block.cmp(&a.registered_at_block).then(a.name.cmp(&b.name)));
     records.truncate(limit);

@@ -10,6 +10,7 @@ use warp::http::StatusCode;
 use crate::core::chain::ChainState;
 use crate::core::mempool::Mempool;
 use crate::core::assets::{MintAssetOp, TransferAssetOp, AssetRecord};
+use crate::crypto::pedersen::Commitment;
 use crate::p2p::server::P2pServer;
 use crate::p2p::message::P2pMessage;
 
@@ -118,6 +119,13 @@ pub async fn handle_resolve_asset(
 pub struct AssetsListQuery {
     #[serde(default)]
     pub limit: Option<usize>,
+    /// Filters to assets owned by this identity pubkey (hex) - same
+    /// rediscovery purpose as NamesListQuery::owner (see its doc comment):
+    /// restore-from-phrase recovers the identity_key itself, so a restored
+    /// wallet can ask the chain directly which assets it owns instead of
+    /// needing to remember every asset_id it ever minted.
+    #[serde(default)]
+    pub owner: Option<String>,
 }
 
 pub async fn handle_list_assets(
@@ -125,9 +133,18 @@ pub async fn handle_list_assets(
     chain: Arc<Mutex<ChainState>>,
 ) -> Result<Box<dyn warp::Reply>, std::convert::Infallible> {
     let limit = query.limit.unwrap_or(50).min(500);
+    let owner_filter = match &query.owner {
+        Some(hex) => match Commitment::from_hex(hex) {
+            Some(c) => Some(c),
+            None => return Ok(error_reply(StatusCode::BAD_REQUEST, "invalid owner pubkey hex")),
+        },
+        None => None,
+    };
     let mut records: Vec<AssetRecord> = {
         let c = chain.lock().unwrap();
-        c.asset_registry.values().cloned().collect()
+        c.asset_registry.values()
+            .filter(|r| owner_filter.map(|o| r.owner_pubkey == o).unwrap_or(true))
+            .cloned().collect()
     };
     records.sort_by(|a, b| b.minted_at_block.cmp(&a.minted_at_block).then(a.asset_id.cmp(&b.asset_id)));
     records.truncate(limit);
