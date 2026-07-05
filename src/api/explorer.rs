@@ -424,6 +424,16 @@ const EXPLORER_HTML: &str = r#"<!DOCTYPE html>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,340..600&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script>
+  // Applied synchronously, before CSS paints, to avoid a flash of the wrong
+  // theme on load - a saved choice always wins; otherwise falls back to the
+  // OS preference.
+  (function () {
+    var saved = localStorage.getItem("hazeTheme");
+    var theme = saved || (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+    document.documentElement.setAttribute("data-theme", theme);
+  })();
+</script>
 <style>
   :root {
     color-scheme: dark;
@@ -439,17 +449,45 @@ const EXPLORER_HTML: &str = r#"<!DOCTYPE html>
     --amber-dim: oklch(0.78 0.15 70 / 0.16);
     --violet: oklch(0.72 0.09 300);
     --ok: oklch(0.75 0.14 155);
+    --danger: oklch(0.7 0.16 25);
+    --glow-1: oklch(0.26 0.03 296 / 0.55);
+    --glow-2: oklch(0.22 0.03 70 / 0.12);
+    --panel-gradient-top: oklch(0.22 0.02 292);
     --font-display: "Fraunces", serif;
     --font-body: "Public Sans", sans-serif;
     --font-mono: "IBM Plex Mono", monospace;
+  }
+
+  /* Same fog/mist language, inverted for a light surface - fog goes from
+     near-black to near-white, ink goes from near-white to near-black, mist/
+     amber/violet/ok/danger keep their hue but deepen slightly for contrast
+     against a light background. */
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --fog-0: oklch(0.98 0.006 292);
+    --fog-1: oklch(0.955 0.008 292);
+    --fog-2: oklch(0.90 0.01 292);
+    --fog-3: oklch(0.82 0.014 292);
+    --mist: oklch(0.52 0.09 285);
+    --ink: oklch(0.22 0.014 292);
+    --ink-dim: oklch(0.22 0.014 292 / 0.68);
+    --ink-faint: oklch(0.22 0.014 292 / 0.42);
+    --amber: oklch(0.58 0.15 70);
+    --amber-dim: oklch(0.58 0.15 70 / 0.12);
+    --violet: oklch(0.55 0.11 300);
+    --ok: oklch(0.52 0.14 155);
+    --danger: oklch(0.55 0.18 25);
+    --glow-1: oklch(0.9 0.02 296 / 0.5);
+    --glow-2: oklch(0.92 0.03 70 / 0.35);
+    --panel-gradient-top: oklch(0.93 0.012 292);
   }
 
   * { box-sizing: border-box; }
 
   body {
     background:
-      radial-gradient(ellipse 900px 500px at 12% -10%, oklch(0.26 0.03 296 / 0.55), transparent),
-      radial-gradient(ellipse 700px 500px at 100% 10%, oklch(0.22 0.03 70 / 0.12), transparent),
+      radial-gradient(ellipse 900px 500px at 12% -10%, var(--glow-1), transparent),
+      radial-gradient(ellipse 700px 500px at 100% 10%, var(--glow-2), transparent),
       var(--fog-0);
     color: var(--ink);
     font-family: var(--font-body);
@@ -526,6 +564,28 @@ const EXPLORER_HTML: &str = r#"<!DOCTYPE html>
   }
   .search-form button:hover { color: var(--amber); }
 
+  .topbar-right { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+
+  .theme-toggle {
+    font-family: var(--font-mono);
+    color: var(--ink-faint);
+    background: var(--fog-1);
+    border: 1px solid var(--fog-3);
+    border-radius: 3px;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: border-color 0.2s ease, color 0.2s ease;
+  }
+  .theme-toggle:hover { border-color: var(--mist); color: var(--ink-dim); }
+  .theme-toggle svg { width: 15px; height: 15px; }
+  .theme-toggle .icon-moon { display: none; }
+  :root[data-theme="light"] .theme-toggle .icon-sun { display: none; }
+  :root[data-theme="light"] .theme-toggle .icon-moon { display: block; }
+
   /* ---------- Stat row (asymmetric, not a repeated card grid) ---------- */
   .stat-row {
     display: grid;
@@ -571,7 +631,7 @@ const EXPLORER_HTML: &str = r#"<!DOCTYPE html>
   .search-result > div { overflow: hidden; }
   .search-result-inner {
     border: 1px solid var(--amber-dim);
-    background: linear-gradient(180deg, oklch(0.22 0.02 292), var(--fog-1));
+    background: linear-gradient(180deg, var(--panel-gradient-top), var(--fog-1));
     border-radius: 4px;
     padding: 18px 22px;
   }
@@ -598,7 +658,7 @@ const EXPLORER_HTML: &str = r#"<!DOCTYPE html>
     align-items: baseline;
     gap: 8px;
   }
-  .panel h2 .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); display: inline-block; box-shadow: 0 0 0 3px oklch(0.75 0.14 155 / 0.15); }
+  .panel h2 .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); display: inline-block; box-shadow: 0 0 0 3px color-mix(in oklch, var(--ok) 15%, transparent); }
 
   .row-list { border-top: 1px solid var(--fog-2); }
   .row {
@@ -659,10 +719,16 @@ const EXPLORER_HTML: &str = r#"<!DOCTYPE html>
       <span class="brand-name">Haze</span>
       <span class="brand-tag">explorer</span>
     </div>
-    <form class="search-form" id="search-form">
-      <input id="search-input" type="text" placeholder="Block height, block hash, or transaction / commitment hash" autocomplete="off" />
-      <button type="submit" aria-label="Search">&#8594;</button>
-    </form>
+    <div class="topbar-right">
+      <button class="theme-toggle" id="theme-toggle" title="Toggle light / dark mode" aria-label="Toggle light / dark mode">
+        <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path></svg>
+        <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+      </button>
+      <form class="search-form" id="search-form">
+        <input id="search-input" type="text" placeholder="Block height, block hash, or transaction / commitment hash" autocomplete="off" />
+        <button type="submit" aria-label="Search">&#8594;</button>
+      </form>
+    </div>
   </header>
 
   <section class="stat-row">
@@ -715,6 +781,13 @@ const timeAgo = (unixSecs) => {
   if (diff < 3600) return Math.floor(diff / 60) + "m ago";
   return Math.floor(diff / 3600) + "h ago";
 };
+
+document.getElementById("theme-toggle").addEventListener("click", () => {
+  const current = document.documentElement.getAttribute("data-theme");
+  const next = current === "light" ? "dark" : "light";
+  document.documentElement.setAttribute("data-theme", next);
+  localStorage.setItem("hazeTheme", next);
+});
 
 async function fetchJson(url) {
   const res = await fetch(url);
