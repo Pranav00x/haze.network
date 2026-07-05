@@ -54,6 +54,12 @@ class SecureStorage(context: Context) {
 
     fun loadNodeUrl(): String = prefs.getString(KEY_NODE_URL, null) ?: DEFAULT_NODE_URL
 
+    fun saveExplorerUrl(url: String) {
+        prefs.edit().putString(KEY_EXPLORER_URL, url).apply()
+    }
+
+    fun loadExplorerUrl(): String = prefs.getString(KEY_EXPLORER_URL, null) ?: DEFAULT_EXPLORER_URL
+
     fun saveClaimedName(name: String?) {
         prefs.edit().putString(KEY_NAME, name).apply()
     }
@@ -75,8 +81,13 @@ class SecureStorage(context: Context) {
         private const val KEY_KEYSTORE = "keystore_bytes"
         private const val KEY_STORE = "store_bytes"
         private const val KEY_NODE_URL = "node_url"
+        private const val KEY_EXPLORER_URL = "explorer_url"
         private const val KEY_NAME = "claimed_name"
         private const val KEY_ACTIVITY = "activity_log"
         const val DEFAULT_NODE_URL = "https://haze-b3l9.onrender.com"
+        // No production explorer URL has shipped yet - left blank rather than
+        // guessed, so the Explorer button prompts a one-time setup instead of
+        // silently pointing somewhere wrong.
+        const val DEFAULT_EXPLORER_URL = ""
     }
 }

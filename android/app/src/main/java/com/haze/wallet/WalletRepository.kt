@@ -17,6 +17,7 @@ data class WalletUiState(
     val pendingBalance: Long = 0,
     val claimedName: String? = null,
     val nodeUrl: String = SecureStorage.DEFAULT_NODE_URL,
+    val explorerUrl: String = SecureStorage.DEFAULT_EXPLORER_URL,
     val activity: List<ActivityEntry> = emptyList(),
     val busy: Boolean = false,
     val message: String? = null,
@@ -41,6 +42,7 @@ class WalletRepository(private val storage: SecureStorage) {
             hasWallet = keystoreBytes != null,
             claimedName = storage.loadClaimedName(),
             nodeUrl = storage.loadNodeUrl(),
+            explorerUrl = storage.loadExplorerUrl(),
             activity = readActivity(),
         )
     )
@@ -87,6 +89,11 @@ class WalletRepository(private val storage: SecureStorage) {
         _state.update { it.copy(nodeUrl = url) }
     }
 
+    fun setExplorerUrl(url: String) {
+        storage.saveExplorerUrl(url)
+        _state.update { it.copy(explorerUrl = url) }
+    }
+
     // ---------------- wallet creation / restore ----------------
 
     suspend fun createWallet(): String = withContext(Dispatchers.Default) {
@@ -117,7 +124,7 @@ class WalletRepository(private val storage: SecureStorage) {
         storage.wipe()
         keystoreBytes = null
         storeBytes = walletStoreNew()
-        _state.value = WalletUiState(nodeUrl = storage.loadNodeUrl())
+        _state.value = WalletUiState(nodeUrl = storage.loadNodeUrl(), explorerUrl = storage.loadExplorerUrl())
     }
 
     // ---------------- balance ----------------

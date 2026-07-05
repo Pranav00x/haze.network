@@ -1,9 +1,15 @@
 package com.haze.wallet
 
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.browser.customtabs.CustomTabColorSchemeParams
+import androidx.browser.customtabs.CustomTabsIntent
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -13,14 +19,20 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.haze.wallet.ui.theme.HazeNavItem
+import com.haze.wallet.ui.theme.HazeGlassBottomBar
+import com.haze.wallet.ui.theme.HazeTheme
+import com.haze.wallet.ui.theme.LocalHazeColors
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -28,8 +40,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val repo = WalletRepository(SecureStorage(applicationContext))
         setContent {
-            MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
+            HazeTheme {
+                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     HazeApp(repo)
                 }
             }
@@ -37,22 +49,23 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private data class NavItem(val route: String, val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector)
-
-private val navItems = listOf(
-    NavItem("wallet", "Wallet", Icons.Filled.Home),
-    NavItem("send", "Send", Icons.Filled.Send),
-    NavItem("receive", "Receive", Icons.Filled.CallReceived),
-    NavItem("names", "Names", Icons.Filled.AlternateEmail),
-    NavItem("history", "History", Icons.Filled.History),
-    NavItem("more", "More", Icons.Filled.MoreHoriz),
-)
+private fun openExplorer(context: android.content.Context, url: String, toolbarColor: Int) {
+    if (url.isBlank()) return
+    val params = CustomTabColorSchemeParams.Builder().setToolbarColor(toolbarColor).build()
+    CustomTabsIntent.Builder()
+        .setDefaultColorSchemeParams(params)
+        .build()
+        .launchUrl(context, Uri.parse(url))
+}
 
 @Composable
 fun HazeApp(repo: WalletRepository) {
     val state by repo.state.collectAsState()
     val scope = rememberCoroutineScope()
     val navController = rememberNavController()
+    val context = LocalContext.current
+    val hazeColors = LocalHazeColors.current
+    val surfaceColor = MaterialTheme.colorScheme.surface
 
     if (!state.hasWallet) {
         OnboardingFlow(repo)
@@ -63,20 +76,44 @@ fun HazeApp(repo: WalletRepository) {
         scope.launch { repo.refreshBalance() }
     }
 
+    val navItems = remember(state.explorerUrl) {
+        listOf(
+            HazeNavItem("wallet", "Wallet", Icons.Filled.Home, route = "wallet"),
+            HazeNavItem("send", "Send", Icons.Filled.Send, route = "send"),
+            HazeNavItem("receive", "Receive", Icons.Filled.CallReceived, route = "receive"),
+            HazeNavItem("names", "Names", Icons.Filled.AlternateEmail, route = "names"),
+            HazeNavItem("history", "History", Icons.Filled.History, route = "history"),
+            HazeNavItem(
+                "explorer", "Explorer", Icons.Filled.Explore,
+                onAction = {
+                    if (state.explorerUrl.isBlank()) {
+                        navController.navigate("more") { launchSingleTop = true }
+                    } else {
+                        openExplorer(context, state.explorerUrl, surfaceColor.toArgb())
+                    }
+                },
+            ),
+            HazeNavItem("more", "More", Icons.Filled.MoreHoriz, route = "more"),
+        )
+    }
+
     Scaffold(
+        containerColor = androidx.compose.ui.graphics.Color.Transparent,
+        modifier = Modifier.background(
+            Brush.radialGradient(
+                colors = listOf(hazeColors.glow1.copy(alpha = if (hazeColors.isDark) 0.5f else 0.7f), androidx.compose.ui.graphics.Color.Transparent),
+                center = Offset(0.1f, 0f),
+                radius = 900f,
+            ),
+        ),
         bottomBar = {
             val backStackEntry by navController.currentBackStackEntryAsState()
             val currentRoute = backStackEntry?.destination?.route
-            NavigationBar {
-                navItems.forEach { item ->
-                    NavigationBarItem(
-                        selected = currentRoute == item.route,
-                        onClick = { navController.navigate(item.route) { launchSingleTop = true } },
-                        icon = { Icon(item.icon, contentDescription = item.label) },
-                        label = { Text(item.label) },
-                    )
-                }
-            }
+            HazeGlassBottomBar(
+                items = navItems,
+                currentRoute = currentRoute,
+                onNavigate = { route -> navController.navigate(route) { launchSingleTop = true } },
+            )
         }
     ) { padding ->
         NavHost(navController = navController, startDestination = "wallet", modifier = Modifier.padding(padding)) {
@@ -172,17 +209,32 @@ private fun WalletHomeScreen(repo: WalletRepository) {
     val scope = rememberCoroutineScope()
     var faucetMessage by remember { mutableStateOf<String?>(null) }
 
+    val hazeColors = com.haze.wallet.ui.theme.LocalHazeColors.current
+
     Column(modifier = Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState())) {
-        Text(state.claimedName?.let { "$it.haze" } ?: "Haze Wallet", style = MaterialTheme.typography.titleMedium)
+        Text(
+            state.claimedName?.let { "$it.haze" } ?: "Haze Wallet",
+            style = MaterialTheme.typography.titleMedium,
+            color = if (state.claimedName != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
+        )
         Spacer(Modifier.height(16.dp))
-        Row {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("CONFIRMED", style = MaterialTheme.typography.labelSmall)
-                Text("${state.confirmedBalance}", style = MaterialTheme.typography.displaySmall)
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text("PENDING", style = MaterialTheme.typography.labelSmall)
-                Text("${state.pendingBalance}", style = MaterialTheme.typography.displaySmall)
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = hazeColors.cardVeil.copy(alpha = if (hazeColors.isDark) 0.5f else 0.7f),
+            border = BorderStroke(1.dp, hazeColors.hairline),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(modifier = Modifier.padding(20.dp)) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("CONFIRMED", style = MaterialTheme.typography.labelSmall, color = hazeColors.inkFaint)
+                    Spacer(Modifier.height(4.dp))
+                    Text("${state.confirmedBalance}", style = MaterialTheme.typography.displaySmall)
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("PENDING", style = MaterialTheme.typography.labelSmall, color = hazeColors.inkFaint)
+                    Spacer(Modifier.height(4.dp))
+                    Text("${state.pendingBalance}", style = MaterialTheme.typography.displaySmall, color = hazeColors.inkFaint)
+                }
             }
         }
         Spacer(Modifier.height(24.dp))
@@ -384,6 +436,7 @@ private fun MoreScreen(repo: WalletRepository) {
     val state by repo.state.collectAsState()
     val scope = rememberCoroutineScope()
     var nodeUrlField by remember { mutableStateOf(state.nodeUrl) }
+    var explorerUrlField by remember { mutableStateOf(state.explorerUrl) }
     var stakeMinField by remember { mutableStateOf("1") }
     var stakeMessage by remember { mutableStateOf<String?>(null) }
     var revealedKey by remember { mutableStateOf<String?>(null) }
@@ -395,6 +448,19 @@ private fun MoreScreen(repo: WalletRepository) {
         OutlinedTextField(value = nodeUrlField, onValueChange = { nodeUrlField = it }, label = { Text("Node URL") }, modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(8.dp))
         Button(onClick = { repo.setNodeUrl(nodeUrlField.trim()) }, modifier = Modifier.fillMaxWidth()) { Text("Save node URL") }
+
+        Spacer(Modifier.height(32.dp))
+        Text("Block explorer", style = MaterialTheme.typography.titleLarge)
+        Text("Set once, then reachable from the Explorer button in the bottom bar.")
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = explorerUrlField, onValueChange = { explorerUrlField = it },
+            label = { Text("Explorer URL") },
+            placeholder = { Text("https://…") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+        Button(onClick = { repo.setExplorerUrl(explorerUrlField.trim()) }, modifier = Modifier.fillMaxWidth()) { Text("Save explorer URL") }
 
         Spacer(Modifier.height(32.dp))
         Text("Become a validator", style = MaterialTheme.typography.titleLarge)

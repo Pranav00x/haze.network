@@ -68,4 +68,8 @@ dependencies {
     // (Android Keystore-backed) - mirrors the web wallet's password-derived
     // AES-GCM encryption of the same bytes before persisting.
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
+
+    // Chrome Custom Tabs, for opening the block explorer in a themed
+    // in-app browser tab instead of a jarring hand-off to a separate app.
+    implementation("androidx.browser:browser:1.8.0")
 }
