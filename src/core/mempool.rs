@@ -26,10 +26,48 @@ pub const MAX_TXS_PER_BLOCK: usize = 50;
 /// own minimum relay fee. A malicious proposer assembling their own block
 /// could still include a below-floor transaction; this only stops one from
 /// entering an honest node's mempool (and thus its own future blocks).
+///
+/// Also doubles as the floor in `required_fee` below, so a transaction too
+/// small to be priced meaningfully by size alone (a handful of bytes) still
+/// can't get in for next to nothing.
 pub const MIN_FEE: u64 = 5;
+
+/// Fee charged per 1,000 bytes of a transaction's bincode-serialized size
+/// (inputs + outputs + kernels), Monero-style - bigger transactions
+/// (more inputs, more outputs) cost proportionally more, instead of every
+/// transaction paying the same flat amount regardless of the block space it
+/// actually consumes.
+///
+/// Calibrated against a real 1-input/1-output send (measured via
+/// `bincode::serialized_size` on a `wallet::planner::plan_send`-produced
+/// transaction: 952 bytes - 40 for the input, 768 for the single Output
+/// (dominated by its bulletproofs range proof), 120 for the kernel, plus
+/// bincode's own Vec length prefixes) so that the common case still costs
+/// the same 5 the old flat MIN_FEE charged: `ceil(5 * 952 / 1000) == 5`.
+/// Existing testers sending a typical single-input transaction see no cost
+/// change; only larger/multi-input transactions pay more.
+pub const FEE_PER_KB: u64 = 5;
+
+/// The reference transaction size `suggested_fee` (below) is calibrated
+/// against - a single-input, single-output send, the smallest realistic
+/// real transaction. Not used for enforcement (that always measures the
+/// real transaction via `required_fee`); only for advertising a single
+/// advisory number to wallets that haven't built their real transaction yet.
+const REFERENCE_TX_SIZE_BYTES: u64 = 952;
 
 fn tx_fee(tx: &Transaction) -> u64 {
     tx.kernels.iter().map(|k| k.fee).sum()
+}
+
+/// The fee a transaction must pay to be accepted into the mempool: its own
+/// serialized size priced at `FEE_PER_KB`, floored at `MIN_FEE` so trivially
+/// small transactions can't be priced near-zero. Same policy tier as
+/// `MIN_FEE`'s doc comment above - enforced only at mempool acceptance, not
+/// a consensus rule re-checked when replaying already-mined blocks.
+pub fn required_fee(tx: &Transaction) -> u64 {
+    let size_bytes = bincode::serialized_size(tx).unwrap_or(0);
+    let size_based_fee = (FEE_PER_KB * size_bytes).div_ceil(1000);
+    size_based_fee.max(MIN_FEE)
 }
 
 fn name_op_fee(op: &RegisterNameOp) -> u64 {
@@ -64,7 +102,7 @@ impl Mempool {
         if !tx.validate() {
             return false;
         }
-        if tx_fee(&tx) < MIN_FEE {
+        if tx_fee(&tx) < required_fee(&tx) {
             return false;
         }
         self.pending_txs.push(tx);
@@ -87,15 +125,20 @@ impl Mempool {
         Some(aggregate_and_cut_through(selected))
     }
 
-    /// A simple congestion-priced fee suggestion for wallets: MIN_FEE while
-    /// the mempool comfortably fits in the next block, rising by one more
-    /// MIN_FEE step for every additional full block's worth of backlog
-    /// beyond that. Self-correcting - once the backlog drains (blocks keep
-    /// coming and clearing it), the suggestion drops back down on its own.
+    /// A congestion-priced fee suggestion for wallets that haven't built
+    /// their real transaction yet: the size-based fee for a reference
+    /// single-input/single-output send while the mempool comfortably fits
+    /// in the next block, rising by one more reference-fee step for every
+    /// additional full block's worth of backlog beyond that. Self-
+    /// correcting - once the backlog drains, the suggestion drops back down
+    /// on its own. A wallet building a larger transaction should still
+    /// price it by its own actual size (see `required_fee`), not just this
+    /// single advisory number.
     pub fn suggested_fee(&self) -> u64 {
         let backlog = self.pending_txs.len();
         let steps = backlog.div_ceil(MAX_TXS_PER_BLOCK).max(1);
-        MIN_FEE * steps as u64
+        let reference_fee = (FEE_PER_KB * REFERENCE_TX_SIZE_BYTES).div_ceil(1000).max(MIN_FEE);
+        reference_fee * steps as u64
     }
 
     /// Number of transactions currently pending in the mempool.
@@ -296,6 +339,46 @@ mod tests {
         let kernel = TxKernel { excess, fee, signature };
 
         Transaction { inputs: vec![input], outputs: vec![output], kernels: vec![kernel] }
+    }
+
+    /// Builds a transaction shaped with `num_inputs` inputs and
+    /// `num_outputs` outputs (one kernel) - doesn't need to be
+    /// cryptographically valid, since `required_fee` only measures
+    /// serialized size, not signatures/proofs. Real range proofs are still
+    /// used for the outputs so the byte sizes measured are realistic, not
+    /// artificially small placeholders.
+    fn make_tx_with_shape(num_inputs: usize, num_outputs: usize) -> Transaction {
+        let mut rng = OsRng;
+        let inputs = (0..num_inputs)
+            .map(|_| Input { commitment: Commitment::new(1000, Scalar::random(&mut rng)) })
+            .collect();
+        let outputs = (0..num_outputs)
+            .map(|_| {
+                let r = Scalar::random(&mut rng);
+                Output { commitment: Commitment::new(1000, r), proof: RangeProof::prove(1000, &r), note: vec![] }
+            })
+            .collect();
+        let excess = Commitment::new(0, Scalar::random(&mut rng));
+        let signature = Signature::sign(&0u64.to_le_bytes(), &Scalar::random(&mut rng));
+        let kernel = TxKernel { excess, fee: 0, signature };
+        Transaction { inputs, outputs, kernels: vec![kernel] }
+    }
+
+    #[test]
+    fn required_fee_scales_with_transaction_size() {
+        let minimal = make_tx_with_shape(1, 1);
+        let larger = make_tx_with_shape(3, 4);
+
+        assert!(
+            bincode::serialized_size(&larger).unwrap() > bincode::serialized_size(&minimal).unwrap(),
+            "the larger-shaped transaction must actually be bigger, or this test proves nothing"
+        );
+
+        let minimal_fee = required_fee(&minimal);
+        let larger_fee = required_fee(&larger);
+
+        assert_eq!(minimal_fee, MIN_FEE, "a single-input/single-output send should cost the same as the old flat fee");
+        assert!(larger_fee > minimal_fee, "a transaction with more inputs/outputs must require a proportionally higher fee");
     }
 
     #[test]

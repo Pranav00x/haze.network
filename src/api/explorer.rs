@@ -165,6 +165,13 @@ pub async fn handle_status(
 pub struct FeeEstimate {
     pub suggested_fee: u64,
     pub min_fee: u64,
+    /// Fee charged per 1,000 bytes of a transaction's serialized size (see
+    /// core::mempool::FEE_PER_KB) - lets a wallet that has already built its
+    /// real transaction (and knows its own byte size) compute the actual
+    /// fee it needs to pay, rather than relying on `suggested_fee` alone,
+    /// which is only calibrated against a reference single-input/single-
+    /// output send and under-quotes anything larger.
+    pub fee_per_kb: u64,
     pub mempool_size: usize,
     pub suggested_name_fee: u64,
     pub min_name_fee: u64,
@@ -186,6 +193,7 @@ pub async fn handle_fee_estimate(
     let estimate = FeeEstimate {
         suggested_fee: mp.suggested_fee(),
         min_fee: crate::core::mempool::MIN_FEE,
+        fee_per_kb: crate::core::mempool::FEE_PER_KB,
         mempool_size: mp.len(),
         suggested_name_fee: mp.suggested_name_fee(),
         min_name_fee: crate::core::registry::NAME_REGISTRATION_FEE,

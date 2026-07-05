@@ -617,10 +617,11 @@ async function fetchJson(path, opts) {
 // rather than blocking entirely on one extra request.
 const FALLBACK_FEE = 5n;
 
-// Fees are congestion-priced (see core::mempool::suggested_fee /
-// GET /v1/fee-estimate) rather than a flat constant - the network gets to
-// say what it actually costs to get into the next block right now, instead
-// of every wallet guessing the same hardcoded number regardless of traffic.
+// Fees are size-based and congestion-priced (see core::mempool::
+// required_fee/suggested_fee, GET /v1/fee-estimate) rather than a flat
+// constant - a transaction pays for the bytes it actually takes up on-chain,
+// and the network gets to say what that costs right now, instead of every
+// wallet guessing the same hardcoded number regardless of size or traffic.
 async function getSuggestedFee() {
   try {
     const estimate = await fetchJson("/v1/fee-estimate");
@@ -1055,7 +1056,7 @@ function renderDashboard() {
       <div class="tab-panel" data-tab="send">
         <div class="panel">
           <h2>Self-pay</h2>
-          <div class="sub">Splits/consolidates your own confirmed UTXOs. Fee adapts to network congestion - <span id="send-fee-note">checking current fee&hellip;</span></div>
+          <div class="sub">Splits/consolidates your own confirmed UTXOs. Fee scales with transaction size and network congestion - <span id="send-fee-note">checking current fee&hellip;</span></div>
           <label>Amount</label>
           <input type="number" id="send-amount" min="1" />
           <button class="btn-primary" id="send-btn">Send</button>
@@ -1064,7 +1065,7 @@ function renderDashboard() {
 
         <div class="panel">
           <h2>Send to a name</h2>
-          <div class="sub">Sends directly to someone's registered .haze name - no copy-pasting slates. Resolves the name, drops the payment request in their inbox automatically, and completes it the moment they accept. Fee adapts to network congestion - <span id="name-send-fee-note">checking current fee&hellip;</span></div>
+          <div class="sub">Sends directly to someone's registered .haze name - no copy-pasting slates. Resolves the name, drops the payment request in their inbox automatically, and completes it the moment they accept. Fee scales with transaction size and network congestion - <span id="name-send-fee-note">checking current fee&hellip;</span></div>
           <label>Recipient's name</label>
           <input type="text" id="name-send-recipient" placeholder="e.g. harshit.haze" autocomplete="off" />
           <div id="name-send-lookup-status" class="keystore-note"></div>

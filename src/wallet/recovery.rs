@@ -136,7 +136,12 @@ mod tests {
         }
 
         let original_balance = store.balance();
-        assert_eq!(original_balance, 1_000 - 5); // amount + change both still ours, only the fee left the wallet
+        // The initial fee guess of 5 may have been auto-corrected upward by
+        // plan_send to match this (1-input/2-output) transaction's real
+        // size - amount + change both still ours, only whatever fee was
+        // actually paid left the wallet.
+        let paid_fee = plan.transaction.kernels[0].fee;
+        assert_eq!(original_balance, 1_000 - paid_fee);
 
         // Everything the chain would publish for this wallet's activity:
         // the funding output (now spent) plus dest/change (still unspent).

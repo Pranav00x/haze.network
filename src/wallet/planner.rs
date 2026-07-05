@@ -3,10 +3,19 @@ use curve25519_dalek_ng::scalar::Scalar;
 use crate::crypto::pedersen::Commitment;
 use crate::crypto::range_proof::RangeProof;
 use crate::crypto::schnorr::Signature;
+use crate::core::mempool::required_fee;
 use crate::core::transaction::{Transaction, Input, Output, TxKernel};
 use super::keystore::Keystore;
 use super::note;
 use super::store::{WalletStore, GENESIS_INDEX, FAUCET_INDEX};
+
+/// Bounds the fee auto-correction loop in `plan_send` - each retry can only
+/// need one more input than the last (a higher fee raises the spend target,
+/// which can require selecting one additional UTXO), so this is generous
+/// against any realistically sized wallet. Purely a defensive backstop
+/// against an unforeseen non-converging case; ordinary sends converge in at
+/// most 2 attempts (build once, bump the fee to match the real size, done).
+const MAX_FEE_FIT_ATTEMPTS: u32 = 16;
 
 /// A single planned output: the wallet-local index that owns it, its commitment,
 /// and its plaintext value (known only to us - never appears on chain).
@@ -92,10 +101,40 @@ pub(crate) fn select_spendable(store: &WalletStore, target: u64) -> Result<Vec<P
 /// broadcasting `transaction` and, only on success, applying `spent_commitments`/
 /// `dest`/`change` to its WalletStore.
 ///
-/// Allocates (and persists, via `keystore.allocate_index`) new output indices
-/// eagerly, exactly as the desktop CLI does, so a crash never reuses a blinding
-/// factor - even if the resulting transaction is never actually broadcast.
+/// `fee` is a starting guess, not the final word: a caller (wallet UI) only
+/// knows a flat advisory number in advance (see core::mempool::suggested_fee),
+/// calibrated against a reference single-input/single-output transaction -
+/// but the actual required fee (core::mempool::required_fee) depends on this
+/// specific transaction's real size, which isn't known until it's built. If
+/// the guess undershoots (e.g. this send produces a change output, making it
+/// bigger than the reference shape), this rebuilds with the corrected fee
+/// automatically rather than handing back a transaction the mempool would
+/// just reject as underpriced. Allocates (and persists, via
+/// `keystore.allocate_index`) new output indices eagerly on every attempt,
+/// exactly as the desktop CLI does, so a crash never reuses a blinding
+/// factor - even if the resulting transaction is never actually broadcast;
+/// indices burned by a discarded earlier attempt are simply skipped, the
+/// same harmless gap tolerance any HD wallet already has to handle.
 pub fn plan_send(keystore: &mut Keystore, store: &WalletStore, amount: u64, fee: u64) -> Result<SendPlan, PlanError> {
+    let mut fee = fee;
+    for _ in 0..MAX_FEE_FIT_ATTEMPTS {
+        let plan = build_send_transaction(keystore, store, amount, fee)?;
+        let required = required_fee(&plan.transaction);
+        if fee >= required {
+            return Ok(plan);
+        }
+        fee = required;
+    }
+    // Practically unreachable (see MAX_FEE_FIT_ATTEMPTS) - only hit if fee
+    // requirements kept climbing faster than they possibly should for a
+    // real wallet's finite UTXO set. Report it as insufficient balance
+    // against the last fee target attempted, the closest existing, honest
+    // description of what went wrong.
+    let target = amount + fee;
+    Err(PlanError::InsufficientBalance { have: store.balance() + store.pending_balance(), need: target })
+}
+
+fn build_send_transaction(keystore: &mut Keystore, store: &WalletStore, amount: u64, fee: u64) -> Result<SendPlan, PlanError> {
     let target = amount + fee;
 
     // 1. Greedily select confirmed, on-chain-verified outputs to cover amount + fee.
@@ -188,9 +227,38 @@ mod tests {
 
         assert!(plan.transaction.validate(), "planned transaction must pass cryptographic validation");
         assert_eq!(plan.dest.2, 100);
-        assert_eq!(plan.change.expect("expected change output").2, 1000 - 100 - 5);
         assert_eq!(plan.spent_commitments.len(), 1);
         assert_eq!(plan.transaction.outputs.len(), 2);
+
+        // A 1-input/2-output transaction is bigger than the reference shape
+        // required_fee's floor is calibrated against, so the initial guess
+        // of 5 must have been auto-corrected upward - and the change output
+        // must reflect whatever the final, actually-paid fee ended up being,
+        // not the original guess.
+        let actual_fee = plan.transaction.kernels[0].fee;
+        assert!(actual_fee >= crate::core::mempool::required_fee(&plan.transaction));
+        assert_eq!(plan.change.expect("expected change output").2, 1000 - 100 - actual_fee);
+    }
+
+    #[test]
+    fn plan_send_auto_corrects_an_undersized_fee_guess_for_a_transaction_with_change() {
+        let mut keystore = Keystore::generate();
+        let mut store = WalletStore::default();
+        seed_store_with_output(&mut keystore, &mut store, 1000);
+
+        // 5 is only enough for the bare 1-input/1-output reference shape;
+        // this send produces change (2 outputs), which is bigger and so
+        // requires more. The transaction returned must actually pay enough
+        // to be accepted by Mempool::add_transaction, not just whatever the
+        // caller originally guessed.
+        let plan = plan_send(&mut keystore, &store, 100, 5).expect("plan should succeed");
+
+        let paid_fee = plan.transaction.kernels[0].fee;
+        assert!(paid_fee > 5, "a 2-output transaction should need more than the bare single-output floor");
+        assert_eq!(paid_fee, crate::core::mempool::required_fee(&plan.transaction), "the final fee should exactly match what this transaction's real size requires");
+
+        let mut mempool = crate::core::mempool::Mempool::new();
+        assert!(mempool.add_transaction(plan.transaction), "the auto-corrected transaction must actually be accepted");
     }
 
     #[test]

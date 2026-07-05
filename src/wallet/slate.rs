@@ -20,15 +20,19 @@ use curve25519_dalek_ng::scalar::Scalar;
 
 use crate::crypto::pedersen::Commitment;
 use crate::crypto::range_proof::RangeProof;
-use crate::crypto::schnorr;
+use crate::crypto::schnorr::{self, Signature};
 
 const WALLET_DIR: &str = "wallet_data";
 const PENDING_SLATE_FILE: &str = "wallet_data/pending_slate.dat";
+use crate::core::mempool::required_fee;
 use crate::core::transaction::{Transaction, Input, Output, TxKernel};
 use super::keystore::Keystore;
 use super::note;
 use super::store::WalletStore;
 use super::planner::{blinding_for, select_spendable, PlanError};
+
+/// Same reasoning as planner::plan_send's MAX_FEE_FIT_ATTEMPTS.
+const MAX_FEE_FIT_ATTEMPTS: u32 = 16;
 
 /// The file two parties exchange. Only ever carries public data (commitments,
 /// range proofs, public nonce/excess points) - secret blinding factors and
@@ -109,12 +113,45 @@ pub enum SlateError {
 /// optional change output, and derives its half of the kernel signature.
 /// Allocates (and persists) any new output index immediately, same
 /// crash-safety convention as plan_send.
+///
+/// `fee` is a starting guess auto-corrected to match the eventual finalized
+/// transaction's real size (see planner::plan_send's doc comment for why -
+/// same underlying problem here). Unlike plan_send, correcting this after
+/// the recipient has already countersigned isn't an option - once agreed,
+/// the fee is baked into both sides' partial signatures and can't be
+/// silently bumped without restarting the whole interactive protocol. But
+/// every output (Input/Output/TxKernel) serializes to the same fixed byte
+/// size regardless of whose commitment it is or what value it hides, so the
+/// finalized transaction's exact size - our own inputs/change plus exactly
+/// one recipient output - is fully knowable before ever contacting the
+/// recipient. This fits the fee against a same-shaped probe transaction
+/// (a placeholder standing in for the not-yet-known recipient output) up
+/// front, so the recipient only ever sees an already-correctly-priced slate.
 pub fn create_slate(
     keystore: &mut Keystore,
     store: &WalletStore,
     amount: u64,
     fee: u64,
 ) -> Result<(Slate, PendingSlate), PlanError> {
+    let mut fee = fee;
+    for _ in 0..MAX_FEE_FIT_ATTEMPTS {
+        let (built_slate, pending, probe_tx) = build_slate(keystore, store, amount, fee)?;
+        let required = required_fee(&probe_tx);
+        if fee >= required {
+            return Ok((built_slate, pending));
+        }
+        fee = required;
+    }
+    let target = amount + fee;
+    Err(PlanError::InsufficientBalance { have: store.balance() + store.pending_balance(), need: target })
+}
+
+fn build_slate(
+    keystore: &mut Keystore,
+    store: &WalletStore,
+    amount: u64,
+    fee: u64,
+) -> Result<(Slate, PendingSlate, Transaction), PlanError> {
     let target = amount + fee;
     let selected = select_spendable(store, target)?;
     let selected_total: u64 = selected.iter().map(|(_, _, value)| value).sum();
@@ -149,6 +186,25 @@ pub fn create_slate(
     let excess_blinding = sum_input_blinding - change_blinding;
     let (nonce, nonce_point) = schnorr::generate_nonce();
 
+    // A same-shaped stand-in for the finalized transaction, built before the
+    // recipient is ever contacted (see this function's doc comment): our
+    // real inputs and change (if any), plus one placeholder output sized
+    // exactly like the recipient's eventual real one - every Output
+    // serializes to the same byte length regardless of whose commitment or
+    // value it carries, so this measures the real final size exactly.
+    let mut probe_outputs: Vec<Output> = sender_output.iter().cloned().collect();
+    let placeholder_note = note::seal(&keystore.note_key(), 0, 0);
+    probe_outputs.push(Output {
+        commitment: Commitment::new(amount, Scalar::zero()),
+        proof: RangeProof::prove(amount, &Scalar::zero()),
+        note: placeholder_note,
+    });
+    let probe_tx = Transaction {
+        inputs: inputs.clone(),
+        outputs: probe_outputs,
+        kernels: vec![TxKernel { excess: Commitment::new(0, excess_blinding), fee, signature: Signature { s: Scalar::zero(), e: Scalar::zero() } }],
+    };
+
     let slate = Slate {
         amount,
         fee,
@@ -171,7 +227,7 @@ pub fn create_slate(
         nonce_point: Commitment(nonce_point),
     };
 
-    Ok((slate, pending))
+    Ok((slate, pending, probe_tx))
 }
 
 /// Receiver step: builds an output for `slate.amount`, derives its half of the
@@ -271,6 +327,31 @@ mod tests {
         assert!(tx.validate(), "two-party transaction with change must validate");
         assert_eq!(tx.outputs.len(), 2); // sender's change + receiver's output
         assert_eq!(tx.inputs.len(), 1);
+    }
+
+    #[test]
+    fn create_slate_auto_corrects_an_undersized_fee_guess_for_a_transaction_with_change() {
+        let mut sender_keystore = Keystore::generate();
+        let mut sender_store = WalletStore::default();
+        fund(&mut sender_keystore, &mut sender_store, 1000);
+
+        // 5 is only enough for the bare 1-input/1-output shape; this slate
+        // produces sender change plus the recipient's output (2 outputs
+        // total once finalized), which is bigger and so needs more - and
+        // the pre-contact size probe should have already caught that before
+        // the recipient ever saw the slate.
+        let (slate, pending) = create_slate(&mut sender_keystore, &sender_store, 100, 5).unwrap();
+        assert!(slate.fee > 5, "the probe should have corrected the fee before the recipient was ever contacted");
+
+        let mut receiver_keystore = Keystore::generate();
+        let (response, _receiver_info) = respond_to_slate(&mut receiver_keystore, &slate);
+        let tx = finalize_slate(&pending, &response).unwrap();
+        assert!(tx.validate());
+
+        assert_eq!(tx.kernels[0].fee, required_fee(&tx), "the finalized transaction's fee should exactly match what its real size requires");
+
+        let mut mempool = crate::core::mempool::Mempool::new();
+        assert!(mempool.add_transaction(tx), "the auto-corrected finalized transaction must actually be accepted");
     }
 
     #[test]
