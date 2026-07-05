@@ -91,7 +91,10 @@ fn all_inputs(block: &Block) -> Vec<&crate::core::transaction::Input> {
         .chain(block.mint_ops.iter().flat_map(|op| op.fee_payment.inputs.iter()))
         .collect()
 }
-fn all_outputs(block: &Block) -> Vec<&crate::core::transaction::Output> {
+/// Every output in a block, across the main body and every fee-paying op -
+/// pub(crate) so api::faucet can reuse it to scan for its own past change
+/// outputs on startup (see FaucetState::new).
+pub(crate) fn all_outputs(block: &Block) -> Vec<&crate::core::transaction::Output> {
     block.body.outputs.iter()
         .chain(block.name_ops.iter().flat_map(|op| op.fee_payment.outputs.iter()))
         .chain(block.mint_ops.iter().flat_map(|op| op.fee_payment.outputs.iter()))

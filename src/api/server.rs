@@ -25,13 +25,17 @@ impl ApiServer {
         storage: Arc<Storage>,
         port: u16,
     ) {
+        let faucet_state = {
+            let snapshot = chain.lock().unwrap();
+            Arc::new(FaucetState::new(&snapshot))
+        };
+
         let mempool_filter = warp::any().map(move || Arc::clone(&mempool));
         let chain_filter = warp::any().map(move || Arc::clone(&chain));
         let p2p_filter = warp::any().map(move || Arc::clone(&p2p_server));
         let storage_filter = warp::any().map(move || Arc::clone(&storage));
         let mempool_filter_2 = mempool_filter.clone();
 
-        let faucet_state = Arc::new(FaucetState::new());
         let faucet_filter = warp::any().map(move || Arc::clone(&faucet_state));
         let faucet_filter_2 = faucet_filter.clone();
         let faucet_filter_3 = faucet_filter.clone();

@@ -102,7 +102,21 @@ impl WalletStore {
                         output.status = OutputStatus::Spent;
                     }
                 }
-                OutputStatus::Spent => {}
+                OutputStatus::Spent => {
+                    // We optimistically marked this Spent the instant we
+                    // built a transaction spending it (see planner::plan_send/
+                    // wallet::slate::create_slate/api::faucet::
+                    // build_sponsored_fee_payment), before it was ever
+                    // confirmed. If that transaction never actually landed
+                    // on-chain (dropped, lost a fee-priority race, etc.), the
+                    // commitment is still really here - our attempted spend
+                    // never took effect, so it needs to become spendable
+                    // again rather than staying permanently (and wrongly)
+                    // marked Spent forever.
+                    if chain_utxos.contains(&output.commitment) {
+                        output.status = OutputStatus::Confirmed;
+                    }
+                }
             }
         }
     }
@@ -160,5 +174,50 @@ impl WalletStore {
             .collect();
         outputs.sort_by(|a, b| b.value.cmp(&a.value));
         outputs
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use curve25519_dalek_ng::scalar::Scalar;
+
+    /// The exact bug this session traced through the live faucet: an output
+    /// gets optimistically marked Spent the instant a transaction spending
+    /// it is built (see planner::plan_send, api::faucet::
+    /// build_sponsored_fee_payment), before that transaction is ever
+    /// confirmed. If it never actually lands on-chain, the commitment is
+    /// still really there - reconcile must revert it back to Confirmed
+    /// instead of leaving it wrongly, permanently marked Spent.
+    #[test]
+    fn reconcile_reverts_a_wrongly_marked_spent_output_back_to_confirmed() {
+        let commitment = Commitment::new(1000, Scalar::from(1u64));
+        let mut store = WalletStore::default();
+        store.add_output(0, 1000, commitment, OutputStatus::Confirmed);
+        store.mark_spent(&commitment);
+        assert_eq!(store.balance(), 0);
+
+        // The attempted spend never actually landed - the commitment is
+        // still in the chain's real UTXO set.
+        let mut utxos = HashSet::new();
+        utxos.insert(commitment);
+        store.reconcile(&utxos);
+
+        assert_eq!(store.balance(), 1000, "wrongly-marked-spent output must become spendable again");
+    }
+
+    #[test]
+    fn reconcile_leaves_a_genuinely_spent_output_alone() {
+        let commitment = Commitment::new(1000, Scalar::from(2u64));
+        let mut store = WalletStore::default();
+        store.add_output(0, 1000, commitment, OutputStatus::Confirmed);
+        store.mark_spent(&commitment);
+
+        // The commitment is genuinely gone from the chain's UTXO set - it
+        // must stay Spent.
+        let utxos = HashSet::new();
+        store.reconcile(&utxos);
+
+        assert_eq!(store.balance(), 0, "a genuinely spent output must not come back");
     }
 }

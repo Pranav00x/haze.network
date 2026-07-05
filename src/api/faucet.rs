@@ -25,7 +25,9 @@ use crate::wallet::keystore::Keystore;
 use crate::wallet::store::{WalletStore, OutputStatus, FAUCET_INDEX};
 use crate::wallet::slate::{self, PendingSlate, Slate};
 use crate::wallet::planner::{self, PlanError};
+use crate::wallet::recovery::{self, ScanEntry};
 use curve25519_dalek_ng::scalar::Scalar;
+use sha2::{Sha512, Digest};
 
 /// Devnet-only cap per request - keeps a single requester from draining the
 /// reserve, not a real anti-abuse measure.
@@ -64,26 +66,93 @@ pub struct FaucetState {
     rate_limits: Mutex<HashMap<IpAddr, VecDeque<Instant>>>,
 }
 
-impl FaucetState {
-    pub fn new() -> Self {
-        let keystore = Keystore::generate();
-        let mut store = WalletStore::default();
+/// Derives a stable seed for the faucet's internal keystore from the
+/// treasury secret itself, rather than a fresh random one every process
+/// restart (see FaucetState::new's doc comment for why this matters - it's
+/// what makes the faucet's own change outputs recoverable across restarts
+/// instead of permanently stranded the moment the process cycles).
+fn faucet_keystore_seed(secret: &Scalar) -> [u8; 32] {
+    let mut hasher = Sha512::new();
+    hasher.update(b"Haze Faucet Keystore Seed");
+    hasher.update(secret.as_bytes());
+    let result = hasher.finalize();
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(&result[0..32]);
+    seed
+}
 
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+/// Scans `chain` for anything sealed under `keystore`'s own note_key (see
+/// wallet::note) and merges any real, currently-unspent match into `store`
+/// as Confirmed - the actual self-recovery mechanism, factored out so it's
+/// testable independently of FaucetState::new's real-treasury-secret gate
+/// (which can't be exercised in tests - the real secret is intentionally
+/// out-of-repo, see core::genesis's module doc).
+fn recover_faucet_change(keystore: &mut Keystore, store: &mut WalletStore, chain: &ChainState) {
+    let (blocks, _) = chain.get_blocks_from(0, usize::MAX);
+    let scan_entries: Vec<ScanEntry> = blocks.iter()
+        .flat_map(super::explorer::all_outputs)
+        .filter(|o| !o.note.is_empty())
+        .map(|o| ScanEntry { commitment_hex: o.commitment.to_hex(), note_hex: bytes_to_hex(&o.note) })
+        .collect();
+    let utxo_hex: HashSet<String> = chain.utxos.iter().map(|c| c.to_hex()).collect();
+    let recovered = recovery::recover_from_chain(keystore, &scan_entries, &utxo_hex);
+    if recovered.recovered_count > 0 {
+        println!("Faucet recovered {} past change output(s) totaling {} from a previous process lifetime.", recovered.recovered_count, recovered.recovered_balance);
+    }
+    for output in recovered.store.spendable() {
+        store.add_output(output.index, output.value, output.commitment, OutputStatus::Confirmed);
+    }
+}
+
+impl FaucetState {
+    /// `chain` is a snapshot of chain state at startup, used to recover the
+    /// faucet's true current balance rather than assuming only the original
+    /// genesis treasury allocation still exists (see the self-recovery scan
+    /// below) - critical now that the faucet's identity is stable across
+    /// restarts: without this, a fresh process would only ever know about
+    /// its very first output, ignoring any real change from registrations
+    /// sponsored in a previous process lifetime.
+    pub fn new(chain: &ChainState) -> Self {
         let secret = match planner::treasury_blinding_from_env() {
             Some(s) => s,
             None => {
                 println!("Note: HAZE_TREASURY_BLINDING not set - devnet faucet disabled on this node (everything else runs normally).");
-                return Self { keystore: Mutex::new(keystore), store: Mutex::new(store), pending: Mutex::new(None), enabled: false, rate_limits: Mutex::new(HashMap::new()) };
+                let keystore = Keystore::generate();
+                return Self { keystore: Mutex::new(keystore), store: Mutex::new(WalletStore::default()), pending: Mutex::new(None), enabled: false, rate_limits: Mutex::new(HashMap::new()) };
             }
         };
+
+        // Stable across restarts, unlike the old Keystore::generate() - see
+        // faucet_keystore_seed's doc comment.
+        let mut keystore = Keystore::from_seed(faucet_keystore_seed(&secret));
 
         let commitment = Commitment::new(TREASURY_ALLOCATION, secret);
         if commitment != crate::core::genesis::TREASURY_OUTPUT.commitment() {
             println!("Warning: HAZE_TREASURY_BLINDING does not match the real genesis treasury output - devnet faucet disabled on this node.");
-            return Self { keystore: Mutex::new(keystore), store: Mutex::new(store), pending: Mutex::new(None), enabled: false, rate_limits: Mutex::new(HashMap::new()) };
+            return Self { keystore: Mutex::new(keystore), store: Mutex::new(WalletStore::default()), pending: Mutex::new(None), enabled: false, rate_limits: Mutex::new(HashMap::new()) };
         }
 
+        // The one genesis treasury output itself has no note (see
+        // core::genesis::build_locked_output) - it's never discoverable via
+        // chain-scan, so it stays a special case, seeded unconditionally.
+        let mut store = WalletStore::default();
         store.add_output(FAUCET_INDEX, TREASURY_ALLOCATION, commitment, OutputStatus::Confirmed);
+
+        // Self-recovery: real change from a registration sponsored in a
+        // previous process lifetime, however many restarts ago, is still
+        // recoverable now that the keystore is stable (see
+        // recover_faucet_change).
+        recover_faucet_change(&mut keystore, &mut store, chain);
+
+        // Now correct for real, current chain state (using the fixed
+        // Spent->Confirmed reconciliation too) rather than trusting the
+        // FAUCET_INDEX seed blindly - it may already be for-real spent.
+        store.reconcile(&chain.utxos.iter().cloned().collect());
+
         Self {
             keystore: Mutex::new(keystore),
             store: Mutex::new(store),
@@ -397,5 +466,101 @@ mod tests {
             enabled: false,
             rate_limits: Mutex::new(HashMap::new()),
         }
+    }
+
+    #[test]
+    fn faucet_keystore_seed_is_deterministic_and_domain_separated() {
+        let secret_a = Scalar::from(111u64);
+        let secret_b = Scalar::from(222u64);
+        assert_eq!(faucet_keystore_seed(&secret_a), faucet_keystore_seed(&secret_a));
+        assert_ne!(faucet_keystore_seed(&secret_a), faucet_keystore_seed(&secret_b));
+        // Domain-separated from just using the raw secret bytes directly -
+        // otherwise a leaked faucet keystore seed would double as the raw
+        // treasury secret itself.
+        assert_ne!(faucet_keystore_seed(&secret_a), secret_a.to_bytes());
+    }
+
+    /// The actual regression this session's live-bug investigation traced:
+    /// real change from a registration sponsored in a previous process
+    /// lifetime must still be recoverable now that the faucet's keystore is
+    /// stable (Keystore::from_seed, not Keystore::generate()) - this is
+    /// what recover_faucet_change proves, independent of FaucetState::new's
+    /// real-treasury-secret gate (which can't be exercised in a test - the
+    /// real secret is intentionally out-of-repo).
+    #[test]
+    fn recover_faucet_change_finds_real_past_change_after_a_simulated_restart() {
+        use crate::core::block::{Block, BlockHeader};
+        use crate::core::transaction::{Input, Output, TxKernel};
+        use crate::crypto::range_proof::RangeProof;
+        use crate::crypto::schnorr::Signature;
+
+        let mut chain = ChainState::new();
+        let genesis = crate::core::genesis::genesis_block();
+        assert!(chain.apply_block(&genesis).is_applied());
+
+        // Simulate "a previous faucet process lifetime already sponsored a
+        // registration": spend the well-known genesis validator/claim
+        // output (blinding=42) into one fresh output owned by a fake
+        // faucet keystore, sealed with a real note the way
+        // build_sponsored_fee_payment actually does.
+        let fake_secret = Scalar::from(424242u64);
+        let mut fake_keystore = Keystore::from_seed(faucet_keystore_seed(&fake_secret));
+        let change_index = fake_keystore.allocate_index();
+        // Must equal spent-input-value + this height's block reward for the
+        // block to balance (Transaction::validate_with_reward) - genesis's
+        // well-known claim/stake output (1,000,000) plus block_reward_at(1).
+        let change_value = 1_000_000u64 + crate::core::block::block_reward_at(1);
+        let change_blinding = fake_keystore.derive_blinding(change_index);
+        let change_commitment = Commitment::new(change_value, change_blinding);
+        let change_proof = RangeProof::prove(change_value, &change_blinding);
+        let change_note = crate::wallet::note::seal(&fake_keystore.note_key(), change_index, change_value);
+        let output = Output { commitment: change_commitment, proof: change_proof, note: change_note };
+
+        let genesis_secret = Scalar::from(42u64);
+        let excess_r = genesis_secret - change_blinding;
+        let kernel = TxKernel {
+            excess: Commitment::new(0, excess_r),
+            fee: 0,
+            signature: Signature::sign(&0u64.to_le_bytes(), &excess_r),
+        };
+
+        let private_key = Scalar::from(42u64);
+        let mut header = BlockHeader {
+            height: 1,
+            prev_hash: genesis.header.hash(),
+            total_kernel_offset: Scalar::zero(),
+            nonce: 0,
+            timestamp: 0,
+            validator_commitment: Commitment::new(1_000_000, private_key),
+            validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root: crate::core::registry::compute_registry_root(&std::collections::HashMap::new()),
+            chain_id: crate::core::genesis::CHAIN_ID,
+            asset_registry_root: crate::core::assets::compute_asset_registry_root(&std::collections::HashMap::new()),
+        };
+        let msg = header.hash();
+        header.validator_signature = Signature::sign(&msg, &private_key);
+
+        let block = Block {
+            header,
+            body: crate::core::transaction::Transaction {
+                inputs: vec![Input { commitment: Commitment::new(1_000_000, genesis_secret) }],
+                outputs: vec![output],
+                kernels: vec![kernel],
+            },
+            name_ops: vec![],
+            transfer_ops: vec![],
+            mint_ops: vec![],
+            transfer_asset_ops: vec![],
+        };
+        assert!(chain.apply_block(&block).is_applied(), "test block must apply cleanly");
+
+        // Simulate the process restart: a brand new keystore built the same
+        // (stable) way, with no memory of change_index, and an empty store.
+        let mut restarted_keystore = Keystore::from_seed(faucet_keystore_seed(&fake_secret));
+        let mut store = WalletStore::default();
+
+        recover_faucet_change(&mut restarted_keystore, &mut store, &chain);
+
+        assert_eq!(store.balance(), change_value, "must recover the real past change output after a simulated restart");
     }
 }

@@ -84,6 +84,15 @@ impl Keystore {
         (keystore, phrase)
     }
 
+    /// Constructs a keystore from an already-derived 32-byte seed, rather
+    /// than generating a fresh random one or parsing a BIP39 phrase - used
+    /// by api::faucet::FaucetState to derive a stable, restart-proof
+    /// identity from its own treasury secret, the same way a user's phrase
+    /// deterministically derives theirs.
+    pub fn from_seed(seed: [u8; 32]) -> Self {
+        Keystore { seed, next_index: 0 }
+    }
+
     /// Reconstructs a keystore deterministically from a previously-generated
     /// BIP39 phrase - the same phrase always yields the same seed, and thus
     /// the same keys/outputs/identity.

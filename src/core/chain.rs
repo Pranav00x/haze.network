@@ -479,7 +479,17 @@ impl ChainState {
             }
         }
 
-        // 7. Add new outputs to the UTXO set
+        // 7. Add new outputs to the UTXO set. new_outputs_all accumulates
+        // every output this block creates (main body + every fee-paying
+        // op's change) for AppliedDelta/persist_applied - unlike self.utxos
+        // (in-memory, correct for the life of this process), the persisted
+        // utxos sled tree is only ever updated via AppliedDelta.new_outputs,
+        // so anything missing here is invisible after any restart even
+        // though it was never actually spent (the bug behind this session's
+        // live faucet investigation - a name/asset registration's real
+        // change became permanently unspendable on restart, not because it
+        // was ever spent, but because it was never written to disk).
+        let mut new_outputs_all: Vec<Output> = block.body.outputs.clone();
         for output in &block.body.outputs {
             self.utxos.insert(output.commitment);
         }
@@ -494,6 +504,7 @@ impl ChainState {
             }
             for output in &op.fee_payment.outputs {
                 self.utxos.insert(output.commitment);
+                new_outputs_all.push(output.clone());
             }
             let record = candidate_registry[&op.name].clone();
             self.name_registry.insert(op.name.clone(), record.clone());
@@ -523,6 +534,7 @@ impl ChainState {
             }
             for output in &op.fee_payment.outputs {
                 self.utxos.insert(output.commitment);
+                new_outputs_all.push(output.clone());
             }
             let record = candidate_asset_registry[&op.asset_id].clone();
             self.asset_registry.insert(op.asset_id.clone(), record.clone());
@@ -541,18 +553,25 @@ impl ChainState {
             self.asset_transfer_snapshots.insert(block.header.height, transferred_assets.clone());
         }
 
-        // 8. Save the kernels forever
+        // 8. Save the kernels forever. new_kernels_all mirrors
+        // new_outputs_all above - AppliedDelta.new_kernels is what actually
+        // gets persisted to the disk-backed kernels tree (see
+        // storage::persist_applied), so anything missing here is invisible
+        // after a restart even though self.kernels (in-memory) has it.
+        let mut new_kernels_all: Vec<TxKernel> = block.body.kernels.clone();
         for kernel in &block.body.kernels {
             self.kernels.push(kernel.clone());
         }
         for op in &block.name_ops {
             for kernel in &op.fee_payment.kernels {
                 self.kernels.push(kernel.clone());
+                new_kernels_all.push(kernel.clone());
             }
         }
         for op in &block.mint_ops {
             for kernel in &op.fee_payment.kernels {
                 self.kernels.push(kernel.clone());
+                new_kernels_all.push(kernel.clone());
             }
         }
 
@@ -563,8 +582,8 @@ impl ChainState {
         Some(AppliedDelta {
             block: block.clone(),
             spent_commitments,
-            new_outputs: block.body.outputs.clone(),
-            new_kernels: block.body.kernels.clone(),
+            new_outputs: new_outputs_all,
+            new_kernels: new_kernels_all,
             new_names,
             transferred_names,
             new_assets,
@@ -610,11 +629,16 @@ impl ChainState {
             removed_kernel_excesses.push(kernel.excess);
         }
 
-        // 3b. Revert each name op's fee-payment transaction and registry entry.
+        // 3b. Revert each name op's fee-payment transaction and registry
+        // entry. un_consumed_outputs/removed_kernel_excesses must include
+        // these too - they're what persist_rollback actually writes to the
+        // disk-backed utxos/kernels trees (see the matching apply-side fix
+        // and its comment for why this matters).
         let mut removed_names = Vec::new();
         for op in &tip_block.name_ops {
             for output in &op.fee_payment.outputs {
                 self.utxos.remove(&output.commitment);
+                un_consumed_outputs.push(output.commitment);
             }
             for input in &op.fee_payment.inputs {
                 self.utxos.insert(input.commitment);
@@ -622,6 +646,7 @@ impl ChainState {
             }
             for kernel in &op.fee_payment.kernels {
                 self.kernels.retain(|k| k.excess != kernel.excess);
+                removed_kernel_excesses.push(kernel.excess);
             }
             self.name_registry.remove(&op.name);
             removed_names.push(op.name.clone());
@@ -640,6 +665,7 @@ impl ChainState {
         for op in &tip_block.mint_ops {
             for output in &op.fee_payment.outputs {
                 self.utxos.remove(&output.commitment);
+                un_consumed_outputs.push(output.commitment);
             }
             for input in &op.fee_payment.inputs {
                 self.utxos.insert(input.commitment);
@@ -647,6 +673,7 @@ impl ChainState {
             }
             for kernel in &op.fee_payment.kernels {
                 self.kernels.retain(|k| k.excess != kernel.excess);
+                removed_kernel_excesses.push(kernel.excess);
             }
             self.asset_registry.remove(&op.asset_id);
             removed_assets.push(op.asset_id.clone());
