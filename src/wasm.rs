@@ -118,43 +118,17 @@ pub fn recover_wallet_from_chain(
     let mut keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
     let entries: Vec<ScanEntry> = serde_json::from_str(&scan_entries_json).map_err(|_| js_err("invalid scan entries JSON"))?;
     let utxo_set: HashSet<String> = chain_utxo_commitments_hex.into_iter().collect();
-    let note_key = keystore.note_key();
 
-    let mut store = WalletStore::default();
-    let mut max_index_seen: Option<u32> = None;
-    let mut recovered_balance: u64 = 0;
-    let mut recovered_count: u32 = 0;
-
-    for entry in &entries {
-        let Some(note_bytes) = hex_decode(&entry.note_hex) else { continue };
-        let Some((index, value)) = crate::wallet::note::open(&note_key, &note_bytes) else { continue };
-
-        // Sanity check: the recovered (index, value) must actually reproduce
-        // this exact on-chain commitment - guards against a corrupted or
-        // truncated note that happened to still pass the AEAD tag check.
-        let expected_commitment = Commitment::new(value, keystore.derive_blinding(index));
-        if expected_commitment.to_hex() != entry.commitment_hex {
-            continue;
-        }
-
-        max_index_seen = Some(max_index_seen.map_or(index, |m| m.max(index)));
-
-        if utxo_set.contains(&entry.commitment_hex) {
-            store.add_output(index, value, expected_commitment, OutputStatus::Confirmed);
-            recovered_balance += value;
-            recovered_count += 1;
-        }
-    }
-
-    if let Some(max_index) = max_index_seen {
-        keystore.ensure_next_index_at_least(max_index + 1);
-    }
+    let entries: Vec<crate::wallet::recovery::ScanEntry> = entries.into_iter()
+        .map(|e| crate::wallet::recovery::ScanEntry { commitment_hex: e.commitment_hex, note_hex: e.note_hex })
+        .collect();
+    let result = crate::wallet::recovery::recover_from_chain(&mut keystore, &entries, &utxo_set);
 
     Ok(WasmRecoveryResult {
         keystore_bytes: keystore.to_bytes(),
-        store_bytes: store.to_bytes(),
-        recovered_count,
-        recovered_balance,
+        store_bytes: result.store.to_bytes(),
+        recovered_count: result.recovered_count,
+        recovered_balance: result.recovered_balance,
     })
 }
 

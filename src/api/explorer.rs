@@ -88,11 +88,13 @@ fn all_kernels(block: &Block) -> Vec<&crate::core::transaction::TxKernel> {
 fn all_inputs(block: &Block) -> Vec<&crate::core::transaction::Input> {
     block.body.inputs.iter()
         .chain(block.name_ops.iter().flat_map(|op| op.fee_payment.inputs.iter()))
+        .chain(block.mint_ops.iter().flat_map(|op| op.fee_payment.inputs.iter()))
         .collect()
 }
 fn all_outputs(block: &Block) -> Vec<&crate::core::transaction::Output> {
     block.body.outputs.iter()
         .chain(block.name_ops.iter().flat_map(|op| op.fee_payment.outputs.iter()))
+        .chain(block.mint_ops.iter().flat_map(|op| op.fee_payment.outputs.iter()))
         .collect()
 }
 
@@ -203,8 +205,11 @@ pub struct ScanOutputEntry {
 /// has no local record of which outputs are its own, so it has to try
 /// decrypting every note it can get its hands on; cross-referencing the
 /// result against GET /v1/utxos tells it which of its own outputs are still
-/// spendable. Outputs with no note (genesis, coinbase - see their
-/// constructors for why) are skipped since there's nothing to try.
+/// spendable. Only the well-known genesis output has no note (its blinding
+/// is a fixed public constant, not something anyone needs to recover via
+/// decryption) - every other output, including coinbase rewards (see
+/// wallet::note::coinbase_note_key), carries one and is skipped here only if
+/// note decryption itself fails.
 pub async fn handle_scan_outputs(
     chain: Arc<Mutex<ChainState>>,
 ) -> Result<impl warp::Reply, Infallible> {
