@@ -8,7 +8,7 @@ use futures_util::StreamExt;
 use crate::core::mempool::Mempool;
 use crate::core::chain::{ChainState, ApplyResult};
 use crate::core::block::Block;
-use crate::core::transaction::Transaction;
+use crate::core::transaction::{Transaction, TxKernel};
 use crate::core::storage::Storage;
 use crate::crypto::pedersen::Commitment;
 use super::dandelion::{DandelionRouter, TxState, compute_tx_id};
@@ -378,6 +378,21 @@ async fn dispatch_dandelion_tx(
     }
 }
 
+/// Folds one block's kernels (main body + name/mint fee-payments) into a
+/// running aggregate-sync accumulator - see core::chain::aggregate_validate
+/// and total_registry_fees_burned for why both are needed.
+fn extend_aggregate(kernels: &mut Vec<TxKernel>, registry_fees: &mut u64, block: &Block) {
+    kernels.extend(block.body.kernels.iter().cloned());
+    for op in &block.name_ops {
+        kernels.extend(op.fee_payment.kernels.iter().cloned());
+        *registry_fees += op.fee_payment.kernels.iter().map(|k| k.fee).sum::<u64>();
+    }
+    for op in &block.mint_ops {
+        kernels.extend(op.fee_payment.kernels.iter().cloned());
+        *registry_fees += op.fee_payment.kernels.iter().map(|k| k.fee).sum::<u64>();
+    }
+}
+
 /// Persists an ApplyResult's deltas to storage, logging (but not failing on) any error.
 fn persist_apply_result(storage: &Storage, result: &ApplyResult) {
     match result {
@@ -413,6 +428,20 @@ async fn handle_peer_connection(
     router: Arc<DandelionRouter>,
     own_listen_addr: String,
 ) {
+    // State for a sync that's fallen back to aggregate validation (see
+    // core::chain::aggregate_validate) because a received block failed its
+    // own per-block balance re-check - the peer horizon-pruned it (see
+    // core::compaction). Persists across multiple BlocksBatch messages
+    // since one sync typically spans more than SYNC_BATCH_SIZE blocks.
+    let mut aggregate_mode = false;
+    let mut aggregate_kernels: Vec<TxKernel> = Vec::new();
+    let mut aggregate_registry_fees: u64 = 0;
+    // Hash of the last block folded into the aggregate accumulator, so each
+    // subsequent block's prev_hash can be checked against it directly -
+    // aggregate-mode blocks don't advance the local chain tip, so
+    // chain.last_block_hash can't be used for this once mode is entered.
+    let mut aggregate_prev_hash: Option<[u8; 32]> = None;
+
     loop {
         match transport::read_message(&mut reader).await {
             Some(msg) => {
@@ -556,44 +585,52 @@ async fn handle_peer_connection(
                             }
                         }
                         P2pMessage::GetBlocks { from_height } => {
-                            let (blocks, has_more, earliest_full) = {
+                            // Always serve whatever we have - headers and kernels
+                            // are never stripped by compact() (only specific
+                            // inputs/outputs are), so there's no range this node
+                            // can't hand over; the requester falls back to
+                            // aggregate_validate for anything it can't re-check
+                            // per-block (see the BlocksBatch handler below).
+                            let (blocks, has_more) = {
                                 let cs = chain.lock().unwrap();
-                                let earliest_full = cs.earliest_full_height();
-                                if from_height < earliest_full {
-                                    (None, false, earliest_full)
-                                } else {
-                                    let (blocks, has_more) = cs.get_blocks_from(from_height, SYNC_BATCH_SIZE);
-                                    (Some(blocks), has_more, earliest_full)
-                                }
+                                cs.get_blocks_from(from_height, SYNC_BATCH_SIZE)
                             };
+                            println!("P2P: Sending {} blocks (from height {}) to {}", blocks.len(), from_height, peer_addr);
                             let mut w = write_half.lock().await;
-                            match blocks {
-                                Some(blocks) => {
-                                    println!("P2P: Sending {} blocks (from height {}) to {}", blocks.len(), from_height, peer_addr);
-                                    let _ = transport::write_message(&mut *w, &P2pMessage::BlocksBatch { blocks, has_more }).await;
-                                }
-                                None => {
-                                    println!("P2P: Declining GetBlocks from height {} for {} - already compacted below height {}", from_height, peer_addr, earliest_full);
-                                    let _ = transport::write_message(&mut *w, &P2pMessage::PrunedRange { earliest_full_height: earliest_full }).await;
-                                }
-                            }
+                            let _ = transport::write_message(&mut *w, &P2pMessage::BlocksBatch { blocks, has_more }).await;
                         }
                         P2pMessage::PrunedRange { earliest_full_height } => {
-                            // This node can't fully sync historical state through
-                            // a peer that's already compacted past what we asked
-                            // for - see core::compaction's module docs for why a
-                            // pruned block would fail fresh per-block
-                            // re-validation. Finding another (less-compacted or
-                            // archival) peer to sync that range from is out of
-                            // scope for now; just log it rather than silently
-                            // stalling forever.
-                            println!("P2P: {} has already pruned below height {} - can't fully sync that range from them.", peer_addr, earliest_full_height);
+                            // No longer sent under normal compaction - see the
+                            // GetBlocks handler above. Kept as a no-op arm in
+                            // case a future archival-pruning peer ever sends it.
+                            println!("P2P: {} reports pruned below height {} (unexpected under current compaction).", peer_addr, earliest_full_height);
                         }
                         P2pMessage::BlocksBatch { blocks, has_more } => {
-                            println!("P2P: Received batch of {} blocks from {} (has_more: {})", blocks.len(), peer_addr, has_more);
+                            println!("P2P: Received batch of {} blocks from {} (has_more: {}, aggregate_mode: {})", blocks.len(), peer_addr, has_more, aggregate_mode);
                             let batch_len = blocks.len();
                             let mut applied_count = 0;
                             for block in &blocks {
+                                if aggregate_mode {
+                                    // Already falling back - only structural
+                                    // sanity is checked (a block that fails this
+                                    // is a real reject, not a pruning artifact);
+                                    // the value equation itself is deferred to
+                                    // the final aggregate_validate call.
+                                    let links = aggregate_prev_hash.map(|h| block.header.prev_hash == h).unwrap_or(false);
+                                    if !links || block.header.chain_id != crate::core::genesis::CHAIN_ID {
+                                        println!("P2P: Aggregate-sync from {} broke structural sanity at block #{}, aborting.", peer_addr, block.header.height);
+                                        aggregate_mode = false;
+                                        aggregate_kernels.clear();
+                                        aggregate_registry_fees = 0;
+                                        aggregate_prev_hash = None;
+                                        break;
+                                    }
+                                    extend_aggregate(&mut aggregate_kernels, &mut aggregate_registry_fees, block);
+                                    aggregate_prev_hash = Some(block.header.hash());
+                                    applied_count += 1;
+                                    continue;
+                                }
+
                                 let result = {
                                     let mut c = chain.lock().unwrap();
                                     c.apply_block(block)
@@ -611,22 +648,80 @@ async fn handle_peer_connection(
                                         .collect();
                                     mp.clear_stale_transfer_ops(&touched_names);
                                 } else {
-                                    println!("P2P: Sync block #{} failed to apply, stopping sync from {}", block.header.height, peer_addr);
-                                    break;
+                                    // Full apply failed - check whether this looks
+                                    // like a horizon-pruning artifact (the chain
+                                    // otherwise still links up correctly) rather
+                                    // than a genuinely broken/malicious block.
+                                    let links_ok = { block.header.prev_hash == chain.lock().unwrap().last_block_hash };
+                                    if links_ok && block.header.chain_id == crate::core::genesis::CHAIN_ID {
+                                        println!("P2P: Block #{} failed per-block re-validation (likely horizon-pruned) - falling back to aggregate sync from {}.", block.header.height, peer_addr);
+                                        aggregate_mode = true;
+                                        aggregate_kernels = chain.lock().unwrap().kernels.clone();
+                                        aggregate_registry_fees = crate::core::chain::total_registry_fees_burned(&chain.lock().unwrap().blocks);
+                                        extend_aggregate(&mut aggregate_kernels, &mut aggregate_registry_fees, block);
+                                        aggregate_prev_hash = Some(block.header.hash());
+                                        applied_count += 1;
+                                    } else {
+                                        println!("P2P: Sync block #{} failed to apply, stopping sync from {}", block.header.height, peer_addr);
+                                        break;
+                                    }
                                 }
                             }
                             println!("P2P: Synced {} / {} blocks from {}", applied_count, batch_len, peer_addr);
 
                             if has_more && applied_count == batch_len {
-                                let next_from = { chain.lock().unwrap().current_height + 1 };
+                                let next_from = if aggregate_mode {
+                                    blocks.last().map(|b| b.header.height + 1).unwrap_or(1)
+                                } else {
+                                    chain.lock().unwrap().current_height + 1
+                                };
                                 let mut w = write_half.lock().await;
                                 let _ = transport::write_message(&mut *w, &P2pMessage::GetBlocks { from_height: next_from }).await;
+                            } else if applied_count == batch_len && aggregate_mode {
+                                // Reached the peer's reported tip while still
+                                // mid-fallback - the UTXO set for the pruned
+                                // range can't be rebuilt incrementally (a
+                                // partially-pruned block's remaining in/outputs
+                                // no longer represent its true diff), so fetch
+                                // it as a snapshot and finish with one aggregate
+                                // check instead.
+                                let mut w = write_half.lock().await;
+                                let _ = transport::write_message(&mut *w, &P2pMessage::GetUtxoSnapshot).await;
                             } else if applied_count == batch_len {
                                 // Block sync just finished - active_validators isn't part of
                                 // block history, so catch up on it now that we have the UTXOs
                                 // needed to verify each entry (see ChainState::adopt_validator).
                                 let mut w = write_half.lock().await;
                                 let _ = transport::write_message(&mut *w, &P2pMessage::GetValidators).await;
+                            }
+                        }
+                        P2pMessage::GetUtxoSnapshot => {
+                            let (utxos, height, tip_hash) = {
+                                let cs = chain.lock().unwrap();
+                                (cs.utxos.iter().cloned().collect(), cs.current_height, cs.last_block_hash)
+                            };
+                            let mut w = write_half.lock().await;
+                            let _ = transport::write_message(&mut *w, &P2pMessage::UtxoSnapshot { utxos, height, tip_hash }).await;
+                        }
+                        P2pMessage::UtxoSnapshot { utxos, height, tip_hash } => {
+                            if !aggregate_mode {
+                                println!("P2P: Received unexpected UtxoSnapshot from {} (not aggregate-syncing), ignoring.", peer_addr);
+                            } else {
+                                let utxo_set: HashSet<Commitment> = utxos.into_iter().collect();
+                                let valid = crate::core::chain::aggregate_validate(&utxo_set, &aggregate_kernels, height, aggregate_registry_fees);
+                                if valid {
+                                    println!("P2P: Aggregate validation passed for {} (height {}) - adopting its UTXO snapshot.", peer_addr, height);
+                                    let mut c = chain.lock().unwrap();
+                                    c.utxos = utxo_set;
+                                    c.current_height = height;
+                                    c.last_block_hash = tip_hash;
+                                } else {
+                                    println!("P2P: Aggregate validation FAILED for {} (height {}) - rejecting its sync data entirely.", peer_addr, height);
+                                }
+                                aggregate_mode = false;
+                                aggregate_kernels.clear();
+                                aggregate_registry_fees = 0;
+                                aggregate_prev_hash = None;
                             }
                         }
                         P2pMessage::GetValidators => {

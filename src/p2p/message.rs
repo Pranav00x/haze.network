@@ -20,14 +20,22 @@ pub enum P2pMessage {
     ChainInfo { height: u64, tip_hash: [u8; 32] },
     GetBlocks { from_height: u64 },
     BlocksBatch { blocks: Vec<Block>, has_more: bool },
-    /// Sent instead of BlocksBatch when `from_height` reaches into territory
-    /// this node has already horizon-compacted (see core::compaction) -
-    /// those blocks are missing some inputs/outputs, so a peer trying to
-    /// fully re-validate chain state from scratch through them would fail
-    /// their per-block balance check. `earliest_full_height` is the oldest
-    /// height this node CAN still serve completely; the requester needs a
-    /// different (less-compacted or archival) peer for anything older.
+    /// No longer sent under normal compaction - headers and kernels are
+    /// never stripped by compact() (only specific inputs/outputs are), so a
+    /// peer can always serve BlocksBatch for any range it has at all; the
+    /// requester falls back to aggregate_validate (see core::chain) for any
+    /// block whose own balance equation fails to re-check due to pruning.
+    /// Kept defined, unused, in case a future archival-pruning mode ever
+    /// discards headers too.
     PrunedRange { earliest_full_height: u64 },
+    /// Requests the peer's current live UTXO set (plus the height/tip hash
+    /// it corresponds to) - needed to complete a sync that fell back to
+    /// aggregate_validate for part of its history, since a partially-pruned
+    /// block's remaining inputs/outputs no longer represent that specific
+    /// block's true diff, so the UTXO set for that range can't be rebuilt
+    /// incrementally the way kernels can (kernels are never stripped).
+    GetUtxoSnapshot,
+    UtxoSnapshot { utxos: Vec<crate::crypto::pedersen::Commitment>, height: u64, tip_hash: [u8; 32] },
     GetPeers,
     PeersList(Vec<String>),
     /// Requests the peer's current active validator set - sent once block

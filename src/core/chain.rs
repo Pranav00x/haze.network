@@ -787,3 +787,77 @@ impl ChainState {
         None
     }
 }
+
+/// Sums every name-registration/asset-mint fee ever paid (see
+/// aggregate_validate's doc for why this exact correction term is needed).
+/// Safe to run against a partially-pruned `blocks` map: compact() never
+/// strips fee_payment.kernels, only fee_payment.inputs/outputs.
+pub fn total_registry_fees_burned(blocks: &HashMap<[u8; 32], Block>) -> u64 {
+    blocks.values()
+        .flat_map(|b| {
+            b.name_ops.iter().flat_map(|op| op.fee_payment.kernels.iter())
+                .chain(b.mint_ops.iter().flat_map(|op| op.fee_payment.kernels.iter()))
+        })
+        .map(|k| k.fee)
+        .sum()
+}
+
+/// Grin-style aggregate validation for chain history that's been
+/// horizon-pruned (see core::compaction): proves no value was created or
+/// destroyed outside the reward schedule, and that every contributing
+/// kernel excess is backed by a real signature - using only data that
+/// survives cut-through pruning (the flat kernel list and the current
+/// UTXO set), not any specific historical input/output.
+///
+/// Derivation: every block's body satisfies (Transaction::
+/// validate_with_reward) `Σ C_in − Σ C_out − fee·H + reward·H = Σ excess`,
+/// with fee forced to 0 whenever reward > 0 (i.e. whenever validating a
+/// real mined block, not a standalone reward=0 transaction). Telescoping
+/// this over every block from genesis to tip, every input ever spent is
+/// some earlier output, so `Σ(all C_in) − Σ(all C_out)` collapses to
+/// `−Σ(current UTXO set)`, leaving:
+///
+///   Σ(current UTXOs) + Σ(all kernel excess, genesis..tip) == total_reward_issued · H
+///
+/// One correction the reward schedule alone doesn't capture: name/asset
+/// registration fees are validated standalone with reward=0, so they're
+/// genuinely subtracted rather than reinjected into a later coinbase the
+/// way ordinary payment fees are (core::proposer's total_fees only sums
+/// tx.kernels, never name_ops/mint_ops fee-payment kernels) - they're
+/// simply burned. Hence `registry_fees_burned` (see
+/// total_registry_fees_burned) is subtracted from the issued total.
+///
+/// This is strictly weaker than full per-block replay in one respect -
+/// proposer/validator legitimacy for the pruned range isn't re-derivable
+/// this way, since active_validators' history is tied to exactly the
+/// input/output history that gets pruned. See the design writeup for the
+/// full list of what this does and doesn't close.
+pub fn aggregate_validate(
+    utxos: &HashSet<Commitment>,
+    kernels: &[TxKernel],
+    tip_height: u64,
+    registry_fees_burned: u64,
+) -> bool {
+    // Every excess must be backed by a real signature - without this, an
+    // attacker could pick an excess point that merely makes the sum below
+    // balance, with no known discrete log/blinding factor behind it at all.
+    for k in kernels {
+        if !k.signature.verify(&k.fee.to_le_bytes(), &k.excess) {
+            return false;
+        }
+    }
+
+    let mut sum = curve25519_dalek_ng::ristretto::RistrettoPoint::default();
+    for c in utxos {
+        sum += c.as_point();
+    }
+    for k in kernels {
+        sum += k.excess.as_point();
+    }
+
+    let total_reward_issued: u64 = super::genesis::GENESIS_TOTAL_MINTED
+        + (1..=tip_height).map(super::block::block_reward_at).sum::<u64>();
+    let net_issued = total_reward_issued.saturating_sub(registry_fees_burned);
+
+    sum == Commitment::new(net_issued, Scalar::zero()).as_point()
+}

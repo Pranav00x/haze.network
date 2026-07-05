@@ -18,17 +18,19 @@
 //! `last_block_hash`.
 //!
 //! Scope: this compacts a node's OWN storage for outputs it already
-//! validated live. It deliberately does NOT attempt to let a brand-new node
-//! fully re-derive chain state from scratch through a pruned peer's P2P
-//! history - Transaction::validate_with_reward re-checks each block's own
-//! balance equation at apply time (including during sync), and a pruned
-//! block's kernel still encodes the original balance math for its now-absent
-//! output/input, so a fresh node re-validating that stripped block from zero
-//! would fail. Real Grin solves this with aggregate/kernel-offset validation
-//! instead of strict per-block balance checking - a bigger, separate change.
-//! For now, p2p::server declines to serve GetBlocks ranges reaching into
-//! pruned territory rather than silently handing out blocks a fresh peer
-//! can't validate.
+//! validated live. A fresh node syncing through a pruned peer can no longer
+//! re-check a stripped block's own per-block balance equation
+//! (Transaction::validate_with_reward) the way it could against a full
+//! peer - the specific values it would need are gone. That's resolved via
+//! Grin-style aggregate validation instead of strict per-block checking:
+//! see core::chain::aggregate_validate (the value-conservation identity
+//! over the never-pruned kernel list + current UTXO set) and
+//! p2p::server::handle_peer_connection's BlocksBatch handler (falls back to
+//! accumulating kernels instead of per-block apply once a block fails its
+//! own balance re-check, then finishes with one aggregate check against a
+//! UtxoSnapshot). See that function's doc for what this does and doesn't
+//! close - in particular, pruned-range proposer/validator legitimacy still
+//! isn't independently re-derivable, only value-conservation is.
 use std::collections::{HashMap, HashSet};
 use serde::{Serialize, Deserialize};
 
@@ -417,5 +419,132 @@ mod tests {
         let touched_hash = report.touched_blocks[0];
         let meta = chain.prune_meta.get(&touched_hash).expect("touched block must have prune_meta recorded");
         assert!(meta.pruned_outputs > 0 || meta.pruned_inputs > 0);
+    }
+
+    /// Simulates a fresh node syncing entirely through a peer that's already
+    /// horizon-pruned its history, driving exactly the algorithm
+    /// p2p::server's BlocksBatch handler uses (try full apply_block first,
+    /// fall back to accumulating kernels once a block fails its own balance
+    /// re-check, finish with one aggregate_validate call against a UTXO
+    /// snapshot) - without needing real sockets, since this only exercises
+    /// the underlying ChainState/aggregate_validate logic the P2P layer
+    /// calls. Confirms the fresh node ends up with an identical UTXO set and
+    /// tip to a node that synced (and applied every block per-block) before
+    /// pruning ever happened.
+    #[test]
+    fn fresh_node_sync_through_pruned_peer_matches_never_pruned_chain() {
+        use crate::core::genesis::genesis_block;
+        use super::super::chain::{aggregate_validate, total_registry_fees_burned};
+
+        let mut pruned_source = build_test_chain();
+        let full_reference = pruned_source.clone();
+        let report = compact(&mut pruned_source, TEST_HORIZON);
+        assert!(!report.touched_blocks.is_empty(), "test chain must have real prunable history");
+
+        // Fresh node: only genesis applied, nothing else.
+        let mut fresh = ChainState::new();
+        let genesis = genesis_block();
+        assert!(fresh.apply_block(&genesis).is_applied());
+
+        let mut aggregate_mode = false;
+        let mut aggregate_kernels: Vec<TxKernel> = Vec::new();
+        let mut aggregate_registry_fees: u64 = 0u64;
+        let mut aggregate_prev_hash: Option<[u8; 32]> = None;
+
+        let mut from_height = 1u64;
+        loop {
+            let (blocks, has_more) = pruned_source.get_blocks_from(from_height, 256);
+            if blocks.is_empty() {
+                break;
+            }
+            for block in &blocks {
+                if aggregate_mode {
+                    let links = aggregate_prev_hash.map(|h| block.header.prev_hash == h).unwrap_or(false);
+                    assert!(links, "hash-chain must stay linked through the pruned range");
+                    aggregate_kernels.extend(block.body.kernels.iter().cloned());
+                    aggregate_registry_fees += block.name_ops.iter().flat_map(|op| &op.fee_payment.kernels)
+                        .chain(block.mint_ops.iter().flat_map(|op| &op.fee_payment.kernels))
+                        .map(|k| k.fee).sum::<u64>();
+                    aggregate_prev_hash = Some(block.header.hash());
+                } else {
+                    let result = fresh.apply_block(block);
+                    if result.is_applied() {
+                        continue;
+                    }
+                    // Fell out of per-block validation - this is the pruned
+                    // boundary. Seed the accumulator from the fresh node's
+                    // own (fully-verified-so-far) local state.
+                    aggregate_mode = true;
+                    aggregate_kernels = fresh.kernels.clone();
+                    aggregate_registry_fees = total_registry_fees_burned(&fresh.blocks);
+                    aggregate_kernels.extend(block.body.kernels.iter().cloned());
+                    aggregate_registry_fees += block.name_ops.iter().flat_map(|op| &op.fee_payment.kernels)
+                        .chain(block.mint_ops.iter().flat_map(|op| &op.fee_payment.kernels))
+                        .map(|k| k.fee).sum::<u64>();
+                    aggregate_prev_hash = Some(block.header.hash());
+                }
+            }
+            if !has_more {
+                break;
+            }
+            from_height = blocks.last().unwrap().header.height + 1;
+        }
+
+        assert!(aggregate_mode, "test chain must actually exercise the pruned-range fallback");
+
+        let utxo_snapshot = pruned_source.utxos.clone();
+        let height = pruned_source.current_height;
+        let tip_hash = pruned_source.last_block_hash;
+
+        assert!(
+            aggregate_validate(&utxo_snapshot, &aggregate_kernels, height, aggregate_registry_fees),
+            "aggregate check must pass against the pruned source's own current state"
+        );
+
+        fresh.utxos = utxo_snapshot;
+        fresh.current_height = height;
+        fresh.last_block_hash = tip_hash;
+
+        assert_eq!(fresh.utxos, full_reference.utxos);
+        assert_eq!(fresh.current_height, full_reference.current_height);
+        assert_eq!(fresh.last_block_hash, full_reference.last_block_hash);
+    }
+
+    #[test]
+    fn aggregate_validate_rejects_a_tampered_utxo_set() {
+        use super::super::chain::aggregate_validate;
+
+        let mut chain = build_test_chain();
+        compact(&mut chain, TEST_HORIZON);
+
+        assert!(aggregate_validate(&chain.utxos, &chain.kernels, chain.current_height, 0));
+
+        // Flip one UTXO commitment to something unrelated - the sum must no
+        // longer balance.
+        let mut tampered_utxos = chain.utxos.clone();
+        let victim = *tampered_utxos.iter().next().unwrap();
+        tampered_utxos.remove(&victim);
+        tampered_utxos.insert(Commitment::new(123_456, Scalar::from(999_999u64)));
+
+        assert!(!aggregate_validate(&tampered_utxos, &chain.kernels, chain.current_height, 0));
+    }
+
+    #[test]
+    fn aggregate_validate_rejects_a_kernel_with_a_forged_signature() {
+        use super::super::chain::aggregate_validate;
+
+        let mut chain = build_test_chain();
+        compact(&mut chain, TEST_HORIZON);
+        assert!(aggregate_validate(&chain.utxos, &chain.kernels, chain.current_height, 0));
+
+        // Replace one kernel's signature with a signature over different
+        // data (still validly formed, just not for this excess/fee pair) -
+        // the sum still balances (excess values unchanged), but the
+        // signature check must catch it.
+        let mut tampered_kernels = chain.kernels.clone();
+        let bad_secret = Scalar::from(777_777u64);
+        tampered_kernels[0].signature = Signature::sign(b"not the real message", &bad_secret);
+
+        assert!(!aggregate_validate(&chain.utxos, &tampered_kernels, chain.current_height, 0));
     }
 }
