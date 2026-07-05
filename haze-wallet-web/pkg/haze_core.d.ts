@@ -39,6 +39,20 @@ export class WasmKeystoreAndMnemonic {
     mnemonic: string;
 }
 
+export class WasmMintAssetResult {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    get change(): WasmOwnedOutput | undefined;
+    set change(value: WasmOwnedOutput | null | undefined);
+    /**
+     * POST this to /v1/assets/mint.
+     */
+    op_json: string;
+    spent_commitments_hex: string[];
+    updated_keystore_bytes: Uint8Array;
+}
+
 export class WasmOwnedOutput {
     private constructor();
     free(): void;
@@ -117,6 +131,19 @@ export class WasmSweepResult {
 }
 
 /**
+ * Builds a MintAssetOp paying `fee` (must be >= ASSET_MINT_FEE) from the
+ * wallet's own confirmed UTXOs, signed with this wallet's stable identity
+ * key. `metadata` is arbitrary free-form text (a description, a URL,
+ * whatever) - it's never interpreted by consensus, just hashed into the
+ * 32-byte metadata_hash the op actually carries on-chain. Callers should
+ * pass GET /v1/fee-estimate's suggested_asset_fee rather than hardcoding
+ * ASSET_MINT_FEE, same reasoning as build_register_name_request. The caller
+ * must POST `op_json` themselves, then call `commit_mint_asset` only on
+ * success.
+ */
+export function build_mint_asset_request(keystore_bytes: Uint8Array, store_bytes: Uint8Array, asset_id: string, metadata: string, fee: bigint): WasmMintAssetResult;
+
+/**
  * Builds a RegisterNameOp paying `fee` (must be >= NAME_REGISTRATION_FEE,
  * the hard consensus floor - see its doc comment for why the floor itself
  * can't be a live congestion-derived value) from the wallet's own confirmed
@@ -148,6 +175,14 @@ export function build_sponsored_register_name_request(keystore_bytes: Uint8Array
 export function build_stake_request(keystore_bytes: Uint8Array, store_bytes: Uint8Array, min_value: bigint): string;
 
 /**
+ * Builds a TransferAssetOp handing an asset this wallet currently owns to a
+ * new owner's identity pubkey, signed with this wallet's identity key. No
+ * fee, no UTXO involved - the server rejects it if the signature doesn't
+ * actually match the asset's current on-chain owner.
+ */
+export function build_transfer_asset_request(keystore_bytes: Uint8Array, asset_id: string, new_owner_pubkey_hex: string): string;
+
+/**
  * Builds a TransferNameOp handing a name this wallet currently owns to a
  * new owner/resolution target, signed with this wallet's identity key. No
  * fee, no UTXO involved - the server rejects it if the signature doesn't
@@ -163,6 +198,15 @@ export function build_transfer_name_request(keystore_bytes: Uint8Array, name: st
  * mirrors the CLI's --claim-genesis. Only one wallet instance should do this.
  */
 export function claim_genesis(store_bytes: Uint8Array): Uint8Array;
+
+/**
+ * Applies a previously-built asset mint's effects (spent inputs, optional
+ * change) to the store. Must only be called after the mint was successfully
+ * queued via POST /v1/assets/mint. Identical bookkeeping to
+ * commit_register_name - kept as its own function so the JS side has a
+ * clearly-scoped call per feature.
+ */
+export function commit_mint_asset(store_bytes: Uint8Array, spent_commitments_hex: string[], change?: WasmOwnedOutput | null): Uint8Array;
 
 /**
  * Receiver-side commit: adds the output from `respond_to_slate` to the
@@ -317,11 +361,11 @@ export interface InitOutput {
     readonly __wbg_get_wasmfinalizedtx_transaction_json: (a: number) => [number, number];
     readonly __wbg_get_wasmkeystoreandmnemonic_keystore_bytes: (a: number) => [number, number];
     readonly __wbg_get_wasmkeystoreandmnemonic_mnemonic: (a: number) => [number, number];
+    readonly __wbg_get_wasmmintassetresult_spent_commitments_hex: (a: number) => [number, number];
+    readonly __wbg_get_wasmmintassetresult_updated_keystore_bytes: (a: number) => [number, number];
     readonly __wbg_get_wasmownedoutput_index: (a: number) => number;
     readonly __wbg_get_wasmownedoutput_value: (a: number) => bigint;
     readonly __wbg_get_wasmrecoveryresult_recovered_count: (a: number) => number;
-    readonly __wbg_get_wasmregisternameresult_spent_commitments_hex: (a: number) => [number, number];
-    readonly __wbg_get_wasmregisternameresult_updated_keystore_bytes: (a: number) => [number, number];
     readonly __wbg_get_wasmrespondresult_receiver_output: (a: number) => number;
     readonly __wbg_get_wasmsendplan_change: (a: number) => number;
     readonly __wbg_get_wasmsendplan_spent_commitments_hex: (a: number) => [number, number];
@@ -337,12 +381,12 @@ export interface InitOutput {
     readonly __wbg_set_wasmfinalizedtx_change: (a: number, b: number) => void;
     readonly __wbg_set_wasmfinalizedtx_spent_commitments_hex: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmfinalizedtx_transaction_json: (a: number, b: number, c: number) => void;
+    readonly __wbg_set_wasmmintassetresult_spent_commitments_hex: (a: number, b: number, c: number) => void;
+    readonly __wbg_set_wasmmintassetresult_updated_keystore_bytes: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmownedoutput_commitment_hex: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmownedoutput_index: (a: number, b: number) => void;
     readonly __wbg_set_wasmownedoutput_value: (a: number, b: bigint) => void;
     readonly __wbg_set_wasmrecoveryresult_recovered_count: (a: number, b: number) => void;
-    readonly __wbg_set_wasmregisternameresult_spent_commitments_hex: (a: number, b: number, c: number) => void;
-    readonly __wbg_set_wasmregisternameresult_updated_keystore_bytes: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmrespondresult_receiver_output: (a: number, b: number) => void;
     readonly __wbg_set_wasmsendplan_change: (a: number, b: number) => void;
     readonly __wbg_set_wasmsendplan_spent_commitments_hex: (a: number, b: number, c: number) => void;
@@ -355,19 +399,22 @@ export interface InitOutput {
     readonly __wbg_wasmcreateslateresult_free: (a: number, b: number) => void;
     readonly __wbg_wasmfinalizedtx_free: (a: number, b: number) => void;
     readonly __wbg_wasmkeystoreandmnemonic_free: (a: number, b: number) => void;
+    readonly __wbg_wasmmintassetresult_free: (a: number, b: number) => void;
     readonly __wbg_wasmownedoutput_free: (a: number, b: number) => void;
     readonly __wbg_wasmrecoveryresult_free: (a: number, b: number) => void;
     readonly __wbg_wasmregisternameresult_free: (a: number, b: number) => void;
     readonly __wbg_wasmrespondresult_free: (a: number, b: number) => void;
     readonly __wbg_wasmsendplan_free: (a: number, b: number) => void;
     readonly __wbg_wasmsweepresult_free: (a: number, b: number) => void;
+    readonly build_mint_asset_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: bigint) => [number, number, number];
     readonly build_register_name_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: bigint) => [number, number, number];
     readonly build_sponsored_register_name_request: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly build_stake_request: (a: number, b: number, c: number, d: number, e: bigint) => [number, number, number, number];
+    readonly build_transfer_asset_request: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly build_transfer_name_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
     readonly claim_genesis: (a: number, b: number) => [number, number, number, number];
+    readonly commit_mint_asset: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly commit_receive: (a: number, b: number, c: number) => [number, number, number, number];
-    readonly commit_register_name: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly commit_send: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly create_send_slate: (a: number, b: number, c: number, d: number, e: bigint, f: bigint) => [number, number, number];
     readonly finalize_slate: (a: number, b: number, c: number, d: number) => [number, number, number];
@@ -385,27 +432,36 @@ export interface InitOutput {
     readonly wallet_pending_balance: (a: number, b: number) => [bigint, number, number];
     readonly wallet_store_new: () => [number, number];
     readonly __wbg_get_wasmrecoveryresult_recovered_balance: (a: number) => bigint;
+    readonly __wbg_get_wasmmintassetresult_change: (a: number) => number;
     readonly __wbg_get_wasmregisternameresult_change: (a: number) => number;
     readonly __wbg_set_wasmrecoveryresult_recovered_balance: (a: number, b: bigint) => void;
+    readonly __wbg_set_wasmmintassetresult_change: (a: number, b: number) => void;
     readonly __wbg_set_wasmregisternameresult_change: (a: number, b: number) => void;
     readonly __wbg_get_wasmsendplan_dest: (a: number) => number;
     readonly __wbg_get_wasmsweepresult_dest: (a: number) => number;
+    readonly __wbg_set_wasmregisternameresult_spent_commitments_hex: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmkeystoreandmnemonic_keystore_bytes: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmkeystoreandmnemonic_mnemonic: (a: number, b: number, c: number) => void;
+    readonly __wbg_set_wasmmintassetresult_op_json: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmrecoveryresult_keystore_bytes: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmrecoveryresult_store_bytes: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmregisternameresult_op_json: (a: number, b: number, c: number) => void;
+    readonly __wbg_set_wasmregisternameresult_updated_keystore_bytes: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmrespondresult_response_slate_json: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmrespondresult_updated_keystore_bytes: (a: number, b: number, c: number) => void;
     readonly __wbg_get_wasmrecoveryresult_keystore_bytes: (a: number) => [number, number];
     readonly __wbg_get_wasmrecoveryresult_store_bytes: (a: number) => [number, number];
+    readonly __wbg_get_wasmregisternameresult_updated_keystore_bytes: (a: number) => [number, number];
     readonly __wbg_get_wasmrespondresult_updated_keystore_bytes: (a: number) => [number, number];
+    readonly __wbg_get_wasmmintassetresult_op_json: (a: number) => [number, number];
     readonly __wbg_get_wasmownedoutput_commitment_hex: (a: number) => [number, number];
     readonly __wbg_get_wasmregisternameresult_op_json: (a: number) => [number, number];
     readonly __wbg_get_wasmrespondresult_response_slate_json: (a: number) => [number, number];
     readonly __wbg_set_wasmsendplan_dest: (a: number, b: number) => void;
     readonly __wbg_set_wasmsweepresult_dest: (a: number, b: number) => void;
+    readonly __wbg_get_wasmregisternameresult_spent_commitments_hex: (a: number) => [number, number];
     readonly commit_slate_send: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly commit_register_name: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;

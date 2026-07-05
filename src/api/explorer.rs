@@ -164,6 +164,9 @@ pub struct FeeEstimate {
     pub suggested_name_fee: u64,
     pub min_name_fee: u64,
     pub name_ops_size: usize,
+    pub suggested_asset_fee: u64,
+    pub min_asset_fee: u64,
+    pub mint_ops_size: usize,
 }
 
 /// A wallet's actual source of truth for what fee to pay - see
@@ -182,6 +185,9 @@ pub async fn handle_fee_estimate(
         suggested_name_fee: mp.suggested_name_fee(),
         min_name_fee: crate::core::registry::NAME_REGISTRATION_FEE,
         name_ops_size: mp.name_ops_len(),
+        suggested_asset_fee: mp.suggested_asset_fee(),
+        min_asset_fee: crate::core::assets::ASSET_MINT_FEE,
+        mint_ops_size: mp.mint_ops_len(),
     };
     Ok(warp::reply::json(&estimate))
 }

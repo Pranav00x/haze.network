@@ -16,6 +16,7 @@ use crate::crypto::range_proof::RangeProof;
 use crate::crypto::schnorr::Signature;
 use crate::core::transaction::{Transaction, Input, Output, TxKernel};
 use crate::core::registry::{RegisterNameOp, TransferNameOp, NAME_REGISTRATION_FEE, validate_name};
+use crate::core::assets::{MintAssetOp, TransferAssetOp, ASSET_MINT_FEE, validate_asset_id};
 use crate::wallet::keystore::Keystore;
 use crate::wallet::store::{WalletStore, OutputStatus, GENESIS_INDEX};
 use crate::wallet::planner::{self, PlanError};
@@ -742,5 +743,150 @@ pub fn build_transfer_name_request(keystore_bytes: Vec<u8>, name: String, new_ow
     let signature = TransferNameOp::sign(&name, &new_owner_pubkey, &new_resolves_to, &current_owner_secret);
 
     let op = TransferNameOp { name, new_owner_pubkey, new_resolves_to, signature };
+    serde_json::to_string(&op).map_err(|_| js_err("failed to serialize transfer"))
+}
+
+// ---------- Haze Asset Registry (NFTs) ----------
+// Same shape as the naming registry above - a separate namespace, but reusing
+// the wallet's stable identity key (Keystore::identity_key) as the asset
+// owner pubkey too, so one identity backs both registries. Mint rides a
+// normal fee-paying transaction (see core::assets::MintAssetOp), same
+// coin-selection as plan_send/build_register_name_request; transfer is
+// signature-only, no fee/UTXO involved.
+
+#[wasm_bindgen(getter_with_clone)]
+pub struct WasmMintAssetResult {
+    /// POST this to /v1/assets/mint.
+    pub op_json: String,
+    pub updated_keystore_bytes: Vec<u8>,
+    pub spent_commitments_hex: Vec<String>,
+    pub change: Option<WasmOwnedOutput>,
+}
+
+/// Builds a MintAssetOp paying `fee` (must be >= ASSET_MINT_FEE) from the
+/// wallet's own confirmed UTXOs, signed with this wallet's stable identity
+/// key. `metadata` is arbitrary free-form text (a description, a URL,
+/// whatever) - it's never interpreted by consensus, just hashed into the
+/// 32-byte metadata_hash the op actually carries on-chain. Callers should
+/// pass GET /v1/fee-estimate's suggested_asset_fee rather than hardcoding
+/// ASSET_MINT_FEE, same reasoning as build_register_name_request. The caller
+/// must POST `op_json` themselves, then call `commit_mint_asset` only on
+/// success.
+#[wasm_bindgen]
+pub fn build_mint_asset_request(keystore_bytes: Vec<u8>, store_bytes: Vec<u8>, asset_id: String, metadata: String, fee: u64) -> Result<WasmMintAssetResult, JsValue> {
+    validate_asset_id(&asset_id).map_err(|e| js_err(format!("invalid asset id: {:?}", e)))?;
+    if fee < ASSET_MINT_FEE {
+        return Err(js_err(format!("fee must be at least {}", ASSET_MINT_FEE)));
+    }
+
+    let mut keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
+    let store = WalletStore::from_bytes(&store_bytes).ok_or_else(|| js_err("invalid wallet store bytes"))?;
+
+    let selected = planner::select_spendable(&store, fee)
+        .map_err(|e| match e {
+            PlanError::InsufficientBalance { have, need } => js_err(format!("insufficient balance: have {}, need {}", have, need)),
+        })?;
+    let selected_total: u64 = selected.iter().map(|(_, _, value)| value).sum();
+
+    let mut input_blindings: Vec<Scalar> = Vec::new();
+    let mut inputs: Vec<Input> = Vec::new();
+    let mut spent_commitments_hex: Vec<String> = Vec::new();
+    for (index, commitment, _value) in &selected {
+        input_blindings.push(planner::blinding_for(&keystore, *index));
+        inputs.push(Input { commitment: *commitment });
+        spent_commitments_hex.push(commitment.to_hex());
+    }
+
+    let change_value = selected_total - fee;
+    let (outputs, change, change_blinding) = if change_value > 0 {
+        let change_index = keystore.allocate_index();
+        let change_blinding = keystore.derive_blinding(change_index);
+        let change_commitment = Commitment::new(change_value, change_blinding);
+        let change_proof = RangeProof::prove(change_value, &change_blinding);
+        let change_note = crate::wallet::note::seal(&keystore.note_key(), change_index, change_value);
+        let output = Output { commitment: change_commitment, proof: change_proof, note: change_note };
+        let change_info = WasmOwnedOutput { index: change_index, value: change_value, commitment_hex: change_commitment.to_hex() };
+        (vec![output], Some(change_info), change_blinding)
+    } else {
+        (vec![], None, Scalar::zero())
+    };
+
+    let sum_input_blinding: Scalar = input_blindings.iter().sum();
+    let excess_r = sum_input_blinding - change_blinding;
+    let fee_payment = Transaction {
+        inputs,
+        outputs,
+        kernels: vec![TxKernel {
+            excess: Commitment::new(0, excess_r),
+            fee,
+            signature: Signature::sign(&fee.to_le_bytes(), &excess_r),
+        }],
+    };
+
+    let metadata_hash: [u8; 32] = {
+        use sha2::{Sha256, Digest};
+        let mut hasher = Sha256::new();
+        hasher.update(metadata.as_bytes());
+        hasher.finalize().into()
+    };
+
+    let owner_secret = keystore.identity_key();
+    let gens = bulletproofs::PedersenGens::default();
+    let owner_pubkey = Commitment(owner_secret * gens.B_blinding);
+    let signature = MintAssetOp::sign(&asset_id, &metadata_hash, &owner_secret);
+
+    let op = MintAssetOp {
+        asset_id,
+        owner_pubkey,
+        metadata_hash,
+        fee_payment,
+        signature,
+    };
+    let op_json = serde_json::to_string(&op).map_err(|_| js_err("failed to serialize mint"))?;
+
+    Ok(WasmMintAssetResult {
+        op_json,
+        updated_keystore_bytes: keystore.to_bytes(),
+        spent_commitments_hex,
+        change,
+    })
+}
+
+/// Applies a previously-built asset mint's effects (spent inputs, optional
+/// change) to the store. Must only be called after the mint was successfully
+/// queued via POST /v1/assets/mint. Identical bookkeeping to
+/// commit_register_name - kept as its own function so the JS side has a
+/// clearly-scoped call per feature.
+#[wasm_bindgen]
+pub fn commit_mint_asset(store_bytes: Vec<u8>, spent_commitments_hex: Vec<String>, change: Option<WasmOwnedOutput>) -> Result<Vec<u8>, JsValue> {
+    let mut store = WalletStore::from_bytes(&store_bytes).ok_or_else(|| js_err("invalid wallet store bytes"))?;
+
+    for hex in &spent_commitments_hex {
+        let commitment = Commitment::from_hex(hex).ok_or_else(|| js_err(format!("invalid commitment hex: {}", hex)))?;
+        store.mark_spent(&commitment);
+    }
+
+    if let Some(change) = change {
+        let change_commitment = Commitment::from_hex(&change.commitment_hex)
+            .ok_or_else(|| js_err(format!("invalid commitment hex: {}", change.commitment_hex)))?;
+        store.add_output(change.index, change.value, change_commitment, OutputStatus::Pending);
+    }
+
+    Ok(store.to_bytes())
+}
+
+/// Builds a TransferAssetOp handing an asset this wallet currently owns to a
+/// new owner's identity pubkey, signed with this wallet's identity key. No
+/// fee, no UTXO involved - the server rejects it if the signature doesn't
+/// actually match the asset's current on-chain owner.
+#[wasm_bindgen]
+pub fn build_transfer_asset_request(keystore_bytes: Vec<u8>, asset_id: String, new_owner_pubkey_hex: String) -> Result<String, JsValue> {
+    let keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
+    let new_owner_pubkey = Commitment::from_hex(&new_owner_pubkey_hex).ok_or_else(|| js_err("invalid new owner pubkey hex"))?;
+
+    let current_owner_secret = keystore.identity_key();
+    let signature = TransferAssetOp::sign(&asset_id, &new_owner_pubkey, &current_owner_secret);
+
+    let op = TransferAssetOp { asset_id, new_owner_pubkey, signature };
     serde_json::to_string(&op).map_err(|_| js_err("failed to serialize transfer"))
 }

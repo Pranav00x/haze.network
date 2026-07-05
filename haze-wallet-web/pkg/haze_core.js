@@ -225,6 +225,103 @@ export class WasmKeystoreAndMnemonic {
 }
 if (Symbol.dispose) WasmKeystoreAndMnemonic.prototype[Symbol.dispose] = WasmKeystoreAndMnemonic.prototype.free;
 
+export class WasmMintAssetResult {
+    static __wrap(ptr) {
+        const obj = Object.create(WasmMintAssetResult.prototype);
+        obj.__wbg_ptr = ptr;
+        WasmMintAssetResultFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmMintAssetResultFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmmintassetresult_free(ptr, 0);
+    }
+    /**
+     * @returns {WasmOwnedOutput | undefined}
+     */
+    get change() {
+        const ret = wasm.__wbg_get_wasmmintassetresult_change(this.__wbg_ptr);
+        return ret === 0 ? undefined : WasmOwnedOutput.__wrap(ret);
+    }
+    /**
+     * POST this to /v1/assets/mint.
+     * @returns {string}
+     */
+    get op_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.__wbg_get_wasmmintassetresult_op_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string[]}
+     */
+    get spent_commitments_hex() {
+        const ret = wasm.__wbg_get_wasmmintassetresult_spent_commitments_hex(this.__wbg_ptr);
+        var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {Uint8Array}
+     */
+    get updated_keystore_bytes() {
+        const ret = wasm.__wbg_get_wasmmintassetresult_updated_keystore_bytes(this.__wbg_ptr);
+        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v1;
+    }
+    /**
+     * @param {WasmOwnedOutput | null} [arg0]
+     */
+    set change(arg0) {
+        let ptr0 = 0;
+        if (!isLikeNone(arg0)) {
+            _assertClass(arg0, WasmOwnedOutput);
+            ptr0 = arg0.__destroy_into_raw();
+        }
+        wasm.__wbg_set_wasmmintassetresult_change(this.__wbg_ptr, ptr0);
+    }
+    /**
+     * POST this to /v1/assets/mint.
+     * @param {string} arg0
+     */
+    set op_json(arg0) {
+        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_wasmmintassetresult_op_json(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * @param {string[]} arg0
+     */
+    set spent_commitments_hex(arg0) {
+        const ptr0 = passArrayJsValueToWasm0(arg0, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_wasmmintassetresult_spent_commitments_hex(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * @param {Uint8Array} arg0
+     */
+    set updated_keystore_bytes(arg0) {
+        const ptr0 = passArray8ToWasm0(arg0, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_wasmmintassetresult_updated_keystore_bytes(this.__wbg_ptr, ptr0, len0);
+    }
+}
+if (Symbol.dispose) WasmMintAssetResult.prototype[Symbol.dispose] = WasmMintAssetResult.prototype.free;
+
 export class WasmOwnedOutput {
     static __wrap(ptr) {
         const obj = Object.create(WasmOwnedOutput.prototype);
@@ -770,6 +867,39 @@ export class WasmSweepResult {
 if (Symbol.dispose) WasmSweepResult.prototype[Symbol.dispose] = WasmSweepResult.prototype.free;
 
 /**
+ * Builds a MintAssetOp paying `fee` (must be >= ASSET_MINT_FEE) from the
+ * wallet's own confirmed UTXOs, signed with this wallet's stable identity
+ * key. `metadata` is arbitrary free-form text (a description, a URL,
+ * whatever) - it's never interpreted by consensus, just hashed into the
+ * 32-byte metadata_hash the op actually carries on-chain. Callers should
+ * pass GET /v1/fee-estimate's suggested_asset_fee rather than hardcoding
+ * ASSET_MINT_FEE, same reasoning as build_register_name_request. The caller
+ * must POST `op_json` themselves, then call `commit_mint_asset` only on
+ * success.
+ * @param {Uint8Array} keystore_bytes
+ * @param {Uint8Array} store_bytes
+ * @param {string} asset_id
+ * @param {string} metadata
+ * @param {bigint} fee
+ * @returns {WasmMintAssetResult}
+ */
+export function build_mint_asset_request(keystore_bytes, store_bytes, asset_id, metadata, fee) {
+    const ptr0 = passArray8ToWasm0(keystore_bytes, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(store_bytes, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(asset_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ptr3 = passStringToWasm0(metadata, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len3 = WASM_VECTOR_LEN;
+    const ret = wasm.build_mint_asset_request(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, fee);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return WasmMintAssetResult.__wrap(ret[0]);
+}
+
+/**
  * Builds a RegisterNameOp paying `fee` (must be >= NAME_REGISTRATION_FEE,
  * the hard consensus floor - see its doc comment for why the floor itself
  * can't be a live congestion-derived value) from the wallet's own confirmed
@@ -867,6 +997,41 @@ export function build_stake_request(keystore_bytes, store_bytes, min_value) {
 }
 
 /**
+ * Builds a TransferAssetOp handing an asset this wallet currently owns to a
+ * new owner's identity pubkey, signed with this wallet's identity key. No
+ * fee, no UTXO involved - the server rejects it if the signature doesn't
+ * actually match the asset's current on-chain owner.
+ * @param {Uint8Array} keystore_bytes
+ * @param {string} asset_id
+ * @param {string} new_owner_pubkey_hex
+ * @returns {string}
+ */
+export function build_transfer_asset_request(keystore_bytes, asset_id, new_owner_pubkey_hex) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const ptr0 = passArray8ToWasm0(keystore_bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(asset_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(new_owner_pubkey_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.build_transfer_asset_request(ptr0, len0, ptr1, len1, ptr2, len2);
+        var ptr4 = ret[0];
+        var len4 = ret[1];
+        if (ret[3]) {
+            ptr4 = 0; len4 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+    }
+}
+
+/**
  * Builds a TransferNameOp handing a name this wallet currently owns to a
  * new owner/resolution target, signed with this wallet's identity key. No
  * fee, no UTXO involved - the server rejects it if the signature doesn't
@@ -923,6 +1088,36 @@ export function claim_genesis(store_bytes) {
     var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
     return v2;
+}
+
+/**
+ * Applies a previously-built asset mint's effects (spent inputs, optional
+ * change) to the store. Must only be called after the mint was successfully
+ * queued via POST /v1/assets/mint. Identical bookkeeping to
+ * commit_register_name - kept as its own function so the JS side has a
+ * clearly-scoped call per feature.
+ * @param {Uint8Array} store_bytes
+ * @param {string[]} spent_commitments_hex
+ * @param {WasmOwnedOutput | null} [change]
+ * @returns {Uint8Array}
+ */
+export function commit_mint_asset(store_bytes, spent_commitments_hex, change) {
+    const ptr0 = passArray8ToWasm0(store_bytes, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArrayJsValueToWasm0(spent_commitments_hex, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    let ptr2 = 0;
+    if (!isLikeNone(change)) {
+        _assertClass(change, WasmOwnedOutput);
+        ptr2 = change.__destroy_into_raw();
+    }
+    const ret = wasm.commit_mint_asset(ptr0, len0, ptr1, len1, ptr2);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v4;
 }
 
 /**
@@ -1478,6 +1673,9 @@ const WasmFinalizedTxFinalization = (typeof FinalizationRegistry === 'undefined'
 const WasmKeystoreAndMnemonicFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmkeystoreandmnemonic_free(ptr, 1));
+const WasmMintAssetResultFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmmintassetresult_free(ptr, 1));
 const WasmOwnedOutputFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmownedoutput_free(ptr, 1));

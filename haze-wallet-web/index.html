@@ -300,6 +300,7 @@ import init, {
   build_register_name_request, commit_register_name, wallet_identity_pubkey_hex,
   build_sponsored_register_name_request,
   build_transfer_name_request,
+  build_mint_asset_request, commit_mint_asset, build_transfer_asset_request,
   generate_keystore_with_mnemonic, restore_keystore_from_mnemonic,
   recover_wallet_from_chain, sweep_validator_rewards
 } from './pkg/haze_core.js';
@@ -569,6 +570,22 @@ async function getSuggestedNameFee() {
     return BigInt(estimate.suggested_name_fee);
   } catch (e) {
     return FALLBACK_NAME_FEE;
+  }
+}
+
+// Matches core::assets::ASSET_MINT_FEE - the hard consensus floor, used as a
+// fallback if the node can't be reached for a live estimate.
+const FALLBACK_ASSET_FEE = 5n;
+
+// Congestion-priced the same way as getSuggestedNameFee, just against the
+// asset-mint backlog instead (see Mempool::suggested_asset_fee /
+// GET /v1/fee-estimate's suggested_asset_fee).
+async function getSuggestedAssetFee() {
+  try {
+    const estimate = await fetchJson("/v1/fee-estimate");
+    return BigInt(estimate.suggested_asset_fee);
+  } catch (e) {
+    return FALLBACK_ASSET_FEE;
   }
 }
 
@@ -899,6 +916,27 @@ async function pollForNameConfirmation(name, onConfirmed, { intervalMs = 3000, t
   }
 }
 
+// Same idea as pollForNameConfirmation, polling GET /v1/assets/:id instead
+// (minted_at_block present once mined).
+async function pollForAssetConfirmation(assetId, onConfirmed, { intervalMs = 3000, timeoutMs = 90000, isConfirmed = () => true } = {}) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    await new Promise(r => setTimeout(r, intervalMs));
+    try {
+      const res = await fetch(API_BASE + "/v1/assets/" + encodeURIComponent(assetId));
+      if (res.ok) {
+        const record = await res.json();
+        if (isConfirmed(record)) {
+          onConfirmed(record);
+          return;
+        }
+      }
+    } catch (e) {
+      // keep polling - a transient fetch failure shouldn't abort confirmation
+    }
+  }
+}
+
 function renderDashboard() {
   const app = document.getElementById("app");
   app.innerHTML = `
@@ -1005,6 +1043,40 @@ function renderDashboard() {
         </div>
       </div>
 
+      <div class="tab-panel" data-tab="assets">
+        <div class="panel">
+          <h2>Mint an asset</h2>
+          <div class="sub">Mints a permanent, first-come-first-served, unique on-chain asset ("NFT") owned by your wallet's identity pubkey - lowercase letters/digits/-/_, 3-64 characters. Metadata is arbitrary text (a description, a link to an image, whatever) - it isn't interpreted on-chain, just hashed and carried along. Fee adapts to mint-backlog congestion - <span id="mint-asset-fee-note">checking current fee&hellip;</span></div>
+          <label>Asset ID</label>
+          <input type="text" id="asset-id-input" placeholder="e.g. cryptopunk-1" autocomplete="off" />
+          <label>Metadata</label>
+          <input type="text" id="asset-metadata-input" placeholder="e.g. a description or link" autocomplete="off" />
+          <button class="btn-primary" id="mint-asset-btn">Mint asset</button>
+          <div id="mint-asset-message"></div>
+          <div class="keystore-note" id="asset-identity-pubkey-note"></div>
+        </div>
+
+        <div class="panel">
+          <h2>Look up an asset</h2>
+          <div class="sub">Resolves a minted asset to its owner pubkey, metadata, and the block it was minted at.</div>
+          <label>Asset ID</label>
+          <input type="text" id="lookup-asset-input" placeholder="e.g. cryptopunk-1" autocomplete="off" />
+          <button class="btn-primary" id="lookup-asset-btn">Look up</button>
+          <div id="lookup-asset-result"></div>
+        </div>
+
+        <div class="panel">
+          <h2>Transfer an asset</h2>
+          <div class="sub">Hands ownership of an asset you currently own to someone else's identity pubkey. No fee - just proves you're the current owner. The recipient needs to share their identity pubkey with you first (shown on their own wallet's dashboard).</div>
+          <label>Asset ID</label>
+          <input type="text" id="transfer-asset-input" placeholder="e.g. cryptopunk-1" autocomplete="off" />
+          <label>New owner's identity pubkey</label>
+          <input type="text" id="transfer-asset-new-owner-input" placeholder="hex pubkey" autocomplete="off" />
+          <button class="btn-primary" id="transfer-asset-btn">Transfer</button>
+          <div id="transfer-asset-message"></div>
+        </div>
+      </div>
+
       <div class="tab-panel" data-tab="more">
         <div class="panel">
           <h2>Become a validator</h2>
@@ -1059,6 +1131,10 @@ function renderDashboard() {
       <button class="nav-item" data-tab="names">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M16 12v1.4a2.6 2.6 0 0 0 5 0V12a9 9 0 1 0-5.5 8.3"/></svg>
         <span class="nav-label">Names</span>
+      </button>
+      <button class="nav-item" data-tab="assets">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+        <span class="nav-label">Assets</span>
       </button>
       <button class="nav-item" data-tab="history">
         <svg viewBox="0 0 24 24"><path d="M12 7v5l3 3M20 12a8 8 0 1 1-8-8"/></svg>
@@ -1292,6 +1368,117 @@ function renderDashboard() {
     }
   });
 
+  // ---------- Haze Asset Registry (NFTs) ----------
+  try {
+    const assetPubkeyHex = wallet_identity_pubkey_hex(sessionKeystoreBytes);
+    document.getElementById("asset-identity-pubkey-note").textContent = `Your identity pubkey: ${assetPubkeyHex}`;
+  } catch (e) {
+    // non-fatal, just skip the note
+  }
+
+  document.getElementById("mint-asset-btn").addEventListener("click", async () => {
+    const assetId = document.getElementById("asset-id-input").value.trim();
+    const metadata = document.getElementById("asset-metadata-input").value;
+    const messageEl = document.getElementById("mint-asset-message");
+    if (!assetId) {
+      messageEl.innerHTML = `<div class="message error">Enter an asset ID.</div>`;
+      return;
+    }
+
+    try {
+      const storeBytes = loadWalletStoreBytes();
+      const fee = await getSuggestedAssetFee();
+      const result = build_mint_asset_request(sessionKeystoreBytes, storeBytes, assetId, metadata, fee);
+
+      const res = await fetch(API_BASE + "/v1/assets/mint", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: result.op_json,
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        messageEl.innerHTML = `<div class="message error">Node rejected mint: ${errJson.error || res.status}</div>`;
+        return;
+      }
+
+      sessionKeystoreBytes = result.updated_keystore_bytes;
+      let storeBytes2 = commit_mint_asset(storeBytes, result.spent_commitments_hex, result.change);
+      saveWalletStoreBytes(storeBytes2);
+
+      messageEl.innerHTML = `<div class="message success">Queued "${assetId}" for minting - waiting for it to be mined&hellip;</div>`;
+      document.getElementById("asset-id-input").value = "";
+      document.getElementById("asset-metadata-input").value = "";
+      await refreshBalance();
+
+      pollForAssetConfirmation(assetId, (record) => {
+        messageEl.innerHTML = `<div class="message success">"${assetId}" is minted! (block ${record.minted_at_block})</div>`;
+        pushActivity({ type: "asset_minted", title: `Minted ${assetId}` });
+      });
+    } catch (e) {
+      messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+    }
+  });
+
+  document.getElementById("lookup-asset-btn").addEventListener("click", async () => {
+    const assetId = document.getElementById("lookup-asset-input").value.trim();
+    const resultEl = document.getElementById("lookup-asset-result");
+    if (!assetId) {
+      resultEl.innerHTML = `<div class="message error">Enter an asset ID to look up.</div>`;
+      return;
+    }
+
+    try {
+      const res = await fetch(API_BASE + "/v1/assets/" + encodeURIComponent(assetId));
+      if (!res.ok) {
+        resultEl.innerHTML = `<div class="message error">"${assetId}" is not minted.</div>`;
+        return;
+      }
+      const record = await res.json();
+      const ownerHex = bytesToHex(record.owner_pubkey);
+      resultEl.innerHTML = `<div class="message success">"${assetId}" is owned by <span class="keystore-note">${ownerHex}</span> (minted at block ${record.minted_at_block})</div>`;
+    } catch (e) {
+      resultEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+    }
+  });
+
+  document.getElementById("transfer-asset-btn").addEventListener("click", async () => {
+    const assetId = document.getElementById("transfer-asset-input").value.trim();
+    const newOwnerHex = document.getElementById("transfer-asset-new-owner-input").value.trim();
+    const messageEl = document.getElementById("transfer-asset-message");
+    if (!assetId || !newOwnerHex) {
+      messageEl.innerHTML = `<div class="message error">Enter both an asset ID and the new owner's pubkey.</div>`;
+      return;
+    }
+
+    try {
+      const opJson = build_transfer_asset_request(sessionKeystoreBytes, assetId, newOwnerHex);
+
+      const res = await fetch(API_BASE + "/v1/assets/transfer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: opJson,
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        messageEl.innerHTML = `<div class="message error">Node rejected transfer: ${errJson.error || res.status}</div>`;
+        return;
+      }
+
+      messageEl.innerHTML = `<div class="message success">Queued transfer of "${assetId}" - waiting for it to be mined&hellip;</div>`;
+      document.getElementById("transfer-asset-input").value = "";
+      document.getElementById("transfer-asset-new-owner-input").value = "";
+
+      pollForAssetConfirmation(assetId, () => {
+        messageEl.innerHTML = `<div class="message success">"${assetId}" transfer complete.</div>`;
+        pushActivity({ type: "asset_transferred", title: `Transferred ${assetId}`, detail: `to ${newOwnerHex}` });
+      }, { isConfirmed: (record) => bytesToHex(record.owner_pubkey) === newOwnerHex.toLowerCase() });
+    } catch (e) {
+      messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+    }
+  });
+
   // Requests funds from the node's own repeatable faucet (see src/api/faucet.rs)
   // - unlike the old single-use claim-genesis output, this can be used as many
   // times as needed, capped per request server-side. Runs the same two-party
@@ -1392,7 +1579,7 @@ function renderDashboard() {
   renderHistory();
 
   async function refreshFeeNotes() {
-    const [fee, nameFee] = await Promise.all([getSuggestedFee(), getSuggestedNameFee()]);
+    const [fee, nameFee, assetFee] = await Promise.all([getSuggestedFee(), getSuggestedNameFee(), getSuggestedAssetFee()]);
     const text = `current fee: ${fee}`;
     ["send-fee-note", "name-send-fee-note"].forEach((id) => {
       const el = document.getElementById(id);
@@ -1400,6 +1587,8 @@ function renderDashboard() {
     });
     const nameFeeEl = document.getElementById("register-name-fee-note");
     if (nameFeeEl) nameFeeEl.textContent = `current fee: ${nameFee}`;
+    const assetFeeEl = document.getElementById("mint-asset-fee-note");
+    if (assetFeeEl) assetFeeEl.textContent = `current fee: ${assetFee}`;
   }
   refreshFeeNotes();
 
