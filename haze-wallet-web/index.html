@@ -375,6 +375,7 @@ import init, {
   build_transfer_name_request,
   build_mint_asset_request, commit_mint_asset, build_transfer_asset_request, tx_kernel_excess_hex,
   build_create_listing_request, build_cancel_listing_request,
+  sign_identity_message,
   generate_keystore_with_mnemonic, restore_keystore_from_mnemonic,
   recover_wallet_from_chain, sweep_validator_rewards
 } from './pkg/haze_core.js';
@@ -1050,10 +1051,155 @@ async function retrySubmitAssetTransfer(opJson, assetId, onConfirmed, onGaveUp, 
   onGaveUp();
 }
 
+// ---------- marketplace deep-link handoff ----------
+// The standalone marketplace site (haze-marketplace-web) never touches this
+// wallet's keys - it hands off "connect"/"list"/"buy" requests via a plain
+// URL, this wallet shows exactly what's being asked for and requires an
+// explicit click before signing/broadcasting anything, then redirects back
+// to return_url with the result. Called once per render right after unlock
+// (renderDashboard), since these actions need sessionKeystoreBytes.
+function handleMarketplaceDeepLink() {
+  const params = new URLSearchParams(window.location.search);
+  const action = params.get("action");
+  const returnUrl = params.get("return_url");
+  if (!action || !returnUrl) return;
+  let origin;
+  try { origin = new URL(returnUrl).origin; } catch (e) { return; }
+
+  const banner = document.createElement("div");
+  banner.className = "panel";
+  banner.style.cssText = "margin: 0 auto 24px; border-color: var(--amber);";
+  document.getElementById("app").prepend(banner);
+  const deny = () => banner.remove();
+
+  if (action === "connect") {
+    const nonce = params.get("nonce") || "";
+    banner.innerHTML = `
+      <h2>Connect to marketplace?</h2>
+      <div class="sub"><strong>${origin}</strong> wants to verify you control this wallet's identity pubkey. Nothing is signed except this proof - no funds or assets move.</div>
+      <button class="btn-primary" id="dl-approve">Approve</button>
+      <button class="btn-ghost btn-small" id="dl-deny" style="margin-left:8px;">Deny</button>
+    `;
+    banner.querySelector("#dl-approve").addEventListener("click", () => {
+      try {
+        const pubkeyHex = wallet_identity_pubkey_hex(sessionKeystoreBytes);
+        const signatureHex = sign_identity_message(sessionKeystoreBytes, nonce);
+        const sep = returnUrl.includes("?") ? "&" : "?";
+        window.location.href = `${returnUrl}${sep}connected_pubkey=${pubkeyHex}&nonce=${encodeURIComponent(nonce)}&signature=${signatureHex}`;
+      } catch (e) {
+        banner.innerHTML = `<div class="message error">${e.message || e}</div>`;
+      }
+    });
+    banner.querySelector("#dl-deny").addEventListener("click", deny);
+  } else if (action === "list") {
+    const assetId = params.get("asset_id") || "";
+    const price = params.get("price") || "";
+    banner.innerHTML = `
+      <h2>List asset for sale?</h2>
+      <div class="sub"><strong>${origin}</strong> is asking you to publicly list <strong>${assetId}</strong> for <strong>${price}</strong>. Costs nothing, not irrevocable - you can cancel any time.</div>
+      <button class="btn-primary" id="dl-approve">Approve &amp; list</button>
+      <button class="btn-ghost btn-small" id="dl-deny" style="margin-left:8px;">Deny</button>
+      <div id="dl-message"></div>
+    `;
+    banner.querySelector("#dl-approve").addEventListener("click", async () => {
+      const msgEl = banner.querySelector("#dl-message");
+      try {
+        const listedAt = BigInt(Math.floor(Date.now() / 1000));
+        const listingJson = build_create_listing_request(sessionKeystoreBytes, assetId, BigInt(price), listedAt);
+        const res = await fetch(API_BASE + "/v1/marketplace/list", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: listingJson,
+        });
+        if (!res.ok) {
+          const errJson = await res.json().catch(() => ({}));
+          msgEl.innerHTML = `<div class="message error">${errJson.error || res.status}</div>`;
+          return;
+        }
+        const sep = returnUrl.includes("?") ? "&" : "?";
+        window.location.href = `${returnUrl}${sep}listed=1&asset_id=${encodeURIComponent(assetId)}`;
+      } catch (e) {
+        msgEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+      }
+    });
+    banner.querySelector("#dl-deny").addEventListener("click", deny);
+  } else if (action === "cancel_listing") {
+    const assetId = params.get("asset_id") || "";
+    banner.innerHTML = `
+      <h2>Cancel this listing?</h2>
+      <div class="sub"><strong>${origin}</strong> is asking you to withdraw your listing for <strong>${assetId}</strong>.</div>
+      <button class="btn-primary" id="dl-approve">Approve &amp; cancel</button>
+      <button class="btn-ghost btn-small" id="dl-deny" style="margin-left:8px;">Deny</button>
+      <div id="dl-message"></div>
+    `;
+    banner.querySelector("#dl-approve").addEventListener("click", async () => {
+      const msgEl = banner.querySelector("#dl-message");
+      try {
+        const cancelJson = build_cancel_listing_request(sessionKeystoreBytes, assetId);
+        const res = await fetch(API_BASE + "/v1/marketplace/cancel", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: cancelJson,
+        });
+        if (!res.ok) {
+          const errJson = await res.json().catch(() => ({}));
+          msgEl.innerHTML = `<div class="message error">${errJson.error || res.status}</div>`;
+          return;
+        }
+        const sep = returnUrl.includes("?") ? "&" : "?";
+        window.location.href = `${returnUrl}${sep}cancelled=1&asset_id=${encodeURIComponent(assetId)}`;
+      } catch (e) {
+        msgEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+      }
+    });
+    banner.querySelector("#dl-deny").addEventListener("click", deny);
+  } else if (action === "buy") {
+    const assetId = params.get("asset_id") || "";
+    const sellerPubkeyHex = (params.get("seller_pubkey") || "").toLowerCase();
+    const price = params.get("price") || "";
+    banner.innerHTML = `
+      <h2>Buy this asset?</h2>
+      <div class="sub"><strong>${origin}</strong> is asking you to buy <strong>${assetId}</strong> for <strong>${price}</strong> from <span class="keystore-note">${sellerPubkeyHex}</span>. Trustless - your payment and the transfer are cryptographically linked, so neither side can be scammed.</div>
+      <button class="btn-primary" id="dl-approve">Approve &amp; buy</button>
+      <button class="btn-ghost btn-small" id="dl-deny" style="margin-left:8px;">Deny</button>
+      <div id="dl-message"></div>
+    `;
+    banner.querySelector("#dl-approve").addEventListener("click", async () => {
+      const msgEl = banner.querySelector("#dl-message");
+      if (pendingPurchase) {
+        msgEl.innerHTML = `<div class="message error">A purchase is already in progress - wait for it to finish first.</div>`;
+        return;
+      }
+      try {
+        const storeBytes = loadWalletStoreBytes();
+        const fee = await getSuggestedFee();
+        const slate = create_send_slate(sessionKeystoreBytes, storeBytes, BigInt(price), fee);
+        sessionKeystoreBytes = slate.updated_keystore_bytes;
+        const myPubkeyHex = wallet_identity_pubkey_hex(sessionKeystoreBytes);
+        await fetch(API_BASE + "/v1/inbox/" + sellerPubkeyHex, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ from_pubkey_hex: myPubkeyHex, kind: "request", payload_json: slate.slate_json }),
+        });
+        pendingPurchase = { assetId, sellerPubkeyHex, price: price.toString(), pendingSlateBytes: slate.pending_slate_bytes, returnUrl };
+        banner.querySelector("#dl-approve").disabled = true;
+        msgEl.innerHTML = `<div class="message success">Offer sent - waiting for the seller to accept. You'll be redirected back to ${origin} once the purchase completes.</div>`;
+      } catch (e) {
+        msgEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+      }
+    });
+    banner.querySelector("#dl-deny").addEventListener("click", deny);
+  } else {
+    banner.remove();
+  }
+}
+
 function renderDashboard() {
   const app = document.getElementById("app");
   app.innerHTML = `
     <div class="dashboard">
+
+      <div id="buy-asset-message" style="max-width: 480px;"></div>
 
       <div class="tab-panel active" data-tab="wallet">
         <div class="stat-row">
@@ -1204,39 +1350,6 @@ function renderDashboard() {
         </div>
       </div>
 
-      <div class="tab-panel" data-tab="marketplace">
-        <div class="panel">
-          <h2>Browse listings</h2>
-          <div class="sub">Live listings gossiped across the network. Listings are discovery metadata only, not consensus state - a listing can lag reality by a block or two, so the actual buy is always re-checked against the asset's real on-chain owner.</div>
-          <button class="btn-primary" id="refresh-listings-btn">Refresh</button>
-          <div id="listings-feed"></div>
-        </div>
-
-        <div class="panel">
-          <h2>List an asset for sale</h2>
-          <div class="sub">Signs a public advertisement that you're willing to sell this asset at this price. Costs nothing and commits to nothing irrevocable - the actual transfer only happens once a buyer's payment is cryptographically linked to it (see "Buy an asset" below).</div>
-          <label>Asset ID</label>
-          <input type="text" id="list-asset-id-input" placeholder="e.g. cryptopunk-1" autocomplete="off" />
-          <label>Price</label>
-          <input type="number" id="list-price-input" min="1" />
-          <button class="btn-primary" id="list-asset-btn">List for sale</button>
-          <div id="list-asset-message"></div>
-        </div>
-
-        <div class="panel">
-          <h2>Buy an asset</h2>
-          <div class="sub">Trustless - your payment and the asset transfer are cryptographically linked, so neither side can be scammed. You pay, the seller signs a transfer that only becomes valid once your payment actually lands on-chain, then you broadcast both yourself. Click "Buy" on a listing above to prefill these, or enter them manually.</div>
-          <label>Asset ID</label>
-          <input type="text" id="buy-asset-id-input" placeholder="e.g. cryptopunk-1" autocomplete="off" />
-          <label>Seller's identity pubkey</label>
-          <input type="text" id="buy-seller-pubkey-input" placeholder="hex pubkey" autocomplete="off" />
-          <label>Price</label>
-          <input type="number" id="buy-price-input" min="1" />
-          <button class="btn-primary" id="buy-asset-btn">Buy</button>
-          <div id="buy-asset-message"></div>
-        </div>
-      </div>
-
       <div class="tab-panel" data-tab="more">
         <div class="panel">
           <h2>Become a validator</h2>
@@ -1295,10 +1408,6 @@ function renderDashboard() {
       <button class="nav-item" data-tab="assets">
         <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
         <span class="nav-label">Assets</span>
-      </button>
-      <button class="nav-item" data-tab="marketplace">
-        <svg viewBox="0 0 24 24"><path d="M3 9l1.5-5h15L21 9M3 9v10a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V9M3 9h18M9 13a3 3 0 0 0 6 0"/></svg>
-        <span class="nav-label">Market</span>
       </button>
       <button class="nav-item" data-tab="history">
         <svg viewBox="0 0 24 24"><path d="M12 7v5l3 3M20 12a8 8 0 1 1-8-8"/></svg>
@@ -1677,147 +1786,6 @@ function renderDashboard() {
     }
   });
 
-  async function loadListingsFeed() {
-    const feedEl = document.getElementById("listings-feed");
-    feedEl.innerHTML = `<div class="message">Loading&hellip;</div>`;
-    try {
-      const listings = await fetchJson("/v1/marketplace/listings?limit=100");
-      if (listings.length === 0) {
-        feedEl.innerHTML = `<div class="message">No listings yet.</div>`;
-        return;
-      }
-      const myPubkeyHex = wallet_identity_pubkey_hex(sessionKeystoreBytes);
-      feedEl.innerHTML = listings.map((l, i) => {
-        const sellerHex = bytesToHex(l.seller_pubkey);
-        const isMine = sellerHex === myPubkeyHex;
-        return `<div class="message">
-          <strong>${l.asset_id}</strong> - ${l.price} - <span class="keystore-note">${sellerHex}</span>
-          ${isMine
-            ? `<button class="btn-secondary" data-cancel-listing="${l.asset_id}">Cancel</button>`
-            : `<button class="btn-secondary" data-buy-listing="${i}">Buy</button>`}
-        </div>`;
-      }).join("");
-
-      feedEl.querySelectorAll("[data-buy-listing]").forEach(btn => {
-        btn.addEventListener("click", () => {
-          const l = listings[parseInt(btn.dataset.buyListing, 10)];
-          document.getElementById("buy-asset-id-input").value = l.asset_id;
-          document.getElementById("buy-seller-pubkey-input").value = bytesToHex(l.seller_pubkey);
-          document.getElementById("buy-price-input").value = l.price;
-        });
-      });
-      feedEl.querySelectorAll("[data-cancel-listing]").forEach(btn => {
-        btn.addEventListener("click", async () => {
-          try {
-            const cancelJson = build_cancel_listing_request(sessionKeystoreBytes, btn.dataset.cancelListing);
-            const res = await fetch(API_BASE + "/v1/marketplace/cancel", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: cancelJson,
-            });
-            if (!res.ok) {
-              const errJson = await res.json().catch(() => ({}));
-              alert("Failed to cancel: " + (errJson.error || res.status));
-              return;
-            }
-            loadListingsFeed();
-          } catch (e) {
-            alert(e.message || e);
-          }
-        });
-      });
-    } catch (e) {
-      feedEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
-    }
-  }
-  document.getElementById("refresh-listings-btn").addEventListener("click", loadListingsFeed);
-
-  document.getElementById("list-asset-btn").addEventListener("click", async () => {
-    const assetId = document.getElementById("list-asset-id-input").value.trim();
-    const price = BigInt(document.getElementById("list-price-input").value || "0");
-    const messageEl = document.getElementById("list-asset-message");
-    if (!assetId) {
-      messageEl.innerHTML = `<div class="message error">Enter an asset ID.</div>`;
-      return;
-    }
-    if (price <= 0n) {
-      messageEl.innerHTML = `<div class="message error">Enter a price.</div>`;
-      return;
-    }
-    try {
-      const listedAt = BigInt(Math.floor(Date.now() / 1000));
-      const listingJson = build_create_listing_request(sessionKeystoreBytes, assetId, price, listedAt);
-      const res = await fetch(API_BASE + "/v1/marketplace/list", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: listingJson,
-      });
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        messageEl.innerHTML = `<div class="message error">Node rejected listing: ${errJson.error || res.status}</div>`;
-        return;
-      }
-      messageEl.innerHTML = `<div class="message success">Listed "${assetId}" for ${price}.</div>`;
-      document.getElementById("list-asset-id-input").value = "";
-      document.getElementById("list-price-input").value = "";
-      loadListingsFeed();
-    } catch (e) {
-      messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
-    }
-  });
-
-  loadListingsFeed();
-
-  // Step 1 of the trustless marketplace atomic swap (see pollInbox for the
-  // rest): build a normal two-party payment slate targeting the seller,
-  // exactly like "Send to a name" - the difference is what happens once
-  // they accept it (see the "response" handling below), not this step.
-  document.getElementById("buy-asset-btn").addEventListener("click", async () => {
-    const assetId = document.getElementById("buy-asset-id-input").value.trim();
-    const sellerPubkeyHex = document.getElementById("buy-seller-pubkey-input").value.trim().toLowerCase();
-    const price = BigInt(document.getElementById("buy-price-input").value || "0");
-    const messageEl = document.getElementById("buy-asset-message");
-
-    if (!assetId || !sellerPubkeyHex) {
-      messageEl.innerHTML = `<div class="message error">Enter both an asset ID and the seller's identity pubkey.</div>`;
-      return;
-    }
-    if (price <= 0n) {
-      messageEl.innerHTML = `<div class="message error">Enter a price.</div>`;
-      return;
-    }
-    if (pendingPurchase) {
-      messageEl.innerHTML = `<div class="message error">You already have a purchase of "${pendingPurchase.assetId}" in progress. Wait for it to complete first.</div>`;
-      return;
-    }
-
-    try {
-      const storeBytes = loadWalletStoreBytes();
-      const fee = await getSuggestedFee();
-      const slate = create_send_slate(sessionKeystoreBytes, storeBytes, price, fee);
-      sessionKeystoreBytes = slate.updated_keystore_bytes;
-
-      const myPubkeyHex = wallet_identity_pubkey_hex(sessionKeystoreBytes);
-      const inboxRes = await fetch(API_BASE + "/v1/inbox/" + sellerPubkeyHex, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ from_pubkey_hex: myPubkeyHex, kind: "request", payload_json: slate.slate_json }),
-      });
-      if (!inboxRes.ok) {
-        messageEl.innerHTML = `<div class="message error">Failed to deliver payment request to the seller.</div>`;
-        return;
-      }
-
-      pendingPurchase = { assetId, sellerPubkeyHex, price: price.toString(), pendingSlateBytes: slate.pending_slate_bytes };
-      messageEl.innerHTML = `<div class="message success">Offer sent for "${assetId}" - waiting for the seller to accept&hellip;</div>`;
-      document.getElementById("buy-asset-id-input").value = "";
-      document.getElementById("buy-seller-pubkey-input").value = "";
-      document.getElementById("buy-price-input").value = "";
-    } catch (e) {
-      messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
-    }
-  });
-
   // Requests funds from the node's own repeatable faucet (see src/api/faucet.rs)
   // - unlike the old single-use claim-genesis output, this can be used as many
   // times as needed, capped per request server-side. Runs the same two-party
@@ -2149,6 +2117,13 @@ function renderDashboard() {
               body: op_json,
             });
             const assetId = pendingPurchase.assetId;
+            const purchasePrice = pendingPurchase.price;
+            const dealReturnUrl = pendingPurchase.returnUrl;
+            const redirectBack = (extra) => {
+              if (!dealReturnUrl) return;
+              const sep = dealReturnUrl.includes("?") ? "&" : "?";
+              window.location.href = `${dealReturnUrl}${sep}${extra}`;
+            };
             if (!transferRes.ok) {
               const errJson = await transferRes.json().catch(() => ({}));
               // The payment already broadcast successfully - the transfer
@@ -2160,19 +2135,22 @@ function renderDashboard() {
               messageEl.innerHTML = `<div class="message error">Payment broadcast, but the transfer wasn't accepted yet (${errJson.error || transferRes.status}) - retrying once your payment is mined&hellip;</div>`;
               retrySubmitAssetTransfer(op_json, assetId, () => {
                 messageEl.innerHTML = `<div class="message success">"${assetId}" purchase complete.</div>`;
-                pushActivity({ type: "asset_transferred", title: `Bought ${assetId}`, detail: `for ${pendingPurchase.price}` });
+                pushActivity({ type: "asset_transferred", title: `Bought ${assetId}`, detail: `for ${purchasePrice}` });
                 refreshBalance();
+                redirectBack(`bought=1&asset_id=${encodeURIComponent(assetId)}`);
               }, () => {
                 messageEl.innerHTML = `<div class="message error">"${assetId}" transfer still hasn't been accepted - your payment was broadcast, so nothing is lost, but you may need to try submitting the transfer again later.</div>`;
+                redirectBack(`bought=0&asset_id=${encodeURIComponent(assetId)}`);
               });
               pendingPurchase = null;
               continue;
             }
 
             messageEl.innerHTML = `<div class="message success">"${assetId}" purchase complete - both broadcast successfully.</div>`;
-            pushActivity({ type: "asset_transferred", title: `Bought ${assetId}`, detail: `for ${pendingPurchase.price}` });
+            pushActivity({ type: "asset_transferred", title: `Bought ${assetId}`, detail: `for ${purchasePrice}` });
             pendingPurchase = null;
             await refreshBalance();
+            redirectBack(`bought=1&asset_id=${encodeURIComponent(assetId)}`);
           } catch (e) {
             messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
             pendingPurchase = null;
@@ -2202,6 +2180,7 @@ function renderDashboard() {
     }
   }
 
+  handleMarketplaceDeepLink();
   refreshBalance();
   resolveMyName();
   setInterval(refreshBalance, 4000);

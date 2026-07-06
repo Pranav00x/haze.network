@@ -1,0 +1,15 @@
+{
+  "name": "haze",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "haze_core_bg.wasm",
+    "haze_core.js",
+    "haze_core.d.ts"
+  ],
+  "main": "haze_core.js",
+  "types": "haze_core.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

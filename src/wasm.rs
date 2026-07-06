@@ -702,6 +702,28 @@ pub fn wallet_identity_pubkey_hex(keystore_bytes: Vec<u8>) -> Result<String, JsV
     Ok(pubkey.to_hex())
 }
 
+/// Signs an arbitrary UTF-8 message with this wallet's identity key - used
+/// by the standalone marketplace site's "connect wallet" handoff (see
+/// haze-marketplace-web) to let the wallet prove control of its identity
+/// pubkey over a marketplace-issued nonce, without the marketplace site ever
+/// touching the wallet's keys directly.
+#[wasm_bindgen]
+pub fn sign_identity_message(keystore_bytes: Vec<u8>, message: String) -> Result<String, JsValue> {
+    let keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
+    let signature = Signature::sign(message.as_bytes(), &keystore.identity_key());
+    Ok(signature.to_hex())
+}
+
+/// Verifies a signature produced by sign_identity_message - lets the
+/// marketplace site check a "connect wallet" handoff's proof-of-pubkey
+/// client-side, with no server round-trip and no key material involved.
+#[wasm_bindgen]
+pub fn verify_identity_signature(pubkey_hex: String, message: String, signature_hex: String) -> Result<bool, JsValue> {
+    let pubkey = Commitment::from_hex(&pubkey_hex).ok_or_else(|| js_err("invalid pubkey hex"))?;
+    let signature = Signature::from_hex(&signature_hex).ok_or_else(|| js_err("invalid signature hex"))?;
+    Ok(signature.verify(message.as_bytes(), &pubkey))
+}
+
 /// Builds a TransferNameOp handing a name this wallet currently owns to a
 /// new owner/resolution target, signed with this wallet's identity key. No
 /// fee, no UTXO involved - the server rejects it if the signature doesn't

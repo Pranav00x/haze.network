@@ -104,6 +104,35 @@ impl Signature {
         
         self.e == expected_e
     }
+
+    /// Encodes the signature as a lowercase hex string (s || e, 64 bytes) -
+    /// mirrors Commitment::to_hex, used wherever a signature needs to travel
+    /// as a compact string rather than JSON (e.g. wasm bindings for the
+    /// marketplace connect-wallet handoff).
+    pub fn to_hex(&self) -> String {
+        let mut bytes = [0u8; 64];
+        bytes[0..32].copy_from_slice(self.s.as_bytes());
+        bytes[32..64].copy_from_slice(self.e.as_bytes());
+        bytes.iter().map(|b| format!("{:02x}", b)).collect()
+    }
+
+    /// Parses a signature from a lowercase hex string produced by to_hex().
+    pub fn from_hex(hex: &str) -> Option<Self> {
+        if hex.len() != 128 {
+            return None;
+        }
+        let mut bytes = [0u8; 64];
+        for i in 0..64 {
+            bytes[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?;
+        }
+        let mut s_bytes = [0u8; 32];
+        s_bytes.copy_from_slice(&bytes[0..32]);
+        let s = Scalar::from_canonical_bytes(s_bytes)?;
+        let mut e_bytes = [0u8; 32];
+        e_bytes.copy_from_slice(&bytes[32..64]);
+        let e = Scalar::from_canonical_bytes(e_bytes)?;
+        Some(Signature { s, e })
+    }
 }
 
 /// Additive support for two-party (interactive) Schnorr signing, e.g. for the
