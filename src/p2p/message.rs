@@ -3,6 +3,7 @@ use crate::core::transaction::Transaction;
 use crate::core::block::Block;
 use crate::core::registry::{RegisterNameOp, TransferNameOp};
 use crate::core::assets::{MintAssetOp, TransferAssetOp};
+use crate::core::marketplace::Listing;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum P2pMessage {
@@ -57,4 +58,16 @@ pub enum P2pMessage {
     NewMintOp(MintAssetOp),
     /// A pending asset transfer, gossiped the same way as NewTransferOp.
     NewTransferAssetOp(TransferAssetOp),
+    /// A marketplace listing (see core::marketplace) - gossiped the same
+    /// way, no Dandelion (a listing is meant to be publicly discoverable).
+    NewListing(Listing),
+    /// Cancels a previously-gossiped listing. Carries its own signature
+    /// (over asset_id + seller_pubkey) rather than reusing Listing's,
+    /// since cancellation is a distinct signed statement ("I withdraw
+    /// this") from the listing itself.
+    CancelListing {
+        asset_id: String,
+        seller_pubkey: crate::crypto::pedersen::Commitment,
+        signature: crate::crypto::schnorr::Signature,
+    },
 }

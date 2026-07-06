@@ -17,6 +17,7 @@ use crate::crypto::schnorr::Signature;
 use crate::core::transaction::{Transaction, Input, Output, TxKernel};
 use crate::core::registry::{RegisterNameOp, TransferNameOp, NAME_REGISTRATION_FEE, validate_name};
 use crate::core::assets::{MintAssetOp, TransferAssetOp, ASSET_MINT_FEE, validate_asset_id};
+use crate::core::marketplace::{Listing, cancel_signing_message};
 use crate::wallet::keystore::Keystore;
 use crate::wallet::store::{WalletStore, OutputStatus, GENESIS_INDEX};
 use crate::wallet::planner::{self, PlanError};
@@ -739,18 +740,23 @@ pub struct WasmMintAssetResult {
 
 /// Builds a MintAssetOp paying `fee` (must be >= ASSET_MINT_FEE) from the
 /// wallet's own confirmed UTXOs, signed with this wallet's stable identity
-/// key. `metadata` is arbitrary free-form text (a description, a URL,
-/// whatever) - it's never interpreted by consensus, just hashed into the
-/// 32-byte metadata_hash the op actually carries on-chain. Callers should
-/// pass GET /v1/fee-estimate's suggested_asset_fee rather than hardcoding
-/// ASSET_MINT_FEE, same reasoning as build_register_name_request. The caller
-/// must POST `op_json` themselves, then call `commit_mint_asset` only on
-/// success.
+/// key. `metadata` is free-form text (recommended shape: JSON
+/// `{title, description, image}`) stored directly on-chain, bounded at
+/// MAX_METADATA_BYTES - a real marketplace needs actual preview data, and
+/// storing only a hash would make browsing depend on an external metadata
+/// host, reintroducing exactly the trust dependency the atomic-swap design
+/// is trying to eliminate. Callers should pass GET /v1/fee-estimate's
+/// suggested_asset_fee rather than hardcoding ASSET_MINT_FEE, same reasoning
+/// as build_register_name_request. The caller must POST `op_json`
+/// themselves, then call `commit_mint_asset` only on success.
 #[wasm_bindgen]
 pub fn build_mint_asset_request(keystore_bytes: Vec<u8>, store_bytes: Vec<u8>, asset_id: String, metadata: String, fee: u64) -> Result<WasmMintAssetResult, JsValue> {
     validate_asset_id(&asset_id).map_err(|e| js_err(format!("invalid asset id: {:?}", e)))?;
     if fee < ASSET_MINT_FEE {
         return Err(js_err(format!("fee must be at least {}", ASSET_MINT_FEE)));
+    }
+    if metadata.len() > crate::core::assets::MAX_METADATA_BYTES {
+        return Err(js_err(format!("metadata must be at most {} bytes", crate::core::assets::MAX_METADATA_BYTES)));
     }
 
     let mut keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
@@ -797,22 +803,17 @@ pub fn build_mint_asset_request(keystore_bytes: Vec<u8>, store_bytes: Vec<u8>, a
         }],
     };
 
-    let metadata_hash: [u8; 32] = {
-        use sha2::{Sha256, Digest};
-        let mut hasher = Sha256::new();
-        hasher.update(metadata.as_bytes());
-        hasher.finalize().into()
-    };
+    let metadata_bytes = metadata.into_bytes();
 
     let owner_secret = keystore.identity_key();
     let gens = bulletproofs::PedersenGens::default();
     let owner_pubkey = Commitment(owner_secret * gens.B_blinding);
-    let signature = MintAssetOp::sign(&asset_id, &metadata_hash, &owner_secret);
+    let signature = MintAssetOp::sign(&asset_id, &metadata_bytes, &owner_secret);
 
     let op = MintAssetOp {
         asset_id,
         owner_pubkey,
-        metadata_hash,
+        metadata: metadata_bytes,
         fee_payment,
         signature,
     };
@@ -853,14 +854,78 @@ pub fn commit_mint_asset(store_bytes: Vec<u8>, spent_commitments_hex: Vec<String
 /// new owner's identity pubkey, signed with this wallet's identity key. No
 /// fee, no UTXO involved - the server rejects it if the signature doesn't
 /// actually match the asset's current on-chain owner.
+///
+/// `required_kernel_excess_hex`, if provided, makes this the trustless
+/// marketplace atomic-swap primitive: the transfer only becomes valid once a
+/// transaction kernel with that exact excess exists on-chain (see
+/// core::assets::TransferAssetOp::required_kernel_excess and
+/// tx_kernel_excess_hex below, which a buyer uses to get this value from
+/// their own finalized-but-not-yet-broadcast payment transaction). This
+/// lets a seller sign a transfer before a buyer's payment lands, safely -
+/// it's cryptographically inert until that payment is actually on-chain.
 #[wasm_bindgen]
-pub fn build_transfer_asset_request(keystore_bytes: Vec<u8>, asset_id: String, new_owner_pubkey_hex: String) -> Result<String, JsValue> {
+pub fn build_transfer_asset_request(keystore_bytes: Vec<u8>, asset_id: String, new_owner_pubkey_hex: String, required_kernel_excess_hex: Option<String>) -> Result<String, JsValue> {
     let keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
     let new_owner_pubkey = Commitment::from_hex(&new_owner_pubkey_hex).ok_or_else(|| js_err("invalid new owner pubkey hex"))?;
+    let required_kernel_excess = match required_kernel_excess_hex {
+        Some(hex) => Some(Commitment::from_hex(&hex).ok_or_else(|| js_err("invalid required kernel excess hex"))?),
+        None => None,
+    };
 
     let current_owner_secret = keystore.identity_key();
-    let signature = TransferAssetOp::sign(&asset_id, &new_owner_pubkey, &current_owner_secret);
+    let signature = TransferAssetOp::sign(&asset_id, &new_owner_pubkey, &required_kernel_excess, &current_owner_secret);
 
-    let op = TransferAssetOp { asset_id, new_owner_pubkey, signature };
+    let op = TransferAssetOp { asset_id, new_owner_pubkey, required_kernel_excess, signature };
     serde_json::to_string(&op).map_err(|_| js_err("failed to serialize transfer"))
+}
+
+/// Extracts a finalized (but not necessarily yet broadcast) transaction's
+/// kernel excess as hex - used by a marketplace buyer to learn the exact
+/// value to send the seller in a "want_transfer" inbox message, so the
+/// seller can build a TransferAssetOp conditioned on this specific payment
+/// (see build_transfer_asset_request's required_kernel_excess_hex). Every
+/// Haze transaction has exactly one kernel by construction (see
+/// wallet::slate::finalize_slate/wallet::planner::plan_send), so this
+/// always reads kernels[0].
+#[wasm_bindgen]
+pub fn tx_kernel_excess_hex(transaction_json: String) -> Result<String, JsValue> {
+    let tx: Transaction = serde_json::from_str(&transaction_json).map_err(|_| js_err("invalid transaction json"))?;
+    let kernel = tx.kernels.first().ok_or_else(|| js_err("transaction has no kernels"))?;
+    Ok(kernel.excess.to_hex())
+}
+
+/// Builds a signed marketplace Listing (see core::marketplace) advertising
+/// an asset this wallet owns for sale at `price`, signed with this wallet's
+/// identity key - the same key the asset's owner_pubkey on-chain is
+/// expected to match, checked server-side at POST /v1/marketplace/list.
+#[wasm_bindgen]
+pub fn build_create_listing_request(keystore_bytes: Vec<u8>, asset_id: String, price: u64, listed_at: u64) -> Result<String, JsValue> {
+    let keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
+    let seller_secret = keystore.identity_key();
+    let gens = bulletproofs::PedersenGens::default();
+    let seller_pubkey = Commitment(seller_secret * gens.B_blinding);
+
+    let signature = Listing::sign(&asset_id, &seller_pubkey, price, listed_at, &seller_secret);
+    let listing = Listing { asset_id, seller_pubkey, price, listed_at, signature };
+    serde_json::to_string(&listing).map_err(|_| js_err("failed to serialize listing"))
+}
+
+/// Builds a signed cancellation for a listing this wallet previously
+/// created - see POST /v1/marketplace/cancel.
+#[wasm_bindgen]
+pub fn build_cancel_listing_request(keystore_bytes: Vec<u8>, asset_id: String) -> Result<String, JsValue> {
+    let keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
+    let seller_secret = keystore.identity_key();
+    let gens = bulletproofs::PedersenGens::default();
+    let seller_pubkey = Commitment(seller_secret * gens.B_blinding);
+
+    let signature = Signature::sign(&cancel_signing_message(&asset_id, &seller_pubkey), &seller_secret);
+
+    #[derive(serde::Serialize)]
+    struct CancelListingRequest {
+        asset_id: String,
+        seller_pubkey: Commitment,
+        signature: Signature,
+    }
+    serde_json::to_string(&CancelListingRequest { asset_id, seller_pubkey, signature }).map_err(|_| js_err("failed to serialize cancellation"))
 }

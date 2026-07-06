@@ -131,15 +131,31 @@ export class WasmSweepResult {
 }
 
 /**
+ * Builds a signed cancellation for a listing this wallet previously
+ * created - see POST /v1/marketplace/cancel.
+ */
+export function build_cancel_listing_request(keystore_bytes: Uint8Array, asset_id: string): string;
+
+/**
+ * Builds a signed marketplace Listing (see core::marketplace) advertising
+ * an asset this wallet owns for sale at `price`, signed with this wallet's
+ * identity key - the same key the asset's owner_pubkey on-chain is
+ * expected to match, checked server-side at POST /v1/marketplace/list.
+ */
+export function build_create_listing_request(keystore_bytes: Uint8Array, asset_id: string, price: bigint, listed_at: bigint): string;
+
+/**
  * Builds a MintAssetOp paying `fee` (must be >= ASSET_MINT_FEE) from the
  * wallet's own confirmed UTXOs, signed with this wallet's stable identity
- * key. `metadata` is arbitrary free-form text (a description, a URL,
- * whatever) - it's never interpreted by consensus, just hashed into the
- * 32-byte metadata_hash the op actually carries on-chain. Callers should
- * pass GET /v1/fee-estimate's suggested_asset_fee rather than hardcoding
- * ASSET_MINT_FEE, same reasoning as build_register_name_request. The caller
- * must POST `op_json` themselves, then call `commit_mint_asset` only on
- * success.
+ * key. `metadata` is free-form text (recommended shape: JSON
+ * `{title, description, image}`) stored directly on-chain, bounded at
+ * MAX_METADATA_BYTES - a real marketplace needs actual preview data, and
+ * storing only a hash would make browsing depend on an external metadata
+ * host, reintroducing exactly the trust dependency the atomic-swap design
+ * is trying to eliminate. Callers should pass GET /v1/fee-estimate's
+ * suggested_asset_fee rather than hardcoding ASSET_MINT_FEE, same reasoning
+ * as build_register_name_request. The caller must POST `op_json`
+ * themselves, then call `commit_mint_asset` only on success.
  */
 export function build_mint_asset_request(keystore_bytes: Uint8Array, store_bytes: Uint8Array, asset_id: string, metadata: string, fee: bigint): WasmMintAssetResult;
 
@@ -179,8 +195,17 @@ export function build_stake_request(keystore_bytes: Uint8Array, store_bytes: Uin
  * new owner's identity pubkey, signed with this wallet's identity key. No
  * fee, no UTXO involved - the server rejects it if the signature doesn't
  * actually match the asset's current on-chain owner.
+ *
+ * `required_kernel_excess_hex`, if provided, makes this the trustless
+ * marketplace atomic-swap primitive: the transfer only becomes valid once a
+ * transaction kernel with that exact excess exists on-chain (see
+ * core::assets::TransferAssetOp::required_kernel_excess and
+ * tx_kernel_excess_hex below, which a buyer uses to get this value from
+ * their own finalized-but-not-yet-broadcast payment transaction). This
+ * lets a seller sign a transfer before a buyer's payment lands, safely -
+ * it's cryptographically inert until that payment is actually on-chain.
  */
-export function build_transfer_asset_request(keystore_bytes: Uint8Array, asset_id: string, new_owner_pubkey_hex: string): string;
+export function build_transfer_asset_request(keystore_bytes: Uint8Array, asset_id: string, new_owner_pubkey_hex: string, required_kernel_excess_hex?: string | null): string;
 
 /**
  * Builds a TransferNameOp handing a name this wallet currently owns to a
@@ -328,6 +353,18 @@ export function reveal_stake_blinding_hex(keystore_bytes: Uint8Array, store_byte
 export function sweep_validator_rewards(stake_key_hex: string, scan_entries_json: string, chain_utxo_commitments_hex: string[], keystore_bytes: Uint8Array, fee: bigint): WasmSweepResult;
 
 /**
+ * Extracts a finalized (but not necessarily yet broadcast) transaction's
+ * kernel excess as hex - used by a marketplace buyer to learn the exact
+ * value to send the seller in a "want_transfer" inbox message, so the
+ * seller can build a TransferAssetOp conditioned on this specific payment
+ * (see build_transfer_asset_request's required_kernel_excess_hex). Every
+ * Haze transaction has exactly one kernel by construction (see
+ * wallet::slate::finalize_slate/wallet::planner::plan_send), so this
+ * always reads kernels[0].
+ */
+export function tx_kernel_excess_hex(transaction_json: string): string;
+
+/**
  * Confirmed (safely spendable) balance.
  */
 export function wallet_balance(store_bytes: Uint8Array): bigint;
@@ -406,11 +443,13 @@ export interface InitOutput {
     readonly __wbg_wasmrespondresult_free: (a: number, b: number) => void;
     readonly __wbg_wasmsendplan_free: (a: number, b: number) => void;
     readonly __wbg_wasmsweepresult_free: (a: number, b: number) => void;
+    readonly build_cancel_listing_request: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly build_create_listing_request: (a: number, b: number, c: number, d: number, e: bigint, f: bigint) => [number, number, number, number];
     readonly build_mint_asset_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: bigint) => [number, number, number];
     readonly build_register_name_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: bigint) => [number, number, number];
     readonly build_sponsored_register_name_request: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly build_stake_request: (a: number, b: number, c: number, d: number, e: bigint) => [number, number, number, number];
-    readonly build_transfer_asset_request: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
+    readonly build_transfer_asset_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
     readonly build_transfer_name_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
     readonly claim_genesis: (a: number, b: number) => [number, number, number, number];
     readonly commit_mint_asset: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
@@ -427,6 +466,7 @@ export interface InitOutput {
     readonly restore_keystore_from_mnemonic: (a: number, b: number) => [number, number, number, number];
     readonly reveal_stake_blinding_hex: (a: number, b: number, c: number, d: number, e: bigint) => [number, number, number, number];
     readonly sweep_validator_rewards: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: bigint) => [number, number, number];
+    readonly tx_kernel_excess_hex: (a: number, b: number) => [number, number, number, number];
     readonly wallet_balance: (a: number, b: number) => [bigint, number, number];
     readonly wallet_identity_pubkey_hex: (a: number, b: number) => [number, number, number, number];
     readonly wallet_pending_balance: (a: number, b: number) => [bigint, number, number];

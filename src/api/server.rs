@@ -8,11 +8,13 @@ use crate::core::mempool::Mempool;
 use crate::core::chain::ChainState;
 use crate::core::storage::Storage;
 use crate::core::transaction::Transaction;
+use crate::core::marketplace::MarketplaceState;
 use crate::p2p::server::P2pServer;
 use super::explorer;
 use super::faucet::{self, FaucetState};
 use super::names;
 use super::assets;
+use super::marketplace;
 use super::inbox::{self, InboxState};
 
 pub struct ApiServer;
@@ -23,6 +25,7 @@ impl ApiServer {
         chain: Arc<Mutex<ChainState>>,
         p2p_server: Arc<P2pServer>,
         storage: Arc<Storage>,
+        marketplace_state: Arc<MarketplaceState>,
         port: u16,
     ) {
         let faucet_state = {
@@ -57,6 +60,13 @@ impl ApiServer {
         let inbox_state = Arc::new(InboxState::new());
         let inbox_filter = warp::any().map(move || Arc::clone(&inbox_state));
         let inbox_filter_2 = inbox_filter.clone();
+
+        let marketplace_filter = warp::any().map(move || Arc::clone(&marketplace_state));
+        let marketplace_filter_2 = marketplace_filter.clone();
+        let marketplace_filter_3 = marketplace_filter.clone();
+        let marketplace_filter_4 = marketplace_filter.clone();
+        let p2p_filter_9 = p2p_filter.clone();
+        let p2p_filter_10 = p2p_filter.clone();
 
         // Caps request body size for the two write endpoints - now that this
         // API is meant to be internet-facing, an unbounded body from an
@@ -268,6 +278,39 @@ impl ApiServer {
             .and(chain_filter.clone())
             .and_then(assets::handle_list_assets);
 
+        // POST /v1/marketplace/list - creates or replaces a listing (see
+        // api/marketplace.rs and core::marketplace). Not part of consensus -
+        // no mempool involvement, just MarketplaceState + P2P gossip.
+        let create_listing_route = warp::post()
+            .and(warp::path!("v1" / "marketplace" / "list"))
+            .and(warp::body::content_length_limit(MAX_BODY_SIZE))
+            .and(warp::body::json())
+            .and(marketplace_filter)
+            .and(p2p_filter_9)
+            .and(chain_filter.clone())
+            .and_then(marketplace::handle_create_listing);
+
+        // POST /v1/marketplace/cancel
+        let cancel_listing_route = warp::post()
+            .and(warp::path!("v1" / "marketplace" / "cancel"))
+            .and(warp::body::content_length_limit(MAX_BODY_SIZE))
+            .and(warp::body::json())
+            .and(marketplace_filter_2)
+            .and(p2p_filter_10)
+            .and_then(marketplace::handle_cancel_listing);
+
+        // GET /v1/marketplace/listings
+        let list_listings_route = warp::get()
+            .and(warp::path!("v1" / "marketplace" / "listings"))
+            .and(marketplace_filter_3)
+            .and_then(marketplace::handle_list_listings);
+
+        // GET /v1/marketplace/listings/:asset_id
+        let get_listing_route = warp::get()
+            .and(warp::path!("v1" / "marketplace" / "listings" / String))
+            .and(marketplace_filter_4)
+            .and_then(marketplace::handle_get_listing);
+
         // GET /v1/p2p/ws - WebSocket P2P transport, for peers that can't be
         // dialed via raw TCP (see src/p2p/transport.rs for why this exists -
         // Render only proxies a single HTTP(S) port, so this rides on the
@@ -324,6 +367,10 @@ impl ApiServer {
             .or(transfer_asset_route)
             .or(resolve_asset_route)
             .or(list_assets_route)
+            .or(create_listing_route)
+            .or(cancel_listing_route)
+            .or(list_listings_route)
+            .or(get_listing_route)
             .or(p2p_ws_route)
             .or(post_inbox_route)
             .or(get_inbox_route)

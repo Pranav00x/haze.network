@@ -429,9 +429,6 @@ const EXPLORER_HTML: &str = r#"<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Haze &mdash; Explorer</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,340..600&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script>
   // Applied synchronously, before CSS paints, to avoid a flash of the wrong
   // theme on load - a saved choice always wins; otherwise falls back to the
@@ -442,6 +439,9 @@ const EXPLORER_HTML: &str = r#"<!DOCTYPE html>
     document.documentElement.setAttribute("data-theme", theme);
   })();
 </script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,340..600&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root {
     color-scheme: dark;
@@ -541,6 +541,47 @@ const EXPLORER_HTML: &str = r#"<!DOCTYPE html>
     margin-left: 2px;
   }
 
+  .topbar-right { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+
+  .node-indicator {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    background: var(--fog-1);
+    border: 1px solid var(--fog-3);
+    border-radius: 3px;
+    padding: 7px 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    transition: border-color 0.2s ease, color 0.2s ease;
+  }
+  .node-indicator:hover { border-color: var(--mist); color: var(--ink-dim); }
+  .node-indicator .node-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-faint); flex-shrink: 0; }
+  .node-indicator .node-dot.online { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in oklch, var(--ok) 15%, transparent); }
+  .node-indicator .node-dot.offline { background: var(--danger); box-shadow: 0 0 0 3px color-mix(in oklch, var(--danger) 15%, transparent); }
+
+  .theme-toggle {
+    font-family: var(--font-mono);
+    color: var(--ink-faint);
+    background: var(--fog-1);
+    border: 1px solid var(--fog-3);
+    border-radius: 3px;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: border-color 0.2s ease, color 0.2s ease;
+  }
+  .theme-toggle:hover { border-color: var(--mist); color: var(--ink-dim); }
+  .theme-toggle svg { width: 15px; height: 15px; }
+  .theme-toggle .icon-moon { display: none; }
+  :root[data-theme="light"] .theme-toggle .icon-sun { display: none; }
+  :root[data-theme="light"] .theme-toggle .icon-moon { display: block; }
+
   .search-form {
     position: relative;
     width: min(480px, 100%);
@@ -571,28 +612,6 @@ const EXPLORER_HTML: &str = r#"<!DOCTYPE html>
     border-radius: 2px;
   }
   .search-form button:hover { color: var(--amber); }
-
-  .topbar-right { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
-
-  .theme-toggle {
-    font-family: var(--font-mono);
-    color: var(--ink-faint);
-    background: var(--fog-1);
-    border: 1px solid var(--fog-3);
-    border-radius: 3px;
-    width: 30px;
-    height: 30px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    transition: border-color 0.2s ease, color 0.2s ease;
-  }
-  .theme-toggle:hover { border-color: var(--mist); color: var(--ink-dim); }
-  .theme-toggle svg { width: 15px; height: 15px; }
-  .theme-toggle .icon-moon { display: none; }
-  :root[data-theme="light"] .theme-toggle .icon-sun { display: none; }
-  :root[data-theme="light"] .theme-toggle .icon-moon { display: block; }
 
   /* ---------- Stat row (asymmetric, not a repeated card grid) ---------- */
   .stat-row {
@@ -698,6 +717,7 @@ const EXPLORER_HTML: &str = r#"<!DOCTYPE html>
   .row-meta .fee { color: var(--amber); font-family: var(--font-mono); }
 
   .empty-state { padding: 28px 4px; color: var(--ink-faint); font-size: 13.5px; border-bottom: 1px solid var(--fog-2); }
+  .empty-state .empty-link { color: var(--mist); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 
   /* ---------- Detail expansion ---------- */
   .detail-box {
@@ -732,6 +752,10 @@ const EXPLORER_HTML: &str = r#"<!DOCTYPE html>
         <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path></svg>
         <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
       </button>
+      <div class="node-indicator" id="node-indicator" title="Click to change the Haze node this explorer talks to">
+        <span class="node-dot" id="node-dot"></span>
+        <span id="node-label">&mdash;</span>
+      </div>
       <form class="search-form" id="search-form">
         <input id="search-input" type="text" placeholder="Block height, block hash, or transaction / commitment hash" autocomplete="off" />
         <button type="submit" aria-label="Search">&#8594;</button>
@@ -777,9 +801,59 @@ const EXPLORER_HTML: &str = r#"<!DOCTYPE html>
       <h2><span class="dot"></span> Latest Transactions</h2>
       <div class="row-list" id="txs-body"></div>
     </section>
+    <section class="panel">
+      <h2><span class="dot"></span> Marketplace Listings</h2>
+      <div class="row-list" id="listings-body"></div>
+    </section>
   </main>
 
 <script>
+// ---------- Node API base resolution ----------
+// Standalone deployment (unlike the embedded explorer served by the node
+// itself) has no same-origin API to call, so the node URL is user-configurable:
+// ?api=<url> query param (persisted to localStorage) > previously saved value
+// > a localhost default for local development.
+const DEFAULT_API_BASE = "http://localhost:8332";
+const STORAGE_KEY = "hazeApiBase";
+
+document.getElementById("theme-toggle").addEventListener("click", () => {
+  const current = document.documentElement.getAttribute("data-theme");
+  const next = current === "light" ? "dark" : "light";
+  document.documentElement.setAttribute("data-theme", next);
+  localStorage.setItem("hazeTheme", next);
+});
+
+function resolveApiBase() {
+  const params = new URLSearchParams(window.location.search);
+  const fromQuery = params.get("api");
+  if (fromQuery) {
+    localStorage.setItem(STORAGE_KEY, fromQuery);
+    return fromQuery.replace(/\/+$/, "");
+  }
+  const saved = localStorage.getItem(STORAGE_KEY);
+  if (saved) return saved.replace(/\/+$/, "");
+  return DEFAULT_API_BASE;
+}
+
+let API_BASE = resolveApiBase();
+let nodeReachable = false;
+
+function renderNodeIndicator() {
+  document.getElementById("node-label").textContent = API_BASE;
+  const dot = document.getElementById("node-dot");
+  dot.className = "node-dot " + (nodeReachable ? "online" : "offline");
+}
+
+document.getElementById("node-indicator").addEventListener("click", () => {
+  const next = window.prompt("Haze node API URL (e.g. http://your-node-host:8332):", API_BASE);
+  if (next && next.trim()) {
+    API_BASE = next.trim().replace(/\/+$/, "");
+    localStorage.setItem(STORAGE_KEY, API_BASE);
+    renderNodeIndicator();
+    refreshAll();
+  }
+});
+
 const shortHash = (h, n) => h.slice(0, n || 14) + "&hellip;";
 const timeAgo = (unixSecs) => {
   if (!unixSecs) return "—";
@@ -790,16 +864,14 @@ const timeAgo = (unixSecs) => {
   return Math.floor(diff / 3600) + "h ago";
 };
 
-document.getElementById("theme-toggle").addEventListener("click", () => {
-  const current = document.documentElement.getAttribute("data-theme");
-  const next = current === "light" ? "dark" : "light";
-  document.documentElement.setAttribute("data-theme", next);
-  localStorage.setItem("hazeTheme", next);
-});
-
-async function fetchJson(url) {
-  const res = await fetch(url);
+async function fetchJson(path) {
+  const res = await fetch(API_BASE + path);
+  if (!res.ok) throw new Error("HTTP " + res.status);
   return res.json();
+}
+
+function unreachableMessage() {
+  return `Can&rsquo;t reach a node at <strong>${API_BASE}</strong> &mdash; click <span class="empty-link" onclick="document.getElementById('node-indicator').click()">Node</span> above to point at a running Haze node.`;
 }
 
 async function refreshStatus() {
@@ -938,9 +1010,58 @@ async function refreshTransactions() {
   txs.forEach(t => body.appendChild(txRow(t)));
 }
 
-async function refreshValidators() {
-  // Folded into refreshStatus's validator count; kept as a no-op hook so
-  // future per-validator detail can slot in without touching refreshAll.
+// Metadata is stored on-chain as raw bytes (see core::assets::AssetRecord)
+// - interpreted here as UTF-8 text, and if it happens to parse as JSON with
+// a title/description/image shape, rendered as a real preview instead of
+// raw text (see core::assets's own doc comment: consensus only enforces a
+// length cap, everything else is a UI-layer convention).
+function decodeAssetMetadata(bytes) {
+  try {
+    const text = new TextDecoder("utf-8", { fatal: false }).decode(new Uint8Array(bytes));
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed && typeof parsed === "object") return { title: parsed.title, description: parsed.description, image: parsed.image, raw: text };
+    } catch (_) { /* not JSON - fall through to plain text */ }
+    return { raw: text };
+  } catch (_) {
+    return { raw: "" };
+  }
+}
+
+function listingRow(l, asset) {
+  const row = document.createElement("div");
+  row.className = "row";
+  const meta = asset ? decodeAssetMetadata(asset.metadata) : { raw: "" };
+  const preview = meta.image
+    ? `<img src="${meta.image}" alt="" style="width:36px;height:36px;object-fit:cover;border-radius:6px;vertical-align:middle;margin-right:8px;" onerror="this.style.display='none'">`
+    : "";
+  const title = meta.title || l.asset_id;
+  const description = (meta.description || meta.raw || "").slice(0, 80);
+  row.innerHTML = `
+    <span class="row-badge">${l.price}</span>
+    <span class="row-main">
+      <span class="row-hash">${preview}${title}</span>
+      <div class="row-sub">${description}</div>
+    </span>
+    <span class="row-meta">seller<br>${shortHash(bytesHex(l.seller_pubkey), 12)}</span>
+  `;
+  return row;
+}
+
+function bytesHex(byteArray) {
+  return byteArray.map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function refreshListings() {
+  const listings = await fetchJson("/v1/marketplace/listings?limit=20");
+  const body = document.getElementById("listings-body");
+  body.innerHTML = "";
+  if (listings.length === 0) {
+    body.innerHTML = `<div class="empty-state">No marketplace listings yet.</div>`;
+    return;
+  }
+  const assets = await Promise.all(listings.map(l => fetchJson(`/v1/assets/${encodeURIComponent(l.asset_id)}`).catch(() => null)));
+  listings.forEach((l, i) => body.appendChild(listingRow(l, assets[i])));
 }
 
 async function runSearch(query) {
@@ -951,25 +1072,29 @@ async function runSearch(query) {
     return;
   }
 
-  const result = await fetchJson("/v1/search?q=" + encodeURIComponent(query.trim()));
+  try {
+    const result = await fetchJson("/v1/search?q=" + encodeURIComponent(query.trim()));
 
-  if (result.result_type === "not_found") {
-    inner.innerHTML = `<div class="sr-label">No match</div><div class="sr-empty">Nothing found for "${query}". Try a block height, a full block hash, or a transaction/commitment hash (64 hex characters).</div>`;
-  } else {
-    const typeLabel = result.result_type === "block" ? "Block found"
-      : result.result_type === "transaction" ? "Transaction found in block"
-      : "Commitment found in block";
-    // Jumps straight to the matching block's detail (highlighting the
-    // specific kernel/commitment/hash that matched) instead of making the
-    // user click a second time - deep links (?q=...) should land on the
-    // actual thing being searched for, not one click short of it.
-    inner.innerHTML = `<div class="sr-label">${typeLabel}</div><div class="sr-empty">Height <span class="sr-link" id="sr-jump">#${result.height}</span></div>`;
-    const b = await fetchJson(`/v1/blocks/${result.height}`);
-    const highlightHex = result.result_type === "block" ? b.hash : query.trim();
-    inner.appendChild(renderDetailBox(b, highlightHex));
-    document.getElementById("sr-jump").addEventListener("click", () => {
-      document.getElementById("sr-jump").scrollIntoView({ behavior: "smooth", block: "center" });
-    });
+    if (result.result_type === "not_found") {
+      inner.innerHTML = `<div class="sr-label">No match</div><div class="sr-empty">Nothing found for "${query}". Try a block height, a full block hash, or a transaction/commitment hash (64 hex characters).</div>`;
+    } else {
+      const typeLabel = result.result_type === "block" ? "Block found"
+        : result.result_type === "transaction" ? "Transaction found in block"
+        : "Commitment found in block";
+      // Jumps straight to the matching block's detail (highlighting the
+      // specific kernel/commitment/hash that matched) instead of making the
+      // user click a second time - deep links (?q=...) should land on the
+      // actual thing being searched for, not one click short of it.
+      inner.innerHTML = `<div class="sr-label">${typeLabel}</div><div class="sr-empty">Height <span class="sr-link" id="sr-jump">#${result.height}</span></div>`;
+      const b = await fetchJson(`/v1/blocks/${result.height}`);
+      const highlightHex = result.result_type === "block" ? b.hash : query.trim();
+      inner.appendChild(renderDetailBox(b, highlightHex));
+      document.getElementById("sr-jump").addEventListener("click", () => {
+        document.getElementById("sr-jump").scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    }
+  } catch (e) {
+    inner.innerHTML = `<div class="sr-label">Search unavailable</div><div class="sr-empty">${unreachableMessage()}</div>`;
   }
   panel.classList.add("open");
 }
@@ -980,9 +1105,22 @@ document.getElementById("search-form").addEventListener("submit", (e) => {
 });
 
 async function refreshAll() {
-  await Promise.all([refreshStatus(), refreshBlocks(), refreshTransactions(), refreshBlocksTime()]);
+  try {
+    await Promise.all([refreshStatus(), refreshBlocks(), refreshTransactions(), refreshBlocksTime(), refreshListings()]);
+    nodeReachable = true;
+  } catch (e) {
+    nodeReachable = false;
+    document.getElementById("blocks-body").innerHTML = `<div class="empty-state">${unreachableMessage()}</div>`;
+    document.getElementById("txs-body").innerHTML = `<div class="empty-state">${unreachableMessage()}</div>`;
+    document.getElementById("listings-body").innerHTML = `<div class="empty-state">${unreachableMessage()}</div>`;
+    ["stat-height", "stat-tip", "stat-validators", "stat-mempool", "stat-time"].forEach(id => {
+      document.getElementById(id).textContent = "—";
+    });
+  }
+  renderNodeIndicator();
 }
 
+renderNodeIndicator();
 refreshAll();
 setInterval(refreshAll, 5000);
 

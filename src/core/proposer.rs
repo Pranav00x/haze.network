@@ -260,7 +260,7 @@ impl Proposer {
                         asset_registry_snapshot.insert(op.asset_id.clone(), crate::core::assets::AssetRecord {
                             asset_id: op.asset_id.clone(),
                             owner_pubkey: op.owner_pubkey,
-                            metadata_hash: op.metadata_hash,
+                            metadata: op.metadata.clone(),
                             minted_at_block: next_height,
                         });
                         mint_ops.push(op);
@@ -273,6 +273,24 @@ impl Proposer {
                         let c = self.chain.lock().unwrap();
                         c.asset_registry.clone()
                     };
+                    // Every kernel excess this candidate block would itself add,
+                    // mirroring apply_linear_block's block_kernel_excesses - a
+                    // conditional transfer (marketplace atomic swap) referencing
+                    // a payment kernel bundled into THIS SAME block must not be
+                    // filtered out here just because it hasn't landed historically
+                    // yet (see core::assets::TransferAssetOp::required_kernel_excess).
+                    let mut candidate_kernel_excesses: std::collections::HashSet<Commitment> =
+                        tx.kernels.iter().map(|k| k.excess).collect();
+                    for op in &mint_ops {
+                        candidate_kernel_excesses.extend(op.fee_payment.kernels.iter().map(|k| k.excess));
+                    }
+                    for op in &name_ops {
+                        candidate_kernel_excesses.extend(op.fee_payment.kernels.iter().map(|k| k.excess));
+                    }
+                    let historical_kernel_excesses = {
+                        let c = self.chain.lock().unwrap();
+                        c.kernel_excesses.clone()
+                    };
                     let mut assets_touched: std::collections::HashSet<String> = mint_ops.iter().map(|op| op.asset_id.clone()).collect();
                     let mut transfer_asset_ops = Vec::new();
                     for op in candidate_transfer_asset_ops {
@@ -280,15 +298,22 @@ impl Proposer {
                             continue;
                         }
                         let Some(current) = original_asset_registry.get(&op.asset_id) else { continue };
-                        let msg = crate::core::assets::TransferAssetOp::signing_message(&op.asset_id, &op.new_owner_pubkey);
+                        let msg = crate::core::assets::TransferAssetOp::signing_message(&op.asset_id, &op.new_owner_pubkey, &op.required_kernel_excess);
                         if !op.signature.verify(&msg, &current.owner_pubkey) {
                             continue;
+                        }
+                        if let Some(required_excess) = op.required_kernel_excess {
+                            let satisfied = historical_kernel_excesses.contains(&required_excess)
+                                || candidate_kernel_excesses.contains(&required_excess);
+                            if !satisfied {
+                                continue;
+                            }
                         }
                         assets_touched.insert(op.asset_id.clone());
                         asset_registry_snapshot.insert(op.asset_id.clone(), crate::core::assets::AssetRecord {
                             asset_id: op.asset_id.clone(),
                             owner_pubkey: op.new_owner_pubkey,
-                            metadata_hash: current.metadata_hash,
+                            metadata: current.metadata.clone(),
                             minted_at_block: current.minted_at_block,
                         });
                         transfer_asset_ops.push(op);

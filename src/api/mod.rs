@@ -3,4 +3,5 @@ pub mod explorer;
 pub mod faucet;
 pub mod names;
 pub mod assets;
+pub mod marketplace;
 pub mod inbox;

@@ -455,7 +455,8 @@ mod tests {
         // 2. Start the P2pServer
         let test_db_path = format!("{}/haze_test_db_{}", std::env::temp_dir().display(), std::process::id());
         let storage = Arc::new(crate::core::storage::Storage::open_at(&test_db_path));
-        let p2p_server = Arc::new(crate::p2p::server::P2pServer::new(Arc::clone(&mempool), Arc::clone(&chain_state), storage));
+        let marketplace_state = Arc::new(crate::core::marketplace::MarketplaceState::new());
+        let p2p_server = Arc::new(crate::p2p::server::P2pServer::new(Arc::clone(&mempool), Arc::clone(&chain_state), storage, marketplace_state));
         let server_clone = Arc::clone(&p2p_server);
         
         // Find a random free port and bind
@@ -1341,13 +1342,13 @@ mod tests {
         let gens = PedersenGens::default();
         let owner_secret = Scalar::random(&mut rng);
         let owner_pubkey = Commitment(owner_secret * gens.B_blinding);
-        let metadata_hash = [7u8; 32];
-        let signature = MintAssetOp::sign("cryptopunk", &metadata_hash, &owner_secret);
+        let metadata = vec![7u8; 4];
+        let signature = MintAssetOp::sign("cryptopunk", &metadata, &owner_secret);
 
         let op = MintAssetOp {
             asset_id: "cryptopunk".to_string(),
             owner_pubkey,
-            metadata_hash,
+            metadata,
             fee_payment,
             signature,
         };
@@ -1357,7 +1358,7 @@ mod tests {
         expected_registry.insert(op.asset_id.clone(), AssetRecord {
             asset_id: op.asset_id.clone(),
             owner_pubkey: op.owner_pubkey,
-            metadata_hash: op.metadata_hash,
+            metadata: op.metadata.clone(),
             minted_at_block: 1,
         });
         let asset_registry_root = compute_asset_registry_root(&expected_registry);
@@ -1440,12 +1441,12 @@ mod tests {
             };
             let owner_secret = Scalar::random(rng);
             let owner_pubkey = Commitment(owner_secret * gens.B_blinding);
-            let metadata_hash = [4u8; 32];
+            let metadata = vec![4u8; 4];
             MintAssetOp {
                 asset_id: "contested-punk".to_string(),
                 owner_pubkey,
-                metadata_hash,
-                signature: MintAssetOp::sign("contested-punk", &metadata_hash, &owner_secret),
+                metadata: metadata.clone(),
+                signature: MintAssetOp::sign("contested-punk", &metadata, &owner_secret),
                 fee_payment,
             }
         };
@@ -1457,7 +1458,7 @@ mod tests {
         registry.insert("contested-punk".to_string(), AssetRecord {
             asset_id: "contested-punk".to_string(),
             owner_pubkey: op1.owner_pubkey,
-            metadata_hash: op1.metadata_hash,
+            metadata: op1.metadata.clone(),
             minted_at_block: 1,
         });
 
@@ -1497,6 +1498,307 @@ mod tests {
         let block = Block { header, body, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![op1, op2], transfer_asset_ops: vec![] };
 
         assert!(!chain_state.apply_block(&block).is_applied(), "block minting the same asset_id twice must be rejected");
+    }
+
+    /// Builds a coinbase-balanced body (see build_coinbase_only_body) plus
+    /// one extra, self-contained, zero-fee "payment": input value equals
+    /// output value, so it contributes nothing extra to the reward balance
+    /// equation beyond its own kernel excess - lets a test bundle a real,
+    /// freely-referenceable kernel (standing in for a marketplace buyer's
+    /// payment) alongside the coinbase without disturbing block_reward_at.
+    /// Returns the body, the payment's spendable input commitment (the
+    /// caller must insert this into chain_state.utxos before applying), and
+    /// the payment kernel's excess (what a TransferAssetOp::required_kernel_excess
+    /// would reference).
+    fn build_body_with_payment(rng: &mut OsRng, height: u64, payer_input_value: u64) -> (Transaction, Commitment, Commitment) {
+        let (mut body, _) = build_coinbase_only_body(rng, height);
+
+        let r_in = Scalar::random(rng);
+        let r_out = Scalar::random(rng);
+        let input_commitment = Commitment::new(payer_input_value, r_in);
+        let output_commitment = Commitment::new(payer_input_value, r_out);
+        let output = Output { commitment: output_commitment, proof: RangeProof::prove(payer_input_value, &r_out), note: vec![] };
+        let excess_r = r_in - r_out;
+        let kernel = TxKernel {
+            excess: Commitment::new(0, excess_r),
+            fee: 0,
+            signature: Signature::sign(&0u64.to_le_bytes(), &excess_r),
+        };
+        let payment_excess = kernel.excess;
+
+        body.inputs.push(Input { commitment: input_commitment });
+        body.outputs.push(output);
+        body.kernels.push(kernel);
+
+        (body, input_commitment, payment_excess)
+    }
+
+    /// Mints "marketswap-punk" in block 1 under `owner_secret`, returning the
+    /// chain state (with genesis + block1 applied), the block1 hash, the
+    /// owner's secret/pubkey, and a fresh buyer pubkey - shared setup for
+    /// every required_kernel_excess test below.
+    fn setup_chain_with_one_minted_asset(rng: &mut OsRng) -> (ChainState, [u8; 32], Scalar, Commitment, Commitment) {
+        use crate::core::assets::{MintAssetOp, AssetRecord, ASSET_MINT_FEE, compute_asset_registry_root};
+        use bulletproofs::PedersenGens;
+
+        let mut chain_state = ChainState::new();
+        let genesis_block = crate::core::genesis::genesis_block();
+        let genesis_hash = genesis_block.header.hash();
+        assert!(chain_state.apply_block(&genesis_block).is_applied());
+
+        let gens = PedersenGens::default();
+        let private_key = Scalar::from(42u64);
+
+        let r_in = Scalar::random(rng);
+        let input_commitment = Commitment::new(ASSET_MINT_FEE, r_in);
+        chain_state.utxos.insert(input_commitment);
+        let fee_payment = Transaction {
+            inputs: vec![Input { commitment: input_commitment }],
+            outputs: vec![],
+            kernels: vec![TxKernel {
+                excess: Commitment::new(0, r_in),
+                fee: ASSET_MINT_FEE,
+                signature: Signature::sign(&ASSET_MINT_FEE.to_le_bytes(), &r_in),
+            }],
+        };
+        let owner_secret = Scalar::random(rng);
+        let owner_pubkey = Commitment(owner_secret * gens.B_blinding);
+        let metadata = vec![1u8; 4];
+        let mint_op = MintAssetOp {
+            asset_id: "marketswap-punk".to_string(),
+            owner_pubkey,
+            metadata: metadata.clone(),
+            fee_payment,
+            signature: MintAssetOp::sign("marketswap-punk", &metadata, &owner_secret),
+        };
+
+        let mut registry = std::collections::HashMap::new();
+        registry.insert("marketswap-punk".to_string(), AssetRecord {
+            asset_id: "marketswap-punk".to_string(),
+            owner_pubkey,
+            metadata,
+            minted_at_block: 1,
+        });
+
+        let (body1, _) = build_coinbase_only_body(rng, 1);
+        let mut header1 = BlockHeader {
+            height: 1,
+            prev_hash: genesis_hash,
+            total_kernel_offset: Scalar::zero(),
+            nonce: 0,
+            timestamp: 0,
+            validator_commitment: Commitment::new(1_000_000, private_key),
+            validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root: empty_registry_root(),
+            chain_id: crate::core::genesis::CHAIN_ID,
+            asset_registry_root: compute_asset_registry_root(&registry),
+        };
+        header1.validator_signature = Signature::sign(&header1.hash(), &private_key);
+        let block1 = Block { header: header1, body: body1, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![mint_op], transfer_asset_ops: vec![] };
+        assert!(chain_state.apply_block(&block1).is_applied(), "setup mint must apply");
+        let block1_hash = chain_state.last_block_hash;
+
+        let buyer_secret = Scalar::random(rng);
+        let buyer_pubkey = Commitment(buyer_secret * gens.B_blinding);
+
+        (chain_state, block1_hash, owner_secret, owner_pubkey, buyer_pubkey)
+    }
+
+    #[test]
+    fn transfer_asset_op_with_unsatisfied_kernel_condition_is_rejected() {
+        use crate::core::assets::{TransferAssetOp, compute_asset_registry_root};
+
+        let mut rng = OsRng;
+        let (mut chain_state, block1_hash, owner_secret, owner_pubkey, buyer_pubkey) = setup_chain_with_one_minted_asset(&mut rng);
+
+        // A kernel excess that has never appeared on this chain.
+        let phantom_excess = Commitment::new(0, Scalar::from(999_999u64));
+        let transfer_op = TransferAssetOp {
+            asset_id: "marketswap-punk".to_string(),
+            new_owner_pubkey: buyer_pubkey,
+            required_kernel_excess: Some(phantom_excess),
+            signature: TransferAssetOp::sign("marketswap-punk", &buyer_pubkey, &Some(phantom_excess), &owner_secret),
+        };
+
+        let mut registry_after = std::collections::HashMap::new();
+        registry_after.insert("marketswap-punk".to_string(), crate::core::assets::AssetRecord {
+            asset_id: "marketswap-punk".to_string(),
+            owner_pubkey: buyer_pubkey,
+            metadata: vec![1u8; 4],
+            minted_at_block: 1,
+        });
+
+        let private_key = Scalar::from(42u64);
+        let (body2, _) = build_coinbase_only_body(&mut rng, 2);
+        let mut header2 = BlockHeader {
+            height: 2,
+            prev_hash: block1_hash,
+            total_kernel_offset: Scalar::zero(),
+            nonce: 0,
+            timestamp: 0,
+            validator_commitment: Commitment::new(1_000_000, private_key),
+            validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root: empty_registry_root(),
+            chain_id: crate::core::genesis::CHAIN_ID,
+            asset_registry_root: compute_asset_registry_root(&registry_after),
+        };
+        header2.validator_signature = Signature::sign(&header2.hash(), &private_key);
+        let block2 = Block { header: header2, body: body2, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![transfer_op] };
+
+        assert!(!chain_state.apply_block(&block2).is_applied(), "a conditional transfer whose required kernel never landed must be rejected");
+        assert_eq!(chain_state.asset_registry["marketswap-punk"].owner_pubkey, owner_pubkey, "ownership must not change");
+    }
+
+    #[test]
+    fn transfer_asset_op_with_satisfied_historical_kernel_condition_is_accepted() {
+        use crate::core::assets::{TransferAssetOp, compute_asset_registry_root};
+
+        let mut rng = OsRng;
+        let (mut chain_state, block1_hash, owner_secret, _owner_pubkey, buyer_pubkey) = setup_chain_with_one_minted_asset(&mut rng);
+        let private_key = Scalar::from(42u64);
+
+        // --- Block 2: the buyer's payment lands on its own, no transfer yet ---
+        let (body2, payment_input, payment_excess) = build_body_with_payment(&mut rng, 2, 500);
+        chain_state.utxos.insert(payment_input);
+        let mut header2 = BlockHeader {
+            height: 2,
+            prev_hash: block1_hash,
+            total_kernel_offset: Scalar::zero(),
+            nonce: 0,
+            timestamp: 0,
+            validator_commitment: Commitment::new(1_000_000, private_key),
+            validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root: empty_registry_root(),
+            chain_id: crate::core::genesis::CHAIN_ID,
+            asset_registry_root: compute_asset_registry_root(&{
+                let mut r = std::collections::HashMap::new();
+                r.insert("marketswap-punk".to_string(), chain_state.asset_registry["marketswap-punk"].clone());
+                r
+            }),
+        };
+        header2.validator_signature = Signature::sign(&header2.hash(), &private_key);
+        let block2 = Block { header: header2, body: body2, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![] };
+        assert!(chain_state.apply_block(&block2).is_applied(), "payment-only block must apply");
+        assert!(chain_state.kernel_excesses.contains(&payment_excess), "the payment kernel must now be indexed");
+        let block2_hash = chain_state.last_block_hash;
+
+        // --- Block 3: the conditional transfer, referencing block 2's now-historical kernel ---
+        let transfer_op = TransferAssetOp {
+            asset_id: "marketswap-punk".to_string(),
+            new_owner_pubkey: buyer_pubkey,
+            required_kernel_excess: Some(payment_excess),
+            signature: TransferAssetOp::sign("marketswap-punk", &buyer_pubkey, &Some(payment_excess), &owner_secret),
+        };
+        let mut registry_after = std::collections::HashMap::new();
+        registry_after.insert("marketswap-punk".to_string(), crate::core::assets::AssetRecord {
+            asset_id: "marketswap-punk".to_string(),
+            owner_pubkey: buyer_pubkey,
+            metadata: vec![1u8; 4],
+            minted_at_block: 1,
+        });
+        let (body3, _) = build_coinbase_only_body(&mut rng, 3);
+        let mut header3 = BlockHeader {
+            height: 3,
+            prev_hash: block2_hash,
+            total_kernel_offset: Scalar::zero(),
+            nonce: 0,
+            timestamp: 0,
+            validator_commitment: Commitment::new(1_000_000, private_key),
+            validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root: empty_registry_root(),
+            chain_id: crate::core::genesis::CHAIN_ID,
+            asset_registry_root: compute_asset_registry_root(&registry_after),
+        };
+        header3.validator_signature = Signature::sign(&header3.hash(), &private_key);
+        let block3 = Block { header: header3, body: body3, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![transfer_op] };
+
+        assert!(chain_state.apply_block(&block3).is_applied(), "a conditional transfer referencing an already-historical kernel must apply");
+        assert_eq!(chain_state.asset_registry["marketswap-punk"].owner_pubkey, buyer_pubkey);
+    }
+
+    #[test]
+    fn transfer_asset_op_with_satisfied_same_block_kernel_condition_is_accepted() {
+        use crate::core::assets::{TransferAssetOp, compute_asset_registry_root};
+
+        let mut rng = OsRng;
+        let (mut chain_state, block1_hash, owner_secret, _owner_pubkey, buyer_pubkey) = setup_chain_with_one_minted_asset(&mut rng);
+        let private_key = Scalar::from(42u64);
+
+        // Payment and its conditional transfer bundled into the SAME block -
+        // the one-block atomic swap case. Without checking this block's own
+        // kernels (not just historical ones), this would fail even though
+        // the design intends it to work.
+        let (body2, payment_input, payment_excess) = build_body_with_payment(&mut rng, 2, 500);
+        chain_state.utxos.insert(payment_input);
+
+        let transfer_op = TransferAssetOp {
+            asset_id: "marketswap-punk".to_string(),
+            new_owner_pubkey: buyer_pubkey,
+            required_kernel_excess: Some(payment_excess),
+            signature: TransferAssetOp::sign("marketswap-punk", &buyer_pubkey, &Some(payment_excess), &owner_secret),
+        };
+        let mut registry_after = std::collections::HashMap::new();
+        registry_after.insert("marketswap-punk".to_string(), crate::core::assets::AssetRecord {
+            asset_id: "marketswap-punk".to_string(),
+            owner_pubkey: buyer_pubkey,
+            metadata: vec![1u8; 4],
+            minted_at_block: 1,
+        });
+
+        let mut header2 = BlockHeader {
+            height: 2,
+            prev_hash: block1_hash,
+            total_kernel_offset: Scalar::zero(),
+            nonce: 0,
+            timestamp: 0,
+            validator_commitment: Commitment::new(1_000_000, private_key),
+            validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root: empty_registry_root(),
+            chain_id: crate::core::genesis::CHAIN_ID,
+            asset_registry_root: compute_asset_registry_root(&registry_after),
+        };
+        header2.validator_signature = Signature::sign(&header2.hash(), &private_key);
+        let block2 = Block { header: header2, body: body2, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![transfer_op] };
+
+        assert!(chain_state.apply_block(&block2).is_applied(), "a payment and its conditional transfer must be acceptable in the same block");
+        assert_eq!(chain_state.asset_registry["marketswap-punk"].owner_pubkey, buyer_pubkey);
+    }
+
+    #[test]
+    fn rollback_makes_previously_satisfied_condition_unsatisfied_again() {
+        use crate::core::assets::compute_asset_registry_root;
+
+        let mut rng = OsRng;
+        let (mut chain_state, block1_hash, _owner_secret, _owner_pubkey, _buyer_pubkey) = setup_chain_with_one_minted_asset(&mut rng);
+        let private_key = Scalar::from(42u64);
+
+        let (body2, payment_input, payment_excess) = build_body_with_payment(&mut rng, 2, 500);
+        chain_state.utxos.insert(payment_input);
+        let mut header2 = BlockHeader {
+            height: 2,
+            prev_hash: block1_hash,
+            total_kernel_offset: Scalar::zero(),
+            nonce: 0,
+            timestamp: 0,
+            validator_commitment: Commitment::new(1_000_000, private_key),
+            validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root: empty_registry_root(),
+            chain_id: crate::core::genesis::CHAIN_ID,
+            asset_registry_root: compute_asset_registry_root(&{
+                let mut r = std::collections::HashMap::new();
+                r.insert("marketswap-punk".to_string(), chain_state.asset_registry["marketswap-punk"].clone());
+                r
+            }),
+        };
+        header2.validator_signature = Signature::sign(&header2.hash(), &private_key);
+        let block2 = Block { header: header2, body: body2, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![] };
+        assert!(chain_state.apply_block(&block2).is_applied());
+        assert!(chain_state.kernel_excesses.contains(&payment_excess));
+
+        // Roll back past the payment's block.
+        assert!(chain_state.rollback_block().is_some());
+        assert!(!chain_state.kernel_excesses.contains(&payment_excess), "rollback must remove the reverted block's kernel(s) from the index, or a condition could stay wrongly satisfied after a reorg");
+        assert!(!chain_state.kernels.iter().any(|k| k.excess == payment_excess), "kernel_excesses must stay exactly in sync with kernels");
     }
 }
 

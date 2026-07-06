@@ -13,6 +13,7 @@ use haze_core::core::storage::Storage;
 use haze_core::core::chain::ApplyResult;
 use haze_core::core::compaction::Compactor;
 use haze_core::core::genesis;
+use haze_core::core::marketplace::MarketplaceState;
 use haze_core::p2p::server::P2pServer;
 use haze_core::api::server::ApiServer;
 use haze_core::wallet::cli::{Cli, Commands, Wallet};
@@ -62,7 +63,9 @@ async fn main() -> std::io::Result<()> {
 
             let key = stake_key.as_ref().map(|s| parse_stake_key(s));
 
-            let server = Arc::new(P2pServer::new(Arc::clone(&mempool), Arc::clone(&chain), Arc::clone(&storage)));
+            let marketplace_state = Arc::new(MarketplaceState::new());
+
+            let server = Arc::new(P2pServer::new(Arc::clone(&mempool), Arc::clone(&chain), Arc::clone(&storage), Arc::clone(&marketplace_state)));
             let proposer = Arc::new(Proposer::new(Arc::clone(&mempool), Arc::clone(&chain), Arc::clone(&storage), key));
 
             // Link proposer to P2P server for block broadcasting
@@ -83,10 +86,11 @@ async fn main() -> std::io::Result<()> {
             let rpc_chain = Arc::clone(&chain);
             let rpc_server = Arc::clone(&server);
             let rpc_storage = Arc::clone(&storage);
+            let rpc_marketplace = Arc::clone(&marketplace_state);
             let port = *rpc_port;
             println!("Starting HTTP JSON-RPC Server on 127.0.0.1:{}...", port);
             tokio::spawn(async move {
-                ApiServer::start(rpc_mempool, rpc_chain, rpc_server, rpc_storage, port).await;
+                ApiServer::start(rpc_mempool, rpc_chain, rpc_server, rpc_storage, rpc_marketplace, port).await;
             });
 
             let seed_peers: Vec<String> = peers.as_ref()

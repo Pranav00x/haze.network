@@ -22,6 +22,16 @@ pub struct ChainState {
     pub utxos: HashSet<Commitment>,
     /// All transaction kernels ever recorded on the chain
     pub kernels: Vec<TxKernel>,
+    /// Mirrors `kernels` 1:1 as a set of excesses, for O(1) existence checks
+    /// (see TransferAssetOp::required_kernel_excess - the trustless
+    /// atomic-swap primitive needs to answer "does a kernel with this
+    /// excess exist" once per pending conditional transfer per candidate
+    /// block, where a linear scan over `kernels` would become a real cost
+    /// at scale). Not persisted directly (`#[serde(skip)]`) - rebuilt from
+    /// `kernels` wherever chain state loads (see storage.rs, same place
+    /// `kernels` itself gets rebuilt from the kernels sled tree).
+    #[serde(skip)]
+    pub kernel_excesses: HashSet<Commitment>,
     pub current_height: u64,
     pub last_block_hash: [u8; 32],
     /// Staking validators active on the network
@@ -355,6 +365,22 @@ impl ChainState {
             }
         }
 
+        // 4a-prep. Every kernel excess this candidate block itself would add,
+        // were it applied - needed so a conditional asset transfer
+        // (TransferAssetOp::required_kernel_excess) can reference a payment
+        // kernel included in this SAME block, not just a historical one.
+        // Without this, a payment and the transfer it unlocks could never
+        // land in the same block, costing every swap an extra block of
+        // latency for no real reason. Built once here since name/mint fee-
+        // payment kernels aren't otherwise collected until step 8.
+        let mut block_kernel_excesses: HashSet<Commitment> = block.body.kernels.iter().map(|k| k.excess).collect();
+        for op in &block.name_ops {
+            block_kernel_excesses.extend(op.fee_payment.kernels.iter().map(|k| k.excess));
+        }
+        for op in &block.mint_ops {
+            block_kernel_excesses.extend(op.fee_payment.kernels.iter().map(|k| k.excess));
+        }
+
         // 4b. Validate name registrations (see core::registry). Each op is checked
         // standalone (name rules, ownership signature, its own fee-payment balance),
         // plus chain-state checks that can only happen here: the name isn't already
@@ -435,7 +461,7 @@ impl ChainState {
             candidate_asset_registry.insert(op.asset_id.clone(), AssetRecord {
                 asset_id: op.asset_id.clone(),
                 owner_pubkey: op.owner_pubkey,
-                metadata_hash: op.metadata_hash,
+                metadata: op.metadata.clone(),
                 minted_at_block: block.header.height,
             });
         }
@@ -449,14 +475,26 @@ impl ChainState {
                 Some(r) => r,
                 None => return None,
             };
-            let msg = super::assets::TransferAssetOp::signing_message(&op.asset_id, &op.new_owner_pubkey);
+            let msg = super::assets::TransferAssetOp::signing_message(&op.asset_id, &op.new_owner_pubkey, &op.required_kernel_excess);
             if !op.signature.verify(&msg, &current.owner_pubkey) {
                 return None;
+            }
+            // The entire consensus-level trustlessness guarantee for
+            // marketplace atomic swaps: a conditional transfer literally
+            // cannot apply until the payment it's conditioned on already
+            // exists on-chain - either from an earlier block, or from this
+            // same one (see block_kernel_excesses above).
+            if let Some(required_excess) = op.required_kernel_excess {
+                let satisfied = self.kernel_excesses.contains(&required_excess)
+                    || block_kernel_excesses.contains(&required_excess);
+                if !satisfied {
+                    return None;
+                }
             }
             candidate_asset_registry.insert(op.asset_id.clone(), AssetRecord {
                 asset_id: op.asset_id.clone(),
                 owner_pubkey: op.new_owner_pubkey,
-                metadata_hash: current.metadata_hash,
+                metadata: current.metadata.clone(),
                 minted_at_block: current.minted_at_block,
             });
         }
@@ -561,16 +599,19 @@ impl ChainState {
         let mut new_kernels_all: Vec<TxKernel> = block.body.kernels.clone();
         for kernel in &block.body.kernels {
             self.kernels.push(kernel.clone());
+            self.kernel_excesses.insert(kernel.excess);
         }
         for op in &block.name_ops {
             for kernel in &op.fee_payment.kernels {
                 self.kernels.push(kernel.clone());
+                self.kernel_excesses.insert(kernel.excess);
                 new_kernels_all.push(kernel.clone());
             }
         }
         for op in &block.mint_ops {
             for kernel in &op.fee_payment.kernels {
                 self.kernels.push(kernel.clone());
+                self.kernel_excesses.insert(kernel.excess);
                 new_kernels_all.push(kernel.clone());
             }
         }
@@ -626,6 +667,7 @@ impl ChainState {
         let mut removed_kernel_excesses = Vec::new();
         for kernel in &tip_block.body.kernels {
             self.kernels.retain(|k| k.excess != kernel.excess);
+            self.kernel_excesses.remove(&kernel.excess);
             removed_kernel_excesses.push(kernel.excess);
         }
 
@@ -646,6 +688,7 @@ impl ChainState {
             }
             for kernel in &op.fee_payment.kernels {
                 self.kernels.retain(|k| k.excess != kernel.excess);
+                self.kernel_excesses.remove(&kernel.excess);
                 removed_kernel_excesses.push(kernel.excess);
             }
             self.name_registry.remove(&op.name);
@@ -673,6 +716,7 @@ impl ChainState {
             }
             for kernel in &op.fee_payment.kernels {
                 self.kernels.retain(|k| k.excess != kernel.excess);
+                self.kernel_excesses.remove(&kernel.excess);
                 removed_kernel_excesses.push(kernel.excess);
             }
             self.asset_registry.remove(&op.asset_id);

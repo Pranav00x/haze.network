@@ -867,15 +867,81 @@ export class WasmSweepResult {
 if (Symbol.dispose) WasmSweepResult.prototype[Symbol.dispose] = WasmSweepResult.prototype.free;
 
 /**
+ * Builds a signed cancellation for a listing this wallet previously
+ * created - see POST /v1/marketplace/cancel.
+ * @param {Uint8Array} keystore_bytes
+ * @param {string} asset_id
+ * @returns {string}
+ */
+export function build_cancel_listing_request(keystore_bytes, asset_id) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passArray8ToWasm0(keystore_bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(asset_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.build_cancel_listing_request(ptr0, len0, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * Builds a signed marketplace Listing (see core::marketplace) advertising
+ * an asset this wallet owns for sale at `price`, signed with this wallet's
+ * identity key - the same key the asset's owner_pubkey on-chain is
+ * expected to match, checked server-side at POST /v1/marketplace/list.
+ * @param {Uint8Array} keystore_bytes
+ * @param {string} asset_id
+ * @param {bigint} price
+ * @param {bigint} listed_at
+ * @returns {string}
+ */
+export function build_create_listing_request(keystore_bytes, asset_id, price, listed_at) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passArray8ToWasm0(keystore_bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(asset_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.build_create_listing_request(ptr0, len0, ptr1, len1, price, listed_at);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
  * Builds a MintAssetOp paying `fee` (must be >= ASSET_MINT_FEE) from the
  * wallet's own confirmed UTXOs, signed with this wallet's stable identity
- * key. `metadata` is arbitrary free-form text (a description, a URL,
- * whatever) - it's never interpreted by consensus, just hashed into the
- * 32-byte metadata_hash the op actually carries on-chain. Callers should
- * pass GET /v1/fee-estimate's suggested_asset_fee rather than hardcoding
- * ASSET_MINT_FEE, same reasoning as build_register_name_request. The caller
- * must POST `op_json` themselves, then call `commit_mint_asset` only on
- * success.
+ * key. `metadata` is free-form text (recommended shape: JSON
+ * `{title, description, image}`) stored directly on-chain, bounded at
+ * MAX_METADATA_BYTES - a real marketplace needs actual preview data, and
+ * storing only a hash would make browsing depend on an external metadata
+ * host, reintroducing exactly the trust dependency the atomic-swap design
+ * is trying to eliminate. Callers should pass GET /v1/fee-estimate's
+ * suggested_asset_fee rather than hardcoding ASSET_MINT_FEE, same reasoning
+ * as build_register_name_request. The caller must POST `op_json`
+ * themselves, then call `commit_mint_asset` only on success.
  * @param {Uint8Array} keystore_bytes
  * @param {Uint8Array} store_bytes
  * @param {string} asset_id
@@ -1001,14 +1067,24 @@ export function build_stake_request(keystore_bytes, store_bytes, min_value) {
  * new owner's identity pubkey, signed with this wallet's identity key. No
  * fee, no UTXO involved - the server rejects it if the signature doesn't
  * actually match the asset's current on-chain owner.
+ *
+ * `required_kernel_excess_hex`, if provided, makes this the trustless
+ * marketplace atomic-swap primitive: the transfer only becomes valid once a
+ * transaction kernel with that exact excess exists on-chain (see
+ * core::assets::TransferAssetOp::required_kernel_excess and
+ * tx_kernel_excess_hex below, which a buyer uses to get this value from
+ * their own finalized-but-not-yet-broadcast payment transaction). This
+ * lets a seller sign a transfer before a buyer's payment lands, safely -
+ * it's cryptographically inert until that payment is actually on-chain.
  * @param {Uint8Array} keystore_bytes
  * @param {string} asset_id
  * @param {string} new_owner_pubkey_hex
+ * @param {string | null} [required_kernel_excess_hex]
  * @returns {string}
  */
-export function build_transfer_asset_request(keystore_bytes, asset_id, new_owner_pubkey_hex) {
-    let deferred5_0;
-    let deferred5_1;
+export function build_transfer_asset_request(keystore_bytes, asset_id, new_owner_pubkey_hex, required_kernel_excess_hex) {
+    let deferred6_0;
+    let deferred6_1;
     try {
         const ptr0 = passArray8ToWasm0(keystore_bytes, wasm.__wbindgen_malloc);
         const len0 = WASM_VECTOR_LEN;
@@ -1016,18 +1092,20 @@ export function build_transfer_asset_request(keystore_bytes, asset_id, new_owner
         const len1 = WASM_VECTOR_LEN;
         const ptr2 = passStringToWasm0(new_owner_pubkey_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len2 = WASM_VECTOR_LEN;
-        const ret = wasm.build_transfer_asset_request(ptr0, len0, ptr1, len1, ptr2, len2);
-        var ptr4 = ret[0];
-        var len4 = ret[1];
+        var ptr3 = isLikeNone(required_kernel_excess_hex) ? 0 : passStringToWasm0(required_kernel_excess_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len3 = WASM_VECTOR_LEN;
+        const ret = wasm.build_transfer_asset_request(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+        var ptr5 = ret[0];
+        var len5 = ret[1];
         if (ret[3]) {
-            ptr4 = 0; len4 = 0;
+            ptr5 = 0; len5 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
-        deferred5_0 = ptr4;
-        deferred5_1 = len4;
-        return getStringFromWasm0(ptr4, len4);
+        deferred6_0 = ptr5;
+        deferred6_1 = len5;
+        return getStringFromWasm0(ptr5, len5);
     } finally {
-        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+        wasm.__wbindgen_free(deferred6_0, deferred6_1, 1);
     }
 }
 
@@ -1472,6 +1550,39 @@ export function sweep_validator_rewards(stake_key_hex, scan_entries_json, chain_
         throw takeFromExternrefTable0(ret[1]);
     }
     return WasmSweepResult.__wrap(ret[0]);
+}
+
+/**
+ * Extracts a finalized (but not necessarily yet broadcast) transaction's
+ * kernel excess as hex - used by a marketplace buyer to learn the exact
+ * value to send the seller in a "want_transfer" inbox message, so the
+ * seller can build a TransferAssetOp conditioned on this specific payment
+ * (see build_transfer_asset_request's required_kernel_excess_hex). Every
+ * Haze transaction has exactly one kernel by construction (see
+ * wallet::slate::finalize_slate/wallet::planner::plan_send), so this
+ * always reads kernels[0].
+ * @param {string} transaction_json
+ * @returns {string}
+ */
+export function tx_kernel_excess_hex(transaction_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(transaction_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.tx_kernel_excess_hex(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
 }
 
 /**

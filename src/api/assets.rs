@@ -80,9 +80,26 @@ pub async fn handle_transfer_asset(
         return Ok(error_reply(StatusCode::NOT_FOUND, format!("asset '{}' is not minted", op.asset_id)));
     };
 
-    let msg = TransferAssetOp::signing_message(&op.asset_id, &op.new_owner_pubkey);
+    let msg = TransferAssetOp::signing_message(&op.asset_id, &op.new_owner_pubkey, &op.required_kernel_excess);
     if !op.signature.verify(&msg, &current.owner_pubkey) {
         return Ok(error_reply(StatusCode::FORBIDDEN, "signature does not match the asset's current owner"));
+    }
+
+    // Fast feedback for the marketplace atomic-swap primitive: if this
+    // transfer is conditioned on a payment kernel, check now whether that
+    // kernel actually exists yet, rather than only failing silently at
+    // block-assembly time. Not a hard gate (the mempool itself still
+    // accepts optimistically, matching the existing pattern for anything
+    // whose validity depends on chain state) - apply_linear_block remains
+    // the sole real enforcement point.
+    if let Some(required_excess) = op.required_kernel_excess {
+        let satisfied = {
+            let c = chain.lock().unwrap();
+            c.kernel_excesses.contains(&required_excess)
+        };
+        if !satisfied {
+            return Ok(error_reply(StatusCode::CONFLICT, "required_kernel_excess does not exist on-chain yet - broadcast the payment transaction first"));
+        }
     }
 
     let added = {

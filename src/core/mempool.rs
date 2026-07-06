@@ -539,10 +539,10 @@ mod tests {
         let gens = PedersenGens::default();
         let owner_secret = Scalar::random(&mut rng);
         let owner_pubkey = Commitment(owner_secret * gens.B_blinding);
-        let metadata_hash = [3u8; 32];
-        let signature = MintAssetOp::sign(asset_id, &metadata_hash, &owner_secret);
+        let metadata = vec![3u8; 4];
+        let signature = MintAssetOp::sign(asset_id, &metadata, &owner_secret);
 
-        MintAssetOp { asset_id: asset_id.to_string(), owner_pubkey, metadata_hash, fee_payment, signature }
+        MintAssetOp { asset_id: asset_id.to_string(), owner_pubkey, metadata, fee_payment, signature }
     }
 
     #[test]
@@ -575,6 +575,37 @@ mod tests {
 
         let min_fee_taken: u64 = taken.iter().map(|op| op.fee_payment.kernels[0].fee).min().unwrap();
         assert!(min_fee_taken > ASSET_MINT_FEE + 2);
+    }
+
+    /// Documents a deliberate mempool-policy choice: whether
+    /// required_kernel_excess is actually satisfied depends on chain state,
+    /// which Mempool has no access to (same as add_transfer_op's own
+    /// existing signature check, which also can't be done here) - so a
+    /// conditional transfer is accepted optimistically, exactly like every
+    /// other chain-state-dependent op in this mempool. apply_linear_block
+    /// remains the sole real enforcement point; a proposer that includes a
+    /// transfer whose condition never actually lands just produces a block
+    /// that fails validation, same failure mode as a stale signature.
+    #[test]
+    fn add_transfer_asset_op_accepts_conditional_transfer_optimistically() {
+        use crate::core::assets::TransferAssetOp;
+        use bulletproofs::PedersenGens;
+
+        let mut mempool = Mempool::new();
+        let gens = PedersenGens::default();
+        let owner_secret = Scalar::from(7u64);
+        let new_owner = Commitment(Scalar::from(8u64) * gens.B_blinding);
+        // A kernel excess that has never existed anywhere - the mempool
+        // must not (and cannot) check this.
+        let required_kernel_excess = Some(Commitment::new(0, Scalar::from(123_456u64)));
+
+        let op = TransferAssetOp {
+            asset_id: "some-asset".to_string(),
+            new_owner_pubkey: new_owner,
+            required_kernel_excess,
+            signature: TransferAssetOp::sign("some-asset", &new_owner, &required_kernel_excess, &owner_secret),
+        };
+        assert!(mempool.add_transfer_asset_op(op), "a conditional transfer must be accepted into the mempool regardless of whether its condition is currently satisfiable");
     }
 
     #[test]

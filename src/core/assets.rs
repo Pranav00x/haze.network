@@ -34,15 +34,25 @@ pub const ASSET_MINT_FEE: u64 = 5;
 pub const MIN_ASSET_ID_LENGTH: usize = 3;
 pub const MAX_ASSET_ID_LENGTH: usize = 64;
 
+/// Raw metadata (recommended shape: JSON `{title, description, image}`, but
+/// consensus only enforces the byte-length cap, not the interpretation -
+/// keeps the schema upgradeable without another chain reset) is stored
+/// directly on-chain rather than just a hash of it. A browsable marketplace
+/// needs real preview data; hash-only storage would make that depend on an
+/// external metadata host, reintroducing exactly the kind of "trust someone
+/// else's server" dependency the trustless-swap design is trying to
+/// eliminate. At this cap and MAX_MINT_OPS_PER_BLOCK, worst case is a
+/// trivial ~20KB/block of extra data for a chain that already keeps full
+/// history forever.
+pub const MAX_METADATA_BYTES: usize = 2048;
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AssetRecord {
     pub asset_id: String,
     pub owner_pubkey: Commitment,
-    /// Commitment/pointer to off-chain metadata (image, attributes, etc.) -
-    /// NFT metadata doesn't belong on-chain economically, same conclusion
-    /// every real NFT ecosystem already lands on. Not interpreted by
-    /// consensus at all, just carried along.
-    pub metadata_hash: [u8; 32],
+    /// Raw metadata bytes (see MAX_METADATA_BYTES) - not interpreted by
+    /// consensus at all beyond the length cap, just carried along.
+    pub metadata: Vec<u8>,
     pub minted_at_block: u64,
 }
 
@@ -51,12 +61,12 @@ pub struct AssetRecord {
 /// transaction (inputs/outputs/one kernel) whose only job is to pay the mint
 /// fee - reusing the existing balance-equation and fee-collection machinery
 /// instead of inventing a second one. `signature` proves control of
-/// `owner_pubkey` by signing the asset_id and metadata_hash together.
+/// `owner_pubkey` by signing the asset_id and metadata together.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MintAssetOp {
     pub asset_id: String,
     pub owner_pubkey: Commitment,
-    pub metadata_hash: [u8; 32],
+    pub metadata: Vec<u8>,
     pub fee_payment: Transaction,
     pub signature: Signature,
 }
@@ -69,6 +79,7 @@ pub enum AssetError {
     AlreadyMinted,
     InvalidSignature,
     InvalidFeePayment,
+    MetadataTooLong,
 }
 
 pub fn validate_asset_id(asset_id: &str) -> Result<(), AssetError> {
@@ -86,28 +97,33 @@ pub fn validate_asset_id(asset_id: &str) -> Result<(), AssetError> {
 
 impl MintAssetOp {
     /// Builds the message signed to prove ownership of `owner_pubkey` - the
-    /// asset_id and metadata_hash together, so a mint signature can't later
+    /// asset_id and metadata together, so a mint signature can't later
     /// be replayed to claim a different asset_id or with different metadata
     /// than what was actually signed.
-    pub fn signing_message(asset_id: &str, metadata_hash: &[u8; 32]) -> Vec<u8> {
+    pub fn signing_message(asset_id: &str, metadata: &[u8]) -> Vec<u8> {
         let mut msg = asset_id.as_bytes().to_vec();
-        msg.extend_from_slice(metadata_hash);
+        msg.extend_from_slice(metadata);
         msg
     }
 
-    pub fn sign(asset_id: &str, metadata_hash: &[u8; 32], owner_secret: &Scalar) -> Signature {
-        Signature::sign(&Self::signing_message(asset_id, metadata_hash), owner_secret)
+    pub fn sign(asset_id: &str, metadata: &[u8], owner_secret: &Scalar) -> Signature {
+        Signature::sign(&Self::signing_message(asset_id, metadata), owner_secret)
     }
 
-    /// Validates this op in isolation (asset_id rules, signature, fee-payment's
-    /// own internal balance/proof correctness). Does NOT check asset_id
-    /// uniqueness or that fee_payment's inputs are real unspent UTXOs - those
-    /// require chain state and are checked separately by the caller
-    /// (ChainState::apply_linear_block) since they can only be verified there.
+    /// Validates this op in isolation (asset_id rules, metadata length,
+    /// signature, fee-payment's own internal balance/proof correctness).
+    /// Does NOT check asset_id uniqueness or that fee_payment's inputs are
+    /// real unspent UTXOs - those require chain state and are checked
+    /// separately by the caller (ChainState::apply_linear_block) since they
+    /// can only be verified there.
     pub fn validate_standalone(&self) -> Result<(), AssetError> {
         validate_asset_id(&self.asset_id)?;
 
-        if !self.signature.verify(&Self::signing_message(&self.asset_id, &self.metadata_hash), &self.owner_pubkey) {
+        if self.metadata.len() > MAX_METADATA_BYTES {
+            return Err(AssetError::MetadataTooLong);
+        }
+
+        if !self.signature.verify(&Self::signing_message(&self.asset_id, &self.metadata), &self.owner_pubkey) {
             return Err(AssetError::InvalidSignature);
         }
 
@@ -131,6 +147,16 @@ impl MintAssetOp {
 pub struct TransferAssetOp {
     pub asset_id: String,
     pub new_owner_pubkey: Commitment,
+    /// If Some, this transfer only becomes valid once a TxKernel with this
+    /// exact `excess` commitment exists on this chain (see
+    /// ChainState::kernel_excesses) - the trustless atomic-swap primitive.
+    /// A seller can sign this unconditionally-looking transfer BEFORE a
+    /// buyer's payment is on-chain, because it is cryptographically inert
+    /// (fails block-apply) until that payment's kernel actually lands.
+    /// Bound into the signed message below so a relayer can't strip the
+    /// condition off and get an unconditional transfer through. `None`
+    /// behaves exactly like an ordinary unconditional transfer.
+    pub required_kernel_excess: Option<Commitment>,
     /// Signed by the *current* owner's secret key - verified against
     /// whatever AssetRecord.owner_pubkey currently is, not anything in this
     /// struct, so a stale/forged transfer can't just supply its own key.
@@ -140,17 +166,28 @@ pub struct TransferAssetOp {
 impl TransferAssetOp {
     /// Domain-separated from MintAssetOp::signing_message (distinct prefix)
     /// so a mint signature can never be replayed as a transfer signature or
-    /// vice versa, and binds in the new owner pubkey so a transfer can't be
-    /// redirected to a different destination after the fact.
-    pub fn signing_message(asset_id: &str, new_owner_pubkey: &Commitment) -> Vec<u8> {
+    /// vice versa, and binds in the new owner pubkey (so a transfer can't be
+    /// redirected to a different destination after the fact) and the
+    /// required_kernel_excess condition (so it can't be stripped to make a
+    /// conditional transfer unconditional, or retargeted to a different
+    /// payment). `None` and every distinct `Some(_)` produce distinct
+    /// byte sequences.
+    pub fn signing_message(asset_id: &str, new_owner_pubkey: &Commitment, required_kernel_excess: &Option<Commitment>) -> Vec<u8> {
         let mut msg = b"HazeAssetTransfer:".to_vec();
         msg.extend_from_slice(asset_id.as_bytes());
         msg.extend_from_slice(new_owner_pubkey.as_point().compress().as_bytes());
+        match required_kernel_excess {
+            Some(c) => {
+                msg.push(1u8);
+                msg.extend_from_slice(c.as_point().compress().as_bytes());
+            }
+            None => msg.push(0u8),
+        }
         msg
     }
 
-    pub fn sign(asset_id: &str, new_owner_pubkey: &Commitment, current_owner_secret: &Scalar) -> Signature {
-        Signature::sign(&Self::signing_message(asset_id, new_owner_pubkey), current_owner_secret)
+    pub fn sign(asset_id: &str, new_owner_pubkey: &Commitment, required_kernel_excess: &Option<Commitment>, current_owner_secret: &Scalar) -> Signature {
+        Signature::sign(&Self::signing_message(asset_id, new_owner_pubkey, required_kernel_excess), current_owner_secret)
     }
 }
 
@@ -210,13 +247,13 @@ mod tests {
         let record_a = AssetRecord {
             asset_id: "alice-punk".to_string(),
             owner_pubkey: Commitment::new(0, blinding_a),
-            metadata_hash: [1u8; 32],
+            metadata: vec![1u8; 4],
             minted_at_block: 1,
         };
         let record_b = AssetRecord {
             asset_id: "bob-punk".to_string(),
             owner_pubkey: Commitment::new(0, blinding_b),
-            metadata_hash: [2u8; 32],
+            metadata: vec![2u8; 4],
             minted_at_block: 2,
         };
 
@@ -237,12 +274,12 @@ mod tests {
         let secret = Scalar::from(7u64);
         let gens = bulletproofs::PedersenGens::default();
         let owner_pubkey = Commitment(secret * gens.B_blinding);
-        let metadata_hash = [9u8; 32];
+        let metadata_hash = b"some metadata".to_vec();
 
         let sig = MintAssetOp::sign("cryptopunk", &metadata_hash, &secret);
         assert!(sig.verify(&MintAssetOp::signing_message("cryptopunk", &metadata_hash), &owner_pubkey));
         assert!(!sig.verify(&MintAssetOp::signing_message("someoneelse", &metadata_hash), &owner_pubkey));
-        assert!(!sig.verify(&MintAssetOp::signing_message("cryptopunk", &[0u8; 32]), &owner_pubkey));
+        assert!(!sig.verify(&MintAssetOp::signing_message("cryptopunk", b"different metadata"), &owner_pubkey));
 
         let other_secret = Scalar::from(8u64);
         let other_pubkey = Commitment(other_secret * gens.B_blinding);
@@ -254,11 +291,97 @@ mod tests {
         let secret = Scalar::from(7u64);
         let gens = bulletproofs::PedersenGens::default();
         let owner_pubkey = Commitment(secret * gens.B_blinding);
-        let metadata_hash = [9u8; 32];
+        let metadata_hash = b"some metadata".to_vec();
 
         let mint_sig = MintAssetOp::sign("cryptopunk", &metadata_hash, &secret);
         // A mint signature must never verify as a valid transfer signature
         // for the same asset_id, even targeting the same pubkey.
-        assert!(!mint_sig.verify(&TransferAssetOp::signing_message("cryptopunk", &owner_pubkey), &owner_pubkey));
+        assert!(!mint_sig.verify(&TransferAssetOp::signing_message("cryptopunk", &owner_pubkey, &None), &owner_pubkey));
+    }
+
+    /// The single most important test in this module: the entire
+    /// tamper-resistance property of the trustless-swap design depends on
+    /// required_kernel_excess being bound into the signed message. A
+    /// signature over one condition (or no condition at all) must never
+    /// verify against a message claiming a different condition.
+    #[test]
+    fn transfer_signing_message_binds_required_kernel_excess() {
+        let secret = Scalar::from(7u64);
+        let gens = bulletproofs::PedersenGens::default();
+        let owner_pubkey = Commitment(secret * gens.B_blinding);
+        let new_owner = Commitment::new(0, Scalar::from(42u64));
+        let kernel_excess_a = Commitment::new(0, Scalar::from(100u64));
+        let kernel_excess_b = Commitment::new(0, Scalar::from(200u64));
+
+        let sig_conditional_a = TransferAssetOp::sign("cryptopunk", &new_owner, &Some(kernel_excess_a), &secret);
+
+        // Valid against its own exact condition.
+        assert!(sig_conditional_a.verify(
+            &TransferAssetOp::signing_message("cryptopunk", &new_owner, &Some(kernel_excess_a)),
+            &owner_pubkey,
+        ));
+        // A relayer must not be able to swap in a different required kernel...
+        assert!(!sig_conditional_a.verify(
+            &TransferAssetOp::signing_message("cryptopunk", &new_owner, &Some(kernel_excess_b)),
+            &owner_pubkey,
+        ));
+        // ...or strip the condition entirely to make it unconditional.
+        assert!(!sig_conditional_a.verify(
+            &TransferAssetOp::signing_message("cryptopunk", &new_owner, &None),
+            &owner_pubkey,
+        ));
+
+        // And the reverse: an unconditional signature must not verify as
+        // satisfying any particular condition.
+        let sig_unconditional = TransferAssetOp::sign("cryptopunk", &new_owner, &None, &secret);
+        assert!(!sig_unconditional.verify(
+            &TransferAssetOp::signing_message("cryptopunk", &new_owner, &Some(kernel_excess_a)),
+            &owner_pubkey,
+        ));
+    }
+
+    #[test]
+    fn transfer_signing_message_none_vs_some_are_distinct() {
+        let new_owner = Commitment::new(0, Scalar::from(42u64));
+        let msg_none = TransferAssetOp::signing_message("cryptopunk", &new_owner, &None);
+        let msg_some = TransferAssetOp::signing_message("cryptopunk", &new_owner, &Some(Commitment::new(0, Scalar::from(0u64))));
+        assert_ne!(msg_none, msg_some, "None and Some(_) must never produce identical signing messages, even for a zero-ish commitment");
+    }
+
+    #[test]
+    fn accepts_metadata_at_max_length() {
+        let secret = Scalar::from(7u64);
+        let gens = bulletproofs::PedersenGens::default();
+        let owner_pubkey = Commitment(secret * gens.B_blinding);
+        let metadata = vec![0u8; MAX_METADATA_BYTES];
+        let signature = MintAssetOp::sign("cryptopunk", &metadata, &secret);
+        let op = MintAssetOp {
+            asset_id: "cryptopunk".to_string(),
+            owner_pubkey,
+            metadata,
+            fee_payment: crate::core::transaction::Transaction { inputs: vec![], outputs: vec![], kernels: vec![] },
+            signature,
+        };
+        // Only the metadata-length check should pass here; fee_payment is
+        // deliberately empty/invalid so this asserts on the specific error,
+        // not overall success.
+        assert_ne!(op.validate_standalone(), Err(AssetError::MetadataTooLong));
+    }
+
+    #[test]
+    fn rejects_metadata_over_max_length() {
+        let secret = Scalar::from(7u64);
+        let gens = bulletproofs::PedersenGens::default();
+        let owner_pubkey = Commitment(secret * gens.B_blinding);
+        let metadata = vec![0u8; MAX_METADATA_BYTES + 1];
+        let signature = MintAssetOp::sign("cryptopunk", &metadata, &secret);
+        let op = MintAssetOp {
+            asset_id: "cryptopunk".to_string(),
+            owner_pubkey,
+            metadata,
+            fee_payment: crate::core::transaction::Transaction { inputs: vec![], outputs: vec![], kernels: vec![] },
+            signature,
+        };
+        assert_eq!(op.validate_standalone(), Err(AssetError::MetadataTooLong));
     }
 }

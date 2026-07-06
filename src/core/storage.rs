@@ -82,6 +82,7 @@ impl Storage {
                 }
             }
         }
+        state.kernel_excesses = kernels.iter().map(|k| k.excess).collect();
         state.kernels = kernels;
 
         let mut validator_snapshots: HashMap<u64, Vec<Validator>> = HashMap::new();
@@ -185,7 +186,7 @@ impl Storage {
                 state.asset_registry.insert(op.asset_id.clone(), super::assets::AssetRecord {
                     asset_id: op.asset_id.clone(),
                     owner_pubkey: op.owner_pubkey,
-                    metadata_hash: op.metadata_hash,
+                    metadata: op.metadata.clone(),
                     minted_at_block: block.header.height,
                 });
             }
@@ -194,7 +195,7 @@ impl Storage {
                     let updated = super::assets::AssetRecord {
                         asset_id: op.asset_id.clone(),
                         owner_pubkey: op.new_owner_pubkey,
-                        metadata_hash: existing.metadata_hash,
+                        metadata: existing.metadata.clone(),
                         minted_at_block: existing.minted_at_block,
                     };
                     state.asset_registry.insert(op.asset_id.clone(), updated);
