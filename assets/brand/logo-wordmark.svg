@@ -1,0 +1,27 @@
+<svg viewBox="0 0 900 260" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="wglow1" cx="8%" cy="0%" r="90%">
+      <stop offset="0%" stop-color="#3a3350" stop-opacity="0.8"/>
+      <stop offset="100%" stop-color="#1b1a20" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="wglow2" cx="70%" cy="100%" r="80%">
+      <stop offset="0%" stop-color="#3c2f1e" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#1b1a20" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="wAmberGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f0bb7e"/>
+      <stop offset="100%" stop-color="#d99a4e"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="900" height="260" rx="28" fill="#1b1a20"/>
+  <rect width="900" height="260" rx="28" fill="url(#wglow1)"/>
+  <rect width="900" height="260" rx="28" fill="url(#wglow2)"/>
+
+  <g transform="translate(130 130)">
+    <circle r="66" fill="none" stroke="url(#wAmberGrad)" stroke-width="7" opacity="0.35"/>
+    <path d="M 0 -66 A 66 66 0 0 0 0 66 Z" fill="url(#wAmberGrad)"/>
+  </g>
+
+  <text x="234" y="158" font-family="Georgia, 'Times New Roman', serif" font-style="italic" font-size="112" font-weight="500" fill="#f2efe6">Haze</text>
+</svg>
