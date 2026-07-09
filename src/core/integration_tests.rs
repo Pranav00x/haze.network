@@ -2227,5 +2227,127 @@ mod tests {
         assert!(chain_state.apply_block(&block3).is_applied(), "a resale with BOTH the seller's payment and the creator's royalty payment present must apply");
         assert_eq!(chain_state.asset_registry["royalty-punk"].owner_pubkey, buyer_pubkey, "ownership must transfer once both conditions are satisfied");
     }
+
+    /// A royalty only applies to an actual SALE (required_kernel_excess is
+    /// Some) - an unconditional transfer of a royalty-bearing asset (a
+    /// gift, an airdrop, moving it between your own wallets) must still go
+    /// through for free, with no royalty payment required at all. Without
+    /// this exemption, a royalty-charging collection's assets could never
+    /// be gifted or moved without also paying the creator, which isn't
+    /// what "royalty on resale" is supposed to mean.
+    #[test]
+    fn unconditional_transfer_of_royalty_bearing_asset_needs_no_royalty_payment() {
+        use crate::core::assets::{MintAssetOp, TransferAssetOp, AssetRecord, ASSET_MINT_FEE, compute_asset_registry_root};
+        use crate::core::collections::{LaunchCollectionOp, CollectionRecord, MintPhase, compute_collection_registry_root};
+        use bulletproofs::PedersenGens;
+
+        let mut rng = OsRng;
+        let mut chain_state = ChainState::new();
+        let genesis_block = crate::core::genesis::genesis_block();
+        let genesis_hash = genesis_block.header.hash();
+        assert!(chain_state.apply_block(&genesis_block).is_applied());
+
+        let gens = PedersenGens::default();
+        let private_key = Scalar::from(42u64);
+
+        let creator_secret = Scalar::from(66u64);
+        let creator_pubkey = Commitment(creator_secret * gens.B_blinding);
+        let owner_secret = Scalar::random(&mut rng);
+        let owner_pubkey = Commitment(owner_secret * gens.B_blinding);
+        let friend_secret = Scalar::random(&mut rng);
+        let friend_pubkey = Commitment(friend_secret * gens.B_blinding);
+
+        let phases = vec![MintPhase { name: "Public".to_string(), start_time: 0, end_time: 10_000, price: 1, per_wallet_limit: 10, allowlist_merkle_root: None }];
+        let collection_id = "giftablecol".to_string();
+        let royalty_bps = 1000u16; // 10%
+        let launch_signature = LaunchCollectionOp::sign(&collection_id, &creator_pubkey, "Giftable Collection", "GIFT", b"", &phases, royalty_bps, &creator_secret);
+        let launch_op = LaunchCollectionOp {
+            collection_id: collection_id.clone(), creator_pubkey, name: "Giftable Collection".to_string(), symbol: "GIFT".to_string(),
+            metadata: vec![], phases: phases.clone(), royalty_bps, signature: launch_signature,
+        };
+        let mut collections_after_launch = std::collections::HashMap::new();
+        collections_after_launch.insert(collection_id.clone(), CollectionRecord {
+            collection_id: collection_id.clone(), creator_pubkey, name: "Giftable Collection".to_string(), symbol: "GIFT".to_string(),
+            metadata: vec![], phases: phases.clone(), launched_at_block: 1, royalty_bps,
+        });
+        let (body1, _) = build_coinbase_only_body(&mut rng, 1);
+        let mut header1 = BlockHeader {
+            height: 1, prev_hash: genesis_hash, total_kernel_offset: Scalar::zero(), nonce: 0, timestamp: 0,
+            validator_commitment: Commitment::new(1_000_000, private_key), validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root: empty_registry_root(), chain_id: crate::core::genesis::CHAIN_ID,
+            asset_registry_root: compute_asset_registry_root(&std::collections::HashMap::new()),
+            collection_registry_root: compute_collection_registry_root(&collections_after_launch),
+        };
+        header1.validator_signature = Signature::sign(&header1.hash(), &private_key);
+        let block1 = Block { header: header1, body: body1, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![launch_op] };
+        assert!(chain_state.apply_block(&block1).is_applied());
+        let block1_hash = chain_state.last_block_hash;
+
+        let (body2, mint_payment_input, mint_payment_excess) = build_body_with_payment(&mut rng, 2, 1);
+        chain_state.utxos.insert(mint_payment_input);
+        let r_fee = Scalar::random(&mut rng);
+        let fee_input = Commitment::new(ASSET_MINT_FEE, r_fee);
+        chain_state.utxos.insert(fee_input);
+        let fee_payment = Transaction {
+            inputs: vec![Input { commitment: fee_input }],
+            outputs: vec![],
+            kernels: vec![TxKernel { excess: Commitment::new(0, r_fee), fee: ASSET_MINT_FEE, signature: Signature::sign(&ASSET_MINT_FEE.to_le_bytes(), &r_fee) }],
+        };
+        let metadata = vec![3u8; 4];
+        let collection_id_opt = Some(collection_id.clone());
+        let phase_index_opt = Some(0u32);
+        let required_excess_opt = Some(mint_payment_excess);
+        let mint_signature = MintAssetOp::sign("gift-punk", &metadata, &collection_id_opt, &phase_index_opt, &required_excess_opt, &owner_secret);
+        let creator_signature = MintAssetOp::sign_collection_approval("gift-punk", &collection_id, 0, &mint_payment_excess, &owner_pubkey, &creator_secret);
+        let mint_op = MintAssetOp {
+            asset_id: "gift-punk".to_string(), owner_pubkey, metadata, fee_payment,
+            collection_id: collection_id_opt, phase_index: phase_index_opt,
+            allowlist_proof: None, allowlist_leaf_index: None,
+            required_kernel_excess: required_excess_opt, signature: mint_signature, creator_signature: Some(creator_signature),
+        };
+        let mut registry_after_mint = std::collections::HashMap::new();
+        registry_after_mint.insert("gift-punk".to_string(), AssetRecord {
+            asset_id: "gift-punk".to_string(), owner_pubkey, metadata: mint_op.metadata.clone(), minted_at_block: 2,
+            collection_id: Some(collection_id.clone()),
+        });
+        let mut header2 = BlockHeader {
+            height: 2, prev_hash: block1_hash, total_kernel_offset: Scalar::zero(), nonce: 0, timestamp: 0,
+            validator_commitment: Commitment::new(1_000_000, private_key), validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root: empty_registry_root(), chain_id: crate::core::genesis::CHAIN_ID,
+            asset_registry_root: compute_asset_registry_root(&registry_after_mint),
+            collection_registry_root: compute_collection_registry_root(&collections_after_launch),
+        };
+        header2.validator_signature = Signature::sign(&header2.hash(), &private_key);
+        let block2 = Block { header: header2, body: body2, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![mint_op], transfer_asset_ops: vec![], launch_collection_ops: vec![] };
+        assert!(chain_state.apply_block(&block2).is_applied());
+        let block2_hash = chain_state.last_block_hash;
+
+        // --- Block 3: an unconditional gift transfer - no payment, no
+        // royalty, and it must still apply. ---
+        let (body3, _) = build_coinbase_only_body(&mut rng, 3);
+        let gift_transfer = TransferAssetOp {
+            asset_id: "gift-punk".to_string(),
+            new_owner_pubkey: friend_pubkey,
+            required_kernel_excess: None,
+            required_royalty_kernel_excess: None,
+            signature: TransferAssetOp::sign("gift-punk", &friend_pubkey, &None, &None, &owner_secret),
+        };
+        let mut registry_after_gift = std::collections::HashMap::new();
+        registry_after_gift.insert("gift-punk".to_string(), AssetRecord {
+            asset_id: "gift-punk".to_string(), owner_pubkey: friend_pubkey, metadata: vec![3u8; 4], minted_at_block: 2,
+            collection_id: Some(collection_id.clone()),
+        });
+        let mut header3 = BlockHeader {
+            height: 3, prev_hash: block2_hash, total_kernel_offset: Scalar::zero(), nonce: 0, timestamp: 0,
+            validator_commitment: Commitment::new(1_000_000, private_key), validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root: empty_registry_root(), chain_id: crate::core::genesis::CHAIN_ID,
+            asset_registry_root: compute_asset_registry_root(&registry_after_gift),
+            collection_registry_root: compute_collection_registry_root(&collections_after_launch),
+        };
+        header3.validator_signature = Signature::sign(&header3.hash(), &private_key);
+        let block3 = Block { header: header3, body: body3, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![gift_transfer], launch_collection_ops: vec![] };
+        assert!(chain_state.apply_block(&block3).is_applied(), "an unconditional gift transfer of a royalty-bearing asset must apply with no royalty payment at all");
+        assert_eq!(chain_state.asset_registry["gift-punk"].owner_pubkey, friend_pubkey);
+    }
 }
 

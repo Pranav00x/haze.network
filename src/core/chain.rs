@@ -618,14 +618,22 @@ impl ChainState {
             // condition - both it and the seller's own payment must be
             // satisfied before the transfer applies. See
             // TransferAssetOp::required_royalty_kernel_excess's doc comment.
-            if let Some(collection_id) = &current.collection_id {
-                if let Some(collection) = self.collection_registry.get(collection_id) {
-                    if collection.royalty_bps > 0 {
-                        let Some(required_royalty) = op.required_royalty_kernel_excess else { return None };
-                        let satisfied = self.kernel_excesses.contains(&required_royalty)
-                            || block_kernel_excesses.contains(&required_royalty);
-                        if !satisfied {
-                            return None;
+            // Only applies to an actual SALE (required_kernel_excess is
+            // Some) - an unconditional transfer (a gift, an airdrop, moving
+            // an asset between your own wallets) has no sale price to take
+            // a cut of, so it must stay free even for a royalty-bearing
+            // asset. Gating this on required_kernel_excess rather than on
+            // the collection alone is what keeps that possible.
+            if op.required_kernel_excess.is_some() {
+                if let Some(collection_id) = &current.collection_id {
+                    if let Some(collection) = self.collection_registry.get(collection_id) {
+                        if collection.royalty_bps > 0 {
+                            let Some(required_royalty) = op.required_royalty_kernel_excess else { return None };
+                            let satisfied = self.kernel_excesses.contains(&required_royalty)
+                                || block_kernel_excesses.contains(&required_royalty);
+                            if !satisfied {
+                                return None;
+                            }
                         }
                     }
                 }

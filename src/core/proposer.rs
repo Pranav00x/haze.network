@@ -407,14 +407,20 @@ impl Proposer {
                                 continue;
                             }
                         }
-                        if let Some(collection_id) = &current.collection_id {
-                            if let Some(collection) = collection_registry_snapshot.get(collection_id) {
-                                if collection.royalty_bps > 0 {
-                                    let Some(required_royalty) = op.required_royalty_kernel_excess else { continue };
-                                    let satisfied = historical_kernel_excesses.contains(&required_royalty)
-                                        || candidate_kernel_excesses.contains(&required_royalty);
-                                    if !satisfied {
-                                        continue;
+                        // Only applies to an actual sale (required_kernel_excess
+                        // is Some) - mirrors ChainState::apply_linear_block's
+                        // own gate, see its doc comment for why an
+                        // unconditional transfer must stay exempt.
+                        if op.required_kernel_excess.is_some() {
+                            if let Some(collection_id) = &current.collection_id {
+                                if let Some(collection) = collection_registry_snapshot.get(collection_id) {
+                                    if collection.royalty_bps > 0 {
+                                        let Some(required_royalty) = op.required_royalty_kernel_excess else { continue };
+                                        let satisfied = historical_kernel_excesses.contains(&required_royalty)
+                                            || candidate_kernel_excesses.contains(&required_royalty);
+                                        if !satisfied {
+                                            continue;
+                                        }
                                     }
                                 }
                             }

@@ -34,7 +34,21 @@ pub enum AllowlistError {
     /// they never were, or this is a stale/fraudulent publish for someone
     /// else's collection.
     NotCollectionCreator,
+    /// pubkeys longer than any real allowlist plausibly needs - see
+    /// MAX_ALLOWLIST_ENTRIES. Checked before signature verification
+    /// specifically so an oversized entry is rejected cheaply, without
+    /// spending a real signature-verify (or the hash-the-whole-array work
+    /// signing_message does) on it - self-signing an entry costs an
+    /// attacker nothing, they don't need to actually own any collection to
+    /// submit one (see validate_against_registry, a separate, later check).
+    TooManyEntries,
 }
+
+/// A real allowlist - even a large, popular collection's early-access list -
+/// tops out at a few tens of thousands of addresses. 200,000 is generous
+/// headroom while still bounding the cost of gossiping/validating one of
+/// these, which (unlike a mint) costs its submitter nothing at all.
+pub const MAX_ALLOWLIST_ENTRIES: usize = 200_000;
 
 impl AllowlistEntry {
     /// Binds collection_id, phase_index, the full pubkey list, and
@@ -61,6 +75,9 @@ impl AllowlistEntry {
     /// creator (see validate_against_registry, checked separately since it
     /// needs chain state).
     pub fn validate_standalone(&self) -> Result<(), AllowlistError> {
+        if self.pubkeys.len() > MAX_ALLOWLIST_ENTRIES {
+            return Err(AllowlistError::TooManyEntries);
+        }
         let msg = Self::signing_message(&self.collection_id, self.phase_index, &self.pubkeys, self.published_at);
         if !self.signature.verify(&msg, &self.creator_pubkey) {
             return Err(AllowlistError::InvalidSignature);
@@ -122,6 +139,15 @@ mod tests {
         let member = Commitment::new(0, Scalar::from(1u64));
         let (entry, _) = make_signed_entry("cryptopunks", 0, &secret, vec![member]);
         assert!(entry.validate_standalone().is_ok());
+    }
+
+    #[test]
+    fn validate_standalone_rejects_an_oversized_allowlist() {
+        let secret = Scalar::from(11u64);
+        let member = Commitment::new(0, Scalar::from(1u64));
+        let pubkeys = vec![member; MAX_ALLOWLIST_ENTRIES + 1];
+        let (entry, _) = make_signed_entry("cryptopunks", 0, &secret, pubkeys);
+        assert_eq!(entry.validate_standalone(), Err(AllowlistError::TooManyEntries));
     }
 
     #[test]

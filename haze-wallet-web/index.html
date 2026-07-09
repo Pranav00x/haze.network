@@ -1964,7 +1964,7 @@ function renderDashboard() {
     }
 
     try {
-      const opJson = build_transfer_asset_request(sessionKeystoreBytes, assetId, newOwnerHex, undefined);
+      const opJson = build_transfer_asset_request(sessionKeystoreBytes, assetId, newOwnerHex, undefined, undefined);
 
       const res = await fetch(API_BASE + "/v1/assets/transfer", {
         method: "POST",

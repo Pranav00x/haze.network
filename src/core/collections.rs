@@ -29,6 +29,11 @@ pub const MAX_COLLECTION_SYMBOL_LENGTH: usize = 16;
 /// Basis points denominator (10000 = 100%) - caps royalty_bps so a creator
 /// can't demand more than the entire resale price.
 pub const MAX_ROYALTY_BPS: u16 = 10000;
+/// Far more than any real drop needs (a GTD/FCFS/Public schedule is 3) -
+/// caps phases.len() so a launch (which has no fee_payment, costing nothing
+/// beyond ordinary block inclusion) can't be used to bloat every node's
+/// permanent collection_registry state for free.
+pub const MAX_PHASES: usize = 32;
 
 /// One round of a collection's mint schedule - e.g. a "GTD" allowlist round,
 /// an "FCFS" allowlist round, or an open "Public" round (allowlist_merkle_root
@@ -98,6 +103,7 @@ pub enum CollectionError {
     NameTooLong,
     SymbolTooLong,
     NoPhases,
+    TooManyPhases,
     InvalidPhaseWindow,
     PhasesNotSequential,
     ZeroPerWalletLimit,
@@ -125,7 +131,13 @@ fn validate_phases(phases: &[MintPhase]) -> Result<(), CollectionError> {
     if phases.is_empty() {
         return Err(CollectionError::NoPhases);
     }
+    if phases.len() > MAX_PHASES {
+        return Err(CollectionError::TooManyPhases);
+    }
     for phase in phases {
+        if phase.name.len() > MAX_COLLECTION_NAME_LENGTH {
+            return Err(CollectionError::NameTooLong);
+        }
         if phase.start_time >= phase.end_time {
             return Err(CollectionError::InvalidPhaseWindow);
         }
@@ -275,6 +287,23 @@ mod tests {
     fn rejects_empty_phases() {
         let (op, _) = signed_op(vec![]);
         assert_eq!(op.validate_standalone(), Err(CollectionError::NoPhases));
+    }
+
+    #[test]
+    fn rejects_too_many_phases() {
+        let phases: Vec<MintPhase> = (0..(MAX_PHASES as u64 + 1))
+            .map(|i| phase("P", i * 100, i * 100 + 50, 1, 1, None))
+            .collect();
+        let (op, _) = signed_op(phases);
+        assert_eq!(op.validate_standalone(), Err(CollectionError::TooManyPhases));
+    }
+
+    #[test]
+    fn rejects_an_oversized_phase_name() {
+        let long_name = "x".repeat(MAX_COLLECTION_NAME_LENGTH + 1);
+        let phases = vec![phase(&long_name, 100, 200, 10, 1, None)];
+        let (op, _) = signed_op(phases);
+        assert_eq!(op.validate_standalone(), Err(CollectionError::NameTooLong));
     }
 
     #[test]

@@ -105,17 +105,21 @@ pub async fn handle_transfer_asset(
     // Same fast-feedback idea for the independent royalty condition (see
     // TransferAssetOp::required_royalty_kernel_excess) - not a hard gate,
     // just an earlier, clearer error than a silent drop at block-assembly
-    // time.
-    if let Some(collection_id) = &current.collection_id {
-        let c = chain.lock().unwrap();
-        if let Some(collection) = c.collection_registry.get(collection_id) {
-            if collection.royalty_bps > 0 {
-                match op.required_royalty_kernel_excess {
-                    None => return Ok(error_reply(StatusCode::BAD_REQUEST, "this collection charges a royalty - required_royalty_kernel_excess must be set")),
-                    Some(required_royalty) if !c.kernel_excesses.contains(&required_royalty) => {
-                        return Ok(error_reply(StatusCode::CONFLICT, "required_royalty_kernel_excess does not exist on-chain yet - broadcast the royalty payment first"));
+    // time. Only applies to an actual sale (required_kernel_excess is Some)
+    // - an unconditional transfer (a gift, moving an asset between your own
+    // wallets) has no sale price to take a cut of.
+    if op.required_kernel_excess.is_some() {
+        if let Some(collection_id) = &current.collection_id {
+            let c = chain.lock().unwrap();
+            if let Some(collection) = c.collection_registry.get(collection_id) {
+                if collection.royalty_bps > 0 {
+                    match op.required_royalty_kernel_excess {
+                        None => return Ok(error_reply(StatusCode::BAD_REQUEST, "this collection charges a royalty - required_royalty_kernel_excess must be set")),
+                        Some(required_royalty) if !c.kernel_excesses.contains(&required_royalty) => {
+                            return Ok(error_reply(StatusCode::CONFLICT, "required_royalty_kernel_excess does not exist on-chain yet - broadcast the royalty payment first"));
+                        }
+                        Some(_) => {}
                     }
-                    Some(_) => {}
                 }
             }
         }

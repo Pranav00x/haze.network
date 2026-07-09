@@ -45,6 +45,13 @@ pub const MAX_ASSET_ID_LENGTH: usize = 64;
 /// trivial ~20KB/block of extra data for a chain that already keeps full
 /// history forever.
 pub const MAX_METADATA_BYTES: usize = 2048;
+/// A real Merkle proof's length is the allowlist's log2(leaf count) - even a
+/// billion-entry allowlist needs at most ~30 sibling hashes. 64 is generous
+/// headroom while still ruling out a spam MintAssetOp padding this field to
+/// waste verification time/bandwidth for no real proof-of-membership
+/// purpose (see core::merkle::verify_merkle_proof, which has no length cap
+/// of its own since it's a pure, general-purpose primitive).
+pub const MAX_ALLOWLIST_PROOF_LENGTH: usize = 64;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AssetRecord {
@@ -145,6 +152,9 @@ pub enum AssetError {
     /// or it doesn't verify - see MintAssetOp::creator_signature's doc
     /// comment for why this is required.
     MissingOrInvalidCreatorApproval,
+    /// allowlist_proof longer than any real Merkle proof could need - see
+    /// MAX_ALLOWLIST_PROOF_LENGTH.
+    AllowlistProofTooLong,
 }
 
 pub fn validate_asset_id(asset_id: &str) -> Result<(), AssetError> {
@@ -239,6 +249,12 @@ impl MintAssetOp {
 
         if self.collection_id.is_some() != self.phase_index.is_some() {
             return Err(AssetError::CollectionFieldsMismatched);
+        }
+
+        if let Some(proof) = &self.allowlist_proof {
+            if proof.len() > MAX_ALLOWLIST_PROOF_LENGTH {
+                return Err(AssetError::AllowlistProofTooLong);
+            }
         }
 
         let msg = Self::signing_message(&self.asset_id, &self.metadata, &self.collection_id, &self.phase_index, &self.required_kernel_excess);
@@ -507,6 +523,31 @@ mod tests {
             creator_signature: None,
         };
         assert_eq!(op.validate_standalone(), Err(AssetError::CollectionFieldsMismatched));
+    }
+
+    #[test]
+    fn validate_standalone_rejects_an_oversized_allowlist_proof() {
+        let secret = Scalar::from(7u64);
+        let gens = bulletproofs::PedersenGens::default();
+        let owner_pubkey = Commitment(secret * gens.B_blinding);
+        let metadata = b"meta".to_vec();
+        let collection_id = Some("cryptopunks".to_string());
+        let phase_index = Some(0u32);
+        let signature = MintAssetOp::sign("punk-1", &metadata, &collection_id, &phase_index, &None, &secret);
+        let op = MintAssetOp {
+            asset_id: "punk-1".to_string(),
+            owner_pubkey,
+            metadata,
+            fee_payment: crate::core::transaction::Transaction { inputs: vec![], outputs: vec![], kernels: vec![] },
+            collection_id,
+            phase_index,
+            allowlist_proof: Some(vec![[0u8; 32]; MAX_ALLOWLIST_PROOF_LENGTH + 1]),
+            allowlist_leaf_index: Some(0),
+            required_kernel_excess: None,
+            signature,
+            creator_signature: None,
+        };
+        assert_eq!(op.validate_standalone(), Err(AssetError::AllowlistProofTooLong));
     }
 
     /// The single most important test in this module: the entire
