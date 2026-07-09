@@ -2,6 +2,8 @@
 
 A Mimblewimble L1, devnet stage. This is a technical reference, not a pitch — it assumes you already know what a Pedersen commitment and a Fiat–Shamir transcript are.
 
+**Testnet: incoming.** Deterministic PoS validator set, trustless marketplace settlement (interactive slate atomic swaps, no smart contracts), NFT collections/drops with royalties, hardened through several security passes. Public testnet is next.
+
 ## State model
 
 UTXO set only. No accounts, no global balance ledger.
