@@ -211,6 +211,19 @@ pub struct ScanOutputEntry {
     pub note_hex: String,
 }
 
+/// How many blocks handle_scan_outputs walks per chain-lock acquisition -
+/// bounds how long any single lock hold blocks block application/proposing,
+/// without changing the endpoint's response contract at all (still one GET,
+/// still the complete history, no pagination for callers to implement).
+/// get_blocks_from(0, N) can't be reused for this directly - it always
+/// walks from the CURRENT tip back to height 0 regardless of N (it only
+/// uses N to decide how much of that walk to keep), so calling it
+/// repeatedly with an increasing from_height would redo the same
+/// tip-to-cursor walk every time - quadratic, not a real chunking win. This
+/// instead walks prev_hash links directly, resuming from exactly where the
+/// previous chunk's lock was released.
+const SCAN_CHUNK_SIZE: usize = 500;
+
 /// Every output ever created on this chain that carries a recoverable note
 /// (see wallet::note) - spent or unspent. A wallet restoring from a phrase
 /// has no local record of which outputs are its own, so it has to try
@@ -224,19 +237,53 @@ pub struct ScanOutputEntry {
 pub async fn handle_scan_outputs(
     chain: Arc<Mutex<ChainState>>,
 ) -> Result<impl warp::Reply, Infallible> {
-    let (blocks, _) = {
+    let mut entries: Vec<ScanOutputEntry> = Vec::new();
+    let mut cursor = {
         let c = chain.lock().unwrap();
-        c.get_blocks_from(0, usize::MAX)
+        c.last_block_hash
     };
 
-    let entries: Vec<ScanOutputEntry> = blocks.iter()
-        .flat_map(|block| all_outputs(block))
-        .filter(|o| !o.note.is_empty())
-        .map(|o| ScanOutputEntry {
-            commitment_hex: commitment_hex(&o.commitment),
-            note_hex: to_hex(&o.note),
-        })
-        .collect();
+    loop {
+        let (chunk, next_cursor) = {
+            let c = chain.lock().unwrap();
+            let mut chunk: Vec<Block> = Vec::new();
+            let mut hash = cursor;
+            let mut reached_genesis = false;
+            for _ in 0..SCAN_CHUNK_SIZE {
+                let Some(block) = c.blocks.get(&hash) else { break };
+                let height = block.header.height;
+                let prev = block.header.prev_hash;
+                chunk.push(block.clone());
+                if height == 0 {
+                    reached_genesis = true;
+                    break;
+                }
+                hash = prev;
+            }
+            (chunk, if reached_genesis { None } else { Some(hash) })
+        };
+
+        entries.extend(
+            chunk.iter()
+                .flat_map(|block| all_outputs(block))
+                .filter(|o| !o.note.is_empty())
+                .map(|o| ScanOutputEntry {
+                    commitment_hex: commitment_hex(&o.commitment),
+                    note_hex: to_hex(&o.note),
+                })
+        );
+
+        if chunk.is_empty() {
+            // Defensive: cursor didn't resolve to a known block (should
+            // never happen for a well-formed chain) - stop rather than risk
+            // looping forever on an unresolvable hash.
+            break;
+        }
+        match next_cursor {
+            Some(next) => cursor = next,
+            None => break,
+        }
+    }
 
     Ok(warp::reply::json(&entries))
 }
@@ -394,19 +441,34 @@ pub async fn handle_search(
         }
 
         if valid {
-            let c = chain.lock().unwrap();
-
-            if let Some(block) = c.blocks.get(&bytes) {
+            // A direct block-hash hit is a cheap single lookup, checked
+            // before ever taking the expensive path below.
+            let direct_hit = {
+                let c = chain.lock().unwrap();
+                c.blocks.get(&bytes).cloned()
+            };
+            if let Some(block) = direct_hit {
                 return Ok(warp::reply::json(&SearchResult { result_type: "block".to_string(), height: Some(block.header.height) }));
             }
 
+            // Falling back to a full kernel/commitment scan - clone every
+            // block once under a single brief lock acquisition rather than
+            // holding the global consensus lock (the same one block
+            // application/proposing needs) for the whole two-pass linear
+            // search below, which grows without bound as chain history
+            // grows and this endpoint is unauthenticated/freely repeatable.
+            let all_blocks: Vec<Block> = {
+                let c = chain.lock().unwrap();
+                c.blocks.values().cloned().collect()
+            };
+
             let query_hex = q.to_lowercase();
-            for block in c.blocks.values() {
+            for block in &all_blocks {
                 if all_kernels(block).iter().any(|k| commitment_hex(&k.excess) == query_hex) {
                     return Ok(warp::reply::json(&SearchResult { result_type: "transaction".to_string(), height: Some(block.header.height) }));
                 }
             }
-            for block in c.blocks.values() {
+            for block in &all_blocks {
                 let matches_output = all_outputs(block).iter().any(|o| commitment_hex(&o.commitment) == query_hex);
                 let matches_input = all_inputs(block).iter().any(|i| commitment_hex(&i.commitment) == query_hex);
                 if matches_output || matches_input {
