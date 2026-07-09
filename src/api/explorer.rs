@@ -182,10 +182,10 @@ pub struct FeeEstimate {
 }
 
 /// A wallet's actual source of truth for what fee to pay - see
-/// Mempool::suggested_fee/suggested_name_fee for the congestion-pricing
-/// model. Wallets should call this instead of hardcoding a flat fee, so
-/// paying "the going rate" automatically adapts to how busy the network
-/// actually is.
+/// Mempool::suggested_fee/suggested_name_fee. Fixed, size-based amounts
+/// regardless of mempool backlog; wallets should call this instead of
+/// hardcoding a flat fee so a change to the underlying constants doesn't
+/// require a wallet update.
 pub async fn handle_fee_estimate(
     mempool: Arc<Mutex<Mempool>>,
 ) -> Result<impl warp::Reply, Infallible> {

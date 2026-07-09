@@ -639,7 +639,7 @@ async function fetchJson(path, opts) {
 // rather than blocking entirely on one extra request.
 const FALLBACK_FEE = 5n;
 
-// Fees are size-based and congestion-priced (see core::mempool::
+// Fees are size-based and fixed regardless of network load (see core::mempool::
 // required_fee/suggested_fee, GET /v1/fee-estimate) rather than a flat
 // constant - a transaction pays for the bytes it actually takes up on-chain,
 // and the network gets to say what that costs right now, instead of every
@@ -1401,7 +1401,7 @@ function renderDashboard() {
       <div class="tab-panel" data-tab="send">
         <div class="panel">
           <h2>Self-pay</h2>
-          <div class="sub">Splits/consolidates your own confirmed UTXOs. Fee scales with transaction size and network congestion - <span id="send-fee-note">checking current fee&hellip;</span></div>
+          <div class="sub">Splits/consolidates your own confirmed UTXOs. Fee scales with transaction size - <span id="send-fee-note">checking current fee&hellip;</span></div>
           <label>Amount</label>
           <input type="number" id="send-amount" min="1" />
           <button class="btn-primary" id="send-btn">Send</button>
@@ -1433,7 +1433,7 @@ function renderDashboard() {
       <div class="tab-panel" data-tab="names">
         <div class="panel">
           <h2>Haze Naming Registry</h2>
-          <div class="sub">Register a permanent, first-come-first-served name that resolves to your wallet's identity pubkey - lowercase letters/digits/-/_, 3-32 characters. No expiry. Fee adapts to registration-backlog congestion - <span id="register-name-fee-note">checking current fee&hellip;</span></div>
+          <div class="sub">Register a permanent, first-come-first-served name that resolves to your wallet's identity pubkey - lowercase letters/digits/-/_, 3-32 characters. No expiry. Fixed registration fee - <span id="register-name-fee-note">checking current fee&hellip;</span></div>
           <label>Name</label>
           <input type="text" id="name-input" placeholder="e.g. pranav" autocomplete="off" />
           <button class="btn-primary" id="register-name-btn">Register name</button>
@@ -1472,7 +1472,7 @@ function renderDashboard() {
       <div class="tab-panel" data-tab="assets">
         <div class="panel">
           <h2>Mint an asset</h2>
-          <div class="sub">Mints a permanent, first-come-first-served, unique on-chain asset ("NFT") owned by your wallet's identity pubkey - lowercase letters/digits/-/_, 3-64 characters. Metadata is arbitrary text (a description, a link to an image, whatever) - it isn't interpreted on-chain, just hashed and carried along. Fee adapts to mint-backlog congestion - <span id="mint-asset-fee-note">checking current fee&hellip;</span></div>
+          <div class="sub">Mints a permanent, first-come-first-served, unique on-chain asset ("NFT") owned by your wallet's identity pubkey - lowercase letters/digits/-/_, 3-64 characters. Metadata is arbitrary text (a description, a link to an image, whatever) - it isn't interpreted on-chain, just hashed and carried along. Fixed mint fee - <span id="mint-asset-fee-note">checking current fee&hellip;</span></div>
           <label>Asset ID</label>
           <input type="text" id="asset-id-input" placeholder="e.g. cryptopunk-1" autocomplete="off" />
           <label>Metadata</label>

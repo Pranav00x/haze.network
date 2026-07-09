@@ -114,11 +114,9 @@ pub async fn handle_sponsored_register_name(
         faucet.reconcile(&c);
     }
 
-    // Pays the live congestion-priced suggestion (see Mempool::
-    // suggested_name_fee), not the bare NAME_REGISTRATION_FEE floor - a
-    // sponsored registration should queue-jump the same as a self-funded one
-    // would if it chose to pay more, rather than always sitting at the back
-    // of a busy backlog.
+    // Pays Mempool::suggested_name_fee rather than hardcoding
+    // NAME_REGISTRATION_FEE here, so a change to the underlying constant
+    // doesn't need a matching update at every call site.
     let suggested_fee = { mempool.lock().unwrap().suggested_name_fee() };
     let fee_payment = match faucet.build_sponsored_fee_payment(suggested_fee) {
         Ok(tx) => tx,

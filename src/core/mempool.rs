@@ -22,8 +22,9 @@ pub const MAX_LAUNCH_OPS_PER_BLOCK: usize = 5;
 /// with no cap, block space was never actually scarce, so there was nothing
 /// for a fee to buy: every transaction got in on the very next block
 /// regardless of what it paid. This cap is what makes fee-based
-/// prioritization (see aggregate()) and congestion pricing (see
-/// suggested_fee()) mean anything at all.
+/// prioritization (see aggregate()) mean anything at all - a wallet can
+/// still voluntarily pay above the flat suggested_fee() to jump the queue
+/// when the mempool has a real backlog.
 pub const MAX_TXS_PER_BLOCK: usize = 50;
 
 /// Policy-level floor enforced at mempool acceptance (add_transaction) - NOT
@@ -132,20 +133,17 @@ impl Mempool {
         Some(aggregate_and_cut_through(selected))
     }
 
-    /// A congestion-priced fee suggestion for wallets that haven't built
-    /// their real transaction yet: the size-based fee for a reference
-    /// single-input/single-output send while the mempool comfortably fits
-    /// in the next block, rising by one more reference-fee step for every
-    /// additional full block's worth of backlog beyond that. Self-
-    /// correcting - once the backlog drains, the suggestion drops back down
-    /// on its own. A wallet building a larger transaction should still
-    /// price it by its own actual size (see `required_fee`), not just this
-    /// single advisory number.
+    /// A flat fee suggestion for wallets that haven't built their real
+    /// transaction yet: the size-based fee for a reference single-input/
+    /// single-output send. Fixed regardless of mempool backlog - fee-based
+    /// priority ordering (see `aggregate`) is still available to a wallet
+    /// that voluntarily wants to pay more to jump the queue, but this
+    /// advisory default never auto-inflates with congestion. A wallet
+    /// building a larger transaction should still price it by its own
+    /// actual size (see `required_fee`), not just this single advisory
+    /// number.
     pub fn suggested_fee(&self) -> u64 {
-        let backlog = self.pending_txs.len();
-        let steps = backlog.div_ceil(MAX_TXS_PER_BLOCK).max(1);
-        let reference_fee = (FEE_PER_KB * REFERENCE_TX_SIZE_BYTES).div_ceil(1000).max(MIN_FEE);
-        reference_fee * steps as u64
+        (FEE_PER_KB * REFERENCE_TX_SIZE_BYTES).div_ceil(1000).max(MIN_FEE)
     }
 
     /// Number of transactions currently pending in the mempool.
@@ -191,16 +189,14 @@ impl Mempool {
         self.pending_name_ops.len()
     }
 
-    /// Congestion-priced suggestion for name registrations - same model as
-    /// suggested_fee(), just against the name-op backlog vs
-    /// MAX_NAME_OPS_PER_BLOCK instead of the payment backlog. The
+    /// Flat suggestion for name registrations - same model as
+    /// suggested_fee(), fixed regardless of backlog. The
     /// NAME_REGISTRATION_FEE floor itself is a real consensus rule (see its
-    /// doc comment), but nothing stops a registration from voluntarily paying
-    /// more to jump the queue when it's busy.
+    /// doc comment), and nothing stops a registration from voluntarily
+    /// paying more to jump the queue when it's busy, but this default
+    /// doesn't auto-inflate.
     pub fn suggested_name_fee(&self) -> u64 {
-        let backlog = self.pending_name_ops.len();
-        let steps = backlog.div_ceil(MAX_NAME_OPS_PER_BLOCK).max(1);
-        NAME_REGISTRATION_FEE * steps as u64
+        NAME_REGISTRATION_FEE
     }
 
     /// Drops any still-pending name ops that a just-applied block has made
@@ -270,12 +266,9 @@ impl Mempool {
         self.pending_mint_ops.len()
     }
 
-    /// Congestion-priced suggestion for asset mints - same model as
-    /// suggested_name_fee.
+    /// Flat suggestion for asset mints - same model as suggested_name_fee.
     pub fn suggested_asset_fee(&self) -> u64 {
-        let backlog = self.pending_mint_ops.len();
-        let steps = backlog.div_ceil(MAX_MINT_OPS_PER_BLOCK).max(1);
-        ASSET_MINT_FEE * steps as u64
+        ASSET_MINT_FEE
     }
 
     /// Drops any still-pending mint ops that a just-applied block has made
@@ -455,17 +448,17 @@ mod tests {
     }
 
     #[test]
-    fn suggested_fee_rises_with_backlog_and_floors_at_min_fee() {
+    fn suggested_fee_is_flat_regardless_of_backlog() {
         let mut mempool = Mempool::new();
         assert_eq!(mempool.suggested_fee(), MIN_FEE, "empty mempool suggests the floor");
 
         for _ in 0..MAX_TXS_PER_BLOCK {
             mempool.add_transaction(make_valid_tx_with_fee(MIN_FEE));
         }
-        assert_eq!(mempool.suggested_fee(), MIN_FEE, "exactly one block's worth is still the floor");
+        assert_eq!(mempool.suggested_fee(), MIN_FEE, "a full block's worth of backlog doesn't change the suggestion");
 
         mempool.add_transaction(make_valid_tx_with_fee(MIN_FEE));
-        assert_eq!(mempool.suggested_fee(), MIN_FEE * 2, "one more than a full block bumps the suggestion");
+        assert_eq!(mempool.suggested_fee(), MIN_FEE, "more than a full block's worth still doesn't change the suggestion");
     }
 
     /// Mirrors make_valid_tx_with_fee, but wrapped as a RegisterNameOp -
@@ -536,17 +529,17 @@ mod tests {
     }
 
     #[test]
-    fn suggested_name_fee_rises_with_backlog_and_floors_at_registration_fee() {
+    fn suggested_name_fee_is_flat_regardless_of_backlog() {
         let mut mempool = Mempool::new();
         assert_eq!(mempool.suggested_name_fee(), NAME_REGISTRATION_FEE, "empty backlog suggests the floor");
 
         for i in 0..MAX_NAME_OPS_PER_BLOCK {
             mempool.add_name_op(make_valid_name_op_with_fee(&format!("full{}", i), NAME_REGISTRATION_FEE));
         }
-        assert_eq!(mempool.suggested_name_fee(), NAME_REGISTRATION_FEE, "exactly one block's worth is still the floor");
+        assert_eq!(mempool.suggested_name_fee(), NAME_REGISTRATION_FEE, "a full block's worth of backlog doesn't change the suggestion");
 
         mempool.add_name_op(make_valid_name_op_with_fee("overflow", NAME_REGISTRATION_FEE));
-        assert_eq!(mempool.suggested_name_fee(), NAME_REGISTRATION_FEE * 2, "one more than a full block bumps the suggestion");
+        assert_eq!(mempool.suggested_name_fee(), NAME_REGISTRATION_FEE, "more than a full block's worth still doesn't change the suggestion");
     }
 
     /// Mirrors make_valid_name_op_with_fee, but wrapped as a MintAssetOp.
@@ -650,16 +643,16 @@ mod tests {
     }
 
     #[test]
-    fn suggested_asset_fee_rises_with_backlog_and_floors_at_mint_fee() {
+    fn suggested_asset_fee_is_flat_regardless_of_backlog() {
         let mut mempool = Mempool::new();
         assert_eq!(mempool.suggested_asset_fee(), ASSET_MINT_FEE, "empty backlog suggests the floor");
 
         for i in 0..MAX_MINT_OPS_PER_BLOCK {
             mempool.add_mint_op(make_valid_mint_op_with_fee(&format!("full{}", i), ASSET_MINT_FEE));
         }
-        assert_eq!(mempool.suggested_asset_fee(), ASSET_MINT_FEE, "exactly one block's worth is still the floor");
+        assert_eq!(mempool.suggested_asset_fee(), ASSET_MINT_FEE, "a full block's worth of backlog doesn't change the suggestion");
 
         mempool.add_mint_op(make_valid_mint_op_with_fee("overflow", ASSET_MINT_FEE));
-        assert_eq!(mempool.suggested_asset_fee(), ASSET_MINT_FEE * 2, "one more than a full block bumps the suggestion");
+        assert_eq!(mempool.suggested_asset_fee(), ASSET_MINT_FEE, "more than a full block's worth still doesn't change the suggestion");
     }
 }

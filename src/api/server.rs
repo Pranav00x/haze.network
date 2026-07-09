@@ -134,9 +134,9 @@ impl ApiServer {
             .and(chain_filter.clone())
             .and_then(explorer::handle_scan_outputs);
 
-        // GET /v1/fee-estimate - congestion-priced fee suggestion (see
+        // GET /v1/fee-estimate - fixed, size-based fee suggestion (see
         // Mempool::suggested_fee) - wallets should call this instead of
-        // hardcoding a flat fee.
+        // hardcoding the constant directly.
         let fee_estimate_route = warp::get()
             .and(warp::path!("v1" / "fee-estimate"))
             .and(mempool_filter_7)
