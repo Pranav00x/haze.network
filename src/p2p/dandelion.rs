@@ -13,6 +13,17 @@ pub enum TxState {
     Fluff,
 }
 
+/// Bounds seen_stems - every StemTx/FluffTx a peer sends inserts an entry
+/// here, even ones that go on to fail add_transaction (no validation
+/// happens before compute_tx_id + register_stem_tx/mark_fluffed). Without a
+/// cap, a peer streaming arbitrary garbage Transactions (any field change
+/// yields a distinct hash, free to produce) grows this map without bound.
+/// Generous headroom above realistic in-flight tx volume; once full, new
+/// unknown ids are simply not tracked (is_fluffed still safely defaults to
+/// false via unwrap_or), degrading Dandelion privacy routing for the
+/// overflow case rather than exhausting memory.
+const MAX_SEEN_STEMS: usize = 200_000;
+
 pub struct DandelionRouter {
     /// The probability of transitioning from Stem to Fluff
     pub fluff_probability: f64,
@@ -48,6 +59,9 @@ impl DandelionRouter {
         if seen.contains_key(&tx_id) {
             return; // Already tracked
         }
+        if seen.len() >= MAX_SEEN_STEMS {
+            return;
+        }
         seen.insert(tx_id, false);
 
         let seen_clone = Arc::clone(&self.seen_stems);
@@ -77,6 +91,9 @@ impl DandelionRouter {
     /// Marks a transaction as fluffed (either because we gossiped it or saw it fluff on the network)
     pub fn mark_fluffed(&self, tx_id: [u8; 32]) {
         let mut seen = self.seen_stems.lock().unwrap();
+        if !seen.contains_key(&tx_id) && seen.len() >= MAX_SEEN_STEMS {
+            return;
+        }
         seen.insert(tx_id, true);
     }
 

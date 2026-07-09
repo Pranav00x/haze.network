@@ -27,6 +27,23 @@ pub const MAX_LAUNCH_OPS_PER_BLOCK: usize = 5;
 /// when the mempool has a real backlog.
 pub const MAX_TXS_PER_BLOCK: usize = 50;
 
+/// Caps how many of each op type can sit in the mempool AWAITING inclusion,
+/// as opposed to MAX_*_PER_BLOCK above (which only cap how many are drained
+/// per block). Without this, a queue that admits ops cheaply - especially
+/// pending_transfer_ops/pending_transfer_asset_ops, which admit ANY
+/// syntactically-formed op with no signature check at all (the current
+/// owner's real pubkey isn't known to the mempool, only to chain state at
+/// apply time - see add_transfer_op/add_transfer_asset_op) - lets one peer
+/// grow every receiving node's memory without bound for free, and every
+/// relaying node re-broadcasts the flood further. 100x the per-block cap is
+/// generous slack for legitimate backlog while still bounding worst case.
+pub const MAX_PENDING_TXS: usize = MAX_TXS_PER_BLOCK * 100;
+pub const MAX_PENDING_NAME_OPS: usize = MAX_NAME_OPS_PER_BLOCK * 100;
+pub const MAX_PENDING_TRANSFER_OPS: usize = MAX_TRANSFER_OPS_PER_BLOCK * 100;
+pub const MAX_PENDING_MINT_OPS: usize = MAX_MINT_OPS_PER_BLOCK * 100;
+pub const MAX_PENDING_TRANSFER_ASSET_OPS: usize = MAX_TRANSFER_ASSET_OPS_PER_BLOCK * 100;
+pub const MAX_PENDING_LAUNCH_COLLECTION_OPS: usize = MAX_LAUNCH_OPS_PER_BLOCK * 100;
+
 /// Policy-level floor enforced at mempool acceptance (add_transaction) - NOT
 /// a hard consensus rule checked at block-apply time, same tier as Bitcoin's
 /// own minimum relay fee. A malicious proposer assembling their own block
@@ -107,6 +124,9 @@ impl Mempool {
 
     /// Validates and adds a transaction to the mempool
     pub fn add_transaction(&mut self, tx: Transaction) -> bool {
+        if self.pending_txs.len() >= MAX_PENDING_TXS {
+            return false;
+        }
         if !tx.validate() {
             return false;
         }
@@ -164,6 +184,9 @@ impl Mempool {
     /// uniqueness, real UTXOs - happen again at block-apply time, same as
     /// how add_transaction only checks a Transaction's own internal balance).
     pub fn add_name_op(&mut self, op: RegisterNameOp) -> bool {
+        if self.pending_name_ops.len() >= MAX_PENDING_NAME_OPS {
+            return false;
+        }
         if op.validate_standalone().is_err() {
             return false;
         }
@@ -217,6 +240,9 @@ impl Mempool {
     /// owner, which requires chain state) - that happens again at block-
     /// assembly/apply time, same pattern as everything else here.
     pub fn add_transfer_op(&mut self, op: TransferNameOp) -> bool {
+        if self.pending_transfer_ops.len() >= MAX_PENDING_TRANSFER_OPS {
+            return false;
+        }
         if self.pending_transfer_ops.iter().any(|o| o.name == op.name) {
             return false;
         }
@@ -244,6 +270,9 @@ impl Mempool {
 
     /// Validates an asset mint standalone - same pattern as add_name_op.
     pub fn add_mint_op(&mut self, op: MintAssetOp) -> bool {
+        if self.pending_mint_ops.len() >= MAX_PENDING_MINT_OPS {
+            return false;
+        }
         if op.validate_standalone().is_err() {
             return false;
         }
@@ -285,6 +314,9 @@ impl Mempool {
 
     /// Queues an asset transfer - same pattern as add_transfer_op.
     pub fn add_transfer_asset_op(&mut self, op: TransferAssetOp) -> bool {
+        if self.pending_transfer_asset_ops.len() >= MAX_PENDING_TRANSFER_ASSET_OPS {
+            return false;
+        }
         if self.pending_transfer_asset_ops.iter().any(|o| o.asset_id == op.asset_id) {
             return false;
         }
@@ -311,6 +343,9 @@ impl Mempool {
     /// collection_id uniqueness - happens again at block-apply time, same as
     /// add_mint_op/add_name_op).
     pub fn add_launch_collection_op(&mut self, op: LaunchCollectionOp) -> bool {
+        if self.pending_launch_collection_ops.len() >= MAX_PENDING_LAUNCH_COLLECTION_OPS {
+            return false;
+        }
         if op.validate_standalone().is_err() {
             return false;
         }
@@ -641,6 +676,77 @@ mod tests {
             signature: TransferAssetOp::sign("some-asset", &new_owner, &required_kernel_excess, &None, &owner_secret),
         };
         assert!(mempool.add_transfer_asset_op(op), "a conditional transfer must be accepted into the mempool regardless of whether its condition is currently satisfiable");
+    }
+
+    /// Regression test for an unbounded-memory DoS: add_transfer_asset_op
+    /// admits any syntactically-formed op with no signature/chain-state
+    /// check at all (see the test above), so without a hard queue cap a
+    /// peer could stream distinct fake ops forever and grow the mempool
+    /// without bound for free.
+    #[test]
+    fn add_transfer_asset_op_rejects_once_pending_queue_is_full() {
+        use crate::core::assets::TransferAssetOp;
+        use bulletproofs::PedersenGens;
+
+        let mut mempool = Mempool::new();
+        let gens = PedersenGens::default();
+
+        for i in 0..MAX_PENDING_TRANSFER_ASSET_OPS {
+            let owner_secret = Scalar::from(7u64);
+            let new_owner = Commitment(Scalar::from(8u64) * gens.B_blinding);
+            let op = TransferAssetOp {
+                asset_id: format!("asset-{}", i),
+                new_owner_pubkey: new_owner,
+                required_kernel_excess: None,
+                required_royalty_kernel_excess: None,
+                signature: TransferAssetOp::sign(&format!("asset-{}", i), &new_owner, &None, &None, &owner_secret),
+            };
+            assert!(mempool.add_transfer_asset_op(op));
+        }
+
+        let owner_secret = Scalar::from(7u64);
+        let new_owner = Commitment(Scalar::from(8u64) * gens.B_blinding);
+        let overflow_op = TransferAssetOp {
+            asset_id: "one-too-many".to_string(),
+            new_owner_pubkey: new_owner,
+            required_kernel_excess: None,
+            required_royalty_kernel_excess: None,
+            signature: TransferAssetOp::sign("one-too-many", &new_owner, &None, &None, &owner_secret),
+        };
+        assert!(!mempool.add_transfer_asset_op(overflow_op), "queue must reject once MAX_PENDING_TRANSFER_ASSET_OPS is reached");
+    }
+
+    /// Same DoS class as above, for add_transfer_op (also zero-validation -
+    /// the current owner's real pubkey isn't known to the mempool).
+    #[test]
+    fn add_transfer_op_rejects_once_pending_queue_is_full() {
+        use crate::core::registry::TransferNameOp;
+        use bulletproofs::PedersenGens;
+
+        let mut mempool = Mempool::new();
+        let gens = PedersenGens::default();
+        let owner_secret = Scalar::from(7u64);
+        let new_owner = Commitment(Scalar::from(8u64) * gens.B_blinding);
+        let resolves_to = Commitment(Scalar::from(9u64) * gens.B_blinding);
+
+        for i in 0..MAX_PENDING_TRANSFER_OPS {
+            let name = format!("name-{}", i);
+            let op = TransferNameOp {
+                name: name.clone(),
+                new_owner_pubkey: new_owner,
+                new_resolves_to: resolves_to,
+                signature: TransferNameOp::sign(&name, &new_owner, &resolves_to, &owner_secret),
+            };
+            assert!(mempool.add_transfer_op(op));
+        }
+
+        let overflow_op = TransferNameOp {
+            name: "one-too-many".to_string(),
+            new_owner_pubkey: new_owner,
+            new_resolves_to: resolves_to,
+            signature: TransferNameOp::sign("one-too-many", &new_owner, &resolves_to, &owner_secret),
+        };
+        assert!(!mempool.add_transfer_op(overflow_op), "queue must reject once MAX_PENDING_TRANSFER_OPS is reached");
     }
 
     #[test]
