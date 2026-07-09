@@ -828,6 +828,61 @@ export class WasmSendPlan {
 }
 if (Symbol.dispose) WasmSendPlan.prototype[Symbol.dispose] = WasmSendPlan.prototype.free;
 
+export class WasmSlateReservation {
+    static __wrap(ptr) {
+        const obj = Object.create(WasmSlateReservation.prototype);
+        obj.__wbg_ptr = ptr;
+        WasmSlateReservationFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmSlateReservationFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmslatereservation_free(ptr, 0);
+    }
+    /**
+     * @returns {WasmOwnedOutput | undefined}
+     */
+    get change() {
+        const ret = wasm.__wbg_get_wasmslatereservation_change(this.__wbg_ptr);
+        return ret === 0 ? undefined : WasmOwnedOutput.__wrap(ret);
+    }
+    /**
+     * @returns {string[]}
+     */
+    get spent_commitments_hex() {
+        const ret = wasm.__wbg_get_wasmslatereservation_spent_commitments_hex(this.__wbg_ptr);
+        var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @param {WasmOwnedOutput | null} [arg0]
+     */
+    set change(arg0) {
+        let ptr0 = 0;
+        if (!isLikeNone(arg0)) {
+            _assertClass(arg0, WasmOwnedOutput);
+            ptr0 = arg0.__destroy_into_raw();
+        }
+        wasm.__wbg_set_wasmslatereservation_change(this.__wbg_ptr, ptr0);
+    }
+    /**
+     * @param {string[]} arg0
+     */
+    set spent_commitments_hex(arg0) {
+        const ptr0 = passArrayJsValueToWasm0(arg0, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_wasmslatereservation_spent_commitments_hex(this.__wbg_ptr, ptr0, len0);
+    }
+}
+if (Symbol.dispose) WasmSlateReservation.prototype[Symbol.dispose] = WasmSlateReservation.prototype.free;
+
 export class WasmSweepResult {
     static __wrap(ptr) {
         const obj = Object.create(WasmSweepResult.prototype);
@@ -1602,6 +1657,30 @@ export function generate_keystore_with_mnemonic() {
 }
 
 /**
+ * Sender-side: the inputs/change a pending slate has ALREADY selected at
+ * create_send_slate time, before the recipient has even responded (see
+ * PendingSlate.spent_commitments/change - both are fixed at planning time,
+ * the interactive round-trip only adds the recipient's own signature
+ * share). Lets a caller building a SECOND, independent slate off the same
+ * wallet store (e.g. a royalty payment alongside a marketplace payment)
+ * eagerly commit_slate_send this one's reservation first, so the second
+ * selection can't pick the same commitment - the same UTXO-collision this
+ * project has hit before whenever two payments were built back-to-back
+ * against a store that hadn't yet been told about the first one's picks.
+ * @param {Uint8Array} pending_slate_bytes
+ * @returns {WasmSlateReservation}
+ */
+export function pending_slate_reservation(pending_slate_bytes) {
+    const ptr0 = passArray8ToWasm0(pending_slate_bytes, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.pending_slate_reservation(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return WasmSlateReservation.__wrap(ret[0]);
+}
+
+/**
  * Builds a real, self-contained transaction from the wallet's own confirmed UTXOs.
  * Allocates new output indices in the returned keystore bytes immediately (same
  * as the desktop wallet), regardless of whether the caller goes on to broadcast
@@ -2173,6 +2252,9 @@ const WasmRespondResultFinalization = (typeof FinalizationRegistry === 'undefine
 const WasmSendPlanFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmsendplan_free(ptr, 1));
+const WasmSlateReservationFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmslatereservation_free(ptr, 1));
 const WasmSweepResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmsweepresult_free(ptr, 1));

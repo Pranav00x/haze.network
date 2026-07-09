@@ -374,7 +374,7 @@ document.getElementById("theme-toggle").addEventListener("click", () => {
 import init, {
   generate_keystore, wallet_store_new, reconcile_wallet_store,
   wallet_balance, wallet_pending_balance, plan_send, commit_send,
-  create_send_slate, respond_to_slate, finalize_slate, commit_receive, commit_slate_send,
+  create_send_slate, respond_to_slate, finalize_slate, commit_receive, commit_slate_send, pending_slate_reservation,
   build_stake_request, reveal_stake_blinding_hex,
   build_register_name_request, commit_register_name, wallet_identity_pubkey_hex,
   build_sponsored_register_name_request,
@@ -1214,7 +1214,19 @@ function handleMarketplaceDeepLink() {
 
         let royaltySlate = null;
         if (royaltyPubkeyHex && royaltyAmount > 0n) {
-          const storeBytes2 = loadWalletStoreBytes();
+          // The seller slate above already picked its inputs (fixed at
+          // create_send_slate time, before any interactive response - see
+          // pending_slate_reservation's doc comment), but hasn't been
+          // committed to the store yet (that only happens once the seller
+          // actually accepts, in the "response" handler below). Without
+          // eagerly reserving it here first, this second, independent slate
+          // could select the exact same commitment - the same UTXO-collision
+          // class of bug already hit once this session for collection mints.
+          const reservation = pending_slate_reservation(sellerSlate.pending_slate_bytes);
+          let storeBytes2 = loadWalletStoreBytes();
+          storeBytes2 = commit_slate_send(storeBytes2, reservation.spent_commitments_hex, reservation.change);
+          saveWalletStoreBytes(storeBytes2);
+
           royaltySlate = create_send_slate(sessionKeystoreBytes, storeBytes2, royaltyAmount, fee);
           sessionKeystoreBytes = royaltySlate.updated_keystore_bytes;
           await fetch(API_BASE + "/v1/inbox/" + royaltyPubkeyHex, {
@@ -1227,9 +1239,19 @@ function handleMarketplaceDeepLink() {
         pendingPurchase = {
           assetId, sellerPubkeyHex, price: price.toString(), returnUrl,
           pendingSlateBytes: sellerSlate.pending_slate_bytes,
+          // royaltyPubkeyHex is kept even when royaltySlate ends up null (a
+          // nonzero royalty_bps that rounds down to a 0 royaltyAmount on a
+          // cheap enough price), but hasRoyaltyLeg is the one true signal
+          // for "a second slate/payment actually exists for this purchase" -
+          // every other branch below (royaltyDone, the eager seller-leg
+          // reservation, the redundant-commit guard, the royalty broadcast)
+          // must key off THIS, not off royaltyPubkeyHex alone, or a
+          // rounds-to-zero royalty deadlocks waiting for a response that
+          // was never requested.
           royaltyPubkeyHex, royaltyAmount: royaltyAmount.toString(),
+          hasRoyaltyLeg: !!royaltySlate,
           pendingRoyaltySlateBytes: royaltySlate ? royaltySlate.pending_slate_bytes : null,
-          sellerDone: false, royaltyDone: !royaltyPubkeyHex,
+          sellerDone: false, royaltyDone: !royaltySlate,
         };
         banner.querySelector("#dl-approve").disabled = true;
         msgEl.innerHTML = `<div class="message success">Offer sent - waiting for ${royaltyPubkeyHex ? "the seller and the creator" : "the seller"} to accept. You'll be redirected back to ${origin} once the purchase completes.</div>`;
@@ -2306,7 +2328,7 @@ function renderDashboard() {
       }),
     });
     const messageEl = document.getElementById("buy-asset-message");
-    messageEl.innerHTML = `<div class="message success">Payment${pendingPurchase.royaltyPubkeyHex ? "s" : ""} accepted for "${pendingPurchase.assetId}" - waiting for the seller to sign the transfer&hellip;</div>`;
+    messageEl.innerHTML = `<div class="message success">Payment${pendingPurchase.hasRoyaltyLeg ? "s" : ""} accepted for "${pendingPurchase.assetId}" - waiting for the seller to sign the transfer&hellip;</div>`;
   }
 
   async function pollInbox() {
@@ -2372,7 +2394,7 @@ function renderDashboard() {
             messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
             pendingPurchase = null;
           }
-        } else if (msg.kind === "response" && pendingPurchase && pendingPurchase.royaltyPubkeyHex && msg.from_pubkey_hex === pendingPurchase.royaltyPubkeyHex) {
+        } else if (msg.kind === "response" && pendingPurchase && pendingPurchase.hasRoyaltyLeg && msg.from_pubkey_hex === pendingPurchase.royaltyPubkeyHex) {
           // The royalty leg's own independent response, from the collection's
           // creator rather than the seller - same finalize-but-don't-broadcast
           // reasoning as the seller leg above.
@@ -2414,14 +2436,23 @@ function renderDashboard() {
               pendingPurchase = null;
               continue;
             }
-            let storeBytes = loadWalletStoreBytes();
-            storeBytes = commit_slate_send(storeBytes, pendingPurchase.spentCommitmentsHex, pendingPurchase.change);
-            saveWalletStoreBytes(storeBytes);
+            // If this purchase has a royalty leg, the seller leg's
+            // spent_commitments/change were already committed EAGERLY back
+            // in the "buy" deep-link handler (before the royalty slate was
+            // even built, to avoid a UTXO collision between the two) -
+            // committing it again here would duplicate the change output
+            // (WalletStore::add_output isn't idempotent). Only a purchase
+            // with no royalty leg at all still needs it committed here.
+            if (!pendingPurchase.hasRoyaltyLeg) {
+              let storeBytes = loadWalletStoreBytes();
+              storeBytes = commit_slate_send(storeBytes, pendingPurchase.spentCommitmentsHex, pendingPurchase.change);
+              saveWalletStoreBytes(storeBytes);
+            }
 
             // The royalty leg (if this asset's collection charges one) is a
             // second, independent payment - broadcast it too before the
             // transfer, same reasoning as the seller's own payment above.
-            if (pendingPurchase.royaltyPubkeyHex && pendingPurchase.finalizedRoyaltyTxJson) {
+            if (pendingPurchase.hasRoyaltyLeg) {
               const royaltyPayRes = await fetch(API_BASE + "/v1/transactions", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },

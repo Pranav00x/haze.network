@@ -119,6 +119,15 @@ export class WasmSendPlan {
     updated_keystore_bytes: Uint8Array;
 }
 
+export class WasmSlateReservation {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    get change(): WasmOwnedOutput | undefined;
+    set change(value: WasmOwnedOutput | null | undefined);
+    spent_commitments_hex: string[];
+}
+
 export class WasmSweepResult {
     private constructor();
     free(): void;
@@ -346,6 +355,20 @@ export function generate_keystore(): Uint8Array;
 export function generate_keystore_with_mnemonic(): WasmKeystoreAndMnemonic;
 
 /**
+ * Sender-side: the inputs/change a pending slate has ALREADY selected at
+ * create_send_slate time, before the recipient has even responded (see
+ * PendingSlate.spent_commitments/change - both are fixed at planning time,
+ * the interactive round-trip only adds the recipient's own signature
+ * share). Lets a caller building a SECOND, independent slate off the same
+ * wallet store (e.g. a royalty payment alongside a marketplace payment)
+ * eagerly commit_slate_send this one's reservation first, so the second
+ * selection can't pick the same commitment - the same UTXO-collision this
+ * project has hit before whenever two payments were built back-to-back
+ * against a store that hadn't yet been told about the first one's picks.
+ */
+export function pending_slate_reservation(pending_slate_bytes: Uint8Array): WasmSlateReservation;
+
+/**
  * Builds a real, self-contained transaction from the wallet's own confirmed UTXOs.
  * Allocates new output indices in the returned keystore bytes immediately (same
  * as the desktop wallet), regardless of whether the caller goes on to broadcast
@@ -502,6 +525,7 @@ export interface InitOutput {
     readonly __wbg_get_wasmsendplan_spent_commitments_hex: (a: number) => [number, number];
     readonly __wbg_get_wasmsendplan_transaction_json: (a: number) => [number, number];
     readonly __wbg_get_wasmsendplan_updated_keystore_bytes: (a: number) => [number, number];
+    readonly __wbg_get_wasmslatereservation_spent_commitments_hex: (a: number) => [number, number];
     readonly __wbg_get_wasmsweepresult_swept_count: (a: number) => number;
     readonly __wbg_get_wasmsweepresult_swept_total: (a: number) => bigint;
     readonly __wbg_get_wasmsweepresult_transaction_json: (a: number) => [number, number];
@@ -524,6 +548,7 @@ export interface InitOutput {
     readonly __wbg_set_wasmsendplan_spent_commitments_hex: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmsendplan_transaction_json: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmsendplan_updated_keystore_bytes: (a: number, b: number, c: number) => void;
+    readonly __wbg_set_wasmslatereservation_spent_commitments_hex: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmsweepresult_swept_count: (a: number, b: number) => void;
     readonly __wbg_set_wasmsweepresult_swept_total: (a: number, b: bigint) => void;
     readonly __wbg_set_wasmsweepresult_transaction_json: (a: number, b: number, c: number) => void;
@@ -538,6 +563,7 @@ export interface InitOutput {
     readonly __wbg_wasmregisternameresult_free: (a: number, b: number) => void;
     readonly __wbg_wasmrespondresult_free: (a: number, b: number) => void;
     readonly __wbg_wasmsendplan_free: (a: number, b: number) => void;
+    readonly __wbg_wasmslatereservation_free: (a: number, b: number) => void;
     readonly __wbg_wasmsweepresult_free: (a: number, b: number) => void;
     readonly attach_creator_signature_to_mint: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly build_cancel_listing_request: (a: number, b: number, c: number, d: number) => [number, number, number, number];
@@ -559,6 +585,7 @@ export interface InitOutput {
     readonly finalize_slate: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly generate_keystore: () => [number, number];
     readonly generate_keystore_with_mnemonic: () => number;
+    readonly pending_slate_reservation: (a: number, b: number) => [number, number, number];
     readonly plan_send: (a: number, b: number, c: number, d: number, e: bigint, f: bigint) => [number, number, number];
     readonly reconcile_wallet_store: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly recover_wallet_from_chain: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
@@ -579,10 +606,12 @@ export interface InitOutput {
     readonly __wbg_get_wasmrecoveryresult_recovered_balance: (a: number) => bigint;
     readonly __wbg_get_wasmmintassetresult_change: (a: number) => number;
     readonly __wbg_get_wasmregisternameresult_change: (a: number) => number;
+    readonly __wbg_get_wasmslatereservation_change: (a: number) => number;
     readonly __wbg_set_wasmownedoutput_index: (a: number, b: number) => void;
     readonly __wbg_set_wasmrecoveryresult_recovered_balance: (a: number, b: bigint) => void;
     readonly __wbg_set_wasmmintassetresult_change: (a: number, b: number) => void;
     readonly __wbg_set_wasmregisternameresult_change: (a: number, b: number) => void;
+    readonly __wbg_set_wasmslatereservation_change: (a: number, b: number) => void;
     readonly __wbg_get_wasmsendplan_dest: (a: number) => number;
     readonly __wbg_get_wasmsweepresult_dest: (a: number) => number;
     readonly __wbg_set_wasmregisternameresult_spent_commitments_hex: (a: number, b: number, c: number) => void;

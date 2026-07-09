@@ -455,6 +455,34 @@ pub fn finalize_slate(pending_slate_bytes: Vec<u8>, response_slate_json: String)
     Ok(WasmFinalizedTx { transaction_json, spent_commitments_hex, change })
 }
 
+#[wasm_bindgen(getter_with_clone)]
+pub struct WasmSlateReservation {
+    pub spent_commitments_hex: Vec<String>,
+    pub change: Option<WasmOwnedOutput>,
+}
+
+/// Sender-side: the inputs/change a pending slate has ALREADY selected at
+/// create_send_slate time, before the recipient has even responded (see
+/// PendingSlate.spent_commitments/change - both are fixed at planning time,
+/// the interactive round-trip only adds the recipient's own signature
+/// share). Lets a caller building a SECOND, independent slate off the same
+/// wallet store (e.g. a royalty payment alongside a marketplace payment)
+/// eagerly commit_slate_send this one's reservation first, so the second
+/// selection can't pick the same commitment - the same UTXO-collision this
+/// project has hit before whenever two payments were built back-to-back
+/// against a store that hadn't yet been told about the first one's picks.
+#[wasm_bindgen]
+pub fn pending_slate_reservation(pending_slate_bytes: Vec<u8>) -> Result<WasmSlateReservation, JsValue> {
+    let pending: PendingSlate = bincode::deserialize(&pending_slate_bytes).map_err(|_| js_err("invalid pending slate bytes"))?;
+    let spent_commitments_hex = pending.spent_commitments.iter().map(|c| c.to_hex()).collect();
+    let change = pending.change.as_ref().map(|c| WasmOwnedOutput {
+        index: c.index,
+        value: c.value,
+        commitment_hex: c.output.commitment.to_hex(),
+    });
+    Ok(WasmSlateReservation { spent_commitments_hex, change })
+}
+
 /// Receiver-side commit: adds the output from `respond_to_slate` to the
 /// store as Pending. Optimistic (same tradeoff as the CLI) - there's no
 /// callback confirming the sender actually broadcasts, so this is applied
