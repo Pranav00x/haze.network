@@ -1,8 +1,14 @@
 # haze
 
-A Mimblewimble L1, devnet stage. This is a technical reference, not a pitch — it assumes you already know what a Pedersen commitment and a Fiat–Shamir transcript are.
+### 👀 something's coming.
 
-**Testnet: incoming.** Deterministic PoS validator set, trustless marketplace settlement (interactive slate atomic swaps, no smart contracts), NFT collections/drops with royalties, hardened through several security passes. Public testnet is next.
+A privacy-first L1 built on Mimblewimble — no smart contracts, no accounts, no on-chain history for who paid who. NFTs, drops, and a trustless marketplace already run natively on it.
+
+**Testnet drops soon.** Watch this space.
+
+---
+
+A Mimblewimble L1, devnet stage. This is a technical reference, not a pitch — it assumes you already know what a Pedersen commitment and a Fiat–Shamir transcript are.
 
 ## State model
 
