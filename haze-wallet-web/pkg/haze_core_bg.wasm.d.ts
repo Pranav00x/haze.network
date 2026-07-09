@@ -61,12 +61,12 @@ export const attach_creator_signature_to_mint: (a: number, b: number, c: number,
 export const build_cancel_listing_request: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const build_collection_mint_asset_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: bigint, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number) => [number, number, number];
 export const build_create_listing_request: (a: number, b: number, c: number, d: number, e: bigint, f: bigint) => [number, number, number, number];
-export const build_launch_collection_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number, number, number];
+export const build_launch_collection_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number) => [number, number, number, number];
 export const build_mint_asset_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: bigint) => [number, number, number];
 export const build_register_name_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: bigint) => [number, number, number];
 export const build_sponsored_register_name_request: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const build_stake_request: (a: number, b: number, c: number, d: number, e: bigint) => [number, number, number, number];
-export const build_transfer_asset_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+export const build_transfer_asset_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
 export const build_transfer_name_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
 export const claim_genesis: (a: number, b: number) => [number, number, number, number];
 export const commit_mint_asset: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];

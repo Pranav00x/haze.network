@@ -894,18 +894,22 @@ pub fn commit_mint_asset(store_bytes: Vec<u8>, spent_commitments_hex: Vec<String
 /// lets a seller sign a transfer before a buyer's payment lands, safely -
 /// it's cryptographically inert until that payment is actually on-chain.
 #[wasm_bindgen]
-pub fn build_transfer_asset_request(keystore_bytes: Vec<u8>, asset_id: String, new_owner_pubkey_hex: String, required_kernel_excess_hex: Option<String>) -> Result<String, JsValue> {
+pub fn build_transfer_asset_request(keystore_bytes: Vec<u8>, asset_id: String, new_owner_pubkey_hex: String, required_kernel_excess_hex: Option<String>, required_royalty_kernel_excess_hex: Option<String>) -> Result<String, JsValue> {
     let keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
     let new_owner_pubkey = Commitment::from_hex(&new_owner_pubkey_hex).ok_or_else(|| js_err("invalid new owner pubkey hex"))?;
     let required_kernel_excess = match required_kernel_excess_hex {
         Some(hex) => Some(Commitment::from_hex(&hex).ok_or_else(|| js_err("invalid required kernel excess hex"))?),
         None => None,
     };
+    let required_royalty_kernel_excess = match required_royalty_kernel_excess_hex {
+        Some(hex) => Some(Commitment::from_hex(&hex).ok_or_else(|| js_err("invalid required royalty kernel excess hex"))?),
+        None => None,
+    };
 
     let current_owner_secret = keystore.identity_key();
-    let signature = TransferAssetOp::sign(&asset_id, &new_owner_pubkey, &required_kernel_excess, &current_owner_secret);
+    let signature = TransferAssetOp::sign(&asset_id, &new_owner_pubkey, &required_kernel_excess, &required_royalty_kernel_excess, &current_owner_secret);
 
-    let op = TransferAssetOp { asset_id, new_owner_pubkey, required_kernel_excess, signature };
+    let op = TransferAssetOp { asset_id, new_owner_pubkey, required_kernel_excess, required_royalty_kernel_excess, signature };
     serde_json::to_string(&op).map_err(|_| js_err("failed to serialize transfer"))
 }
 
@@ -971,7 +975,10 @@ pub fn build_cancel_listing_request(keystore_bytes: Vec<u8>, asset_id: String) -
 /// block-inclusion (see LaunchCollectionOp's own doc comment). The caller
 /// must POST the returned JSON to /v1/collections/launch.
 #[wasm_bindgen]
-pub fn build_launch_collection_request(keystore_bytes: Vec<u8>, collection_id: String, name: String, symbol: String, metadata: String, phases_json: String) -> Result<String, JsValue> {
+pub fn build_launch_collection_request(keystore_bytes: Vec<u8>, collection_id: String, name: String, symbol: String, metadata: String, phases_json: String, royalty_bps: u16) -> Result<String, JsValue> {
+    if royalty_bps > crate::core::collections::MAX_ROYALTY_BPS {
+        return Err(js_err(format!("royalty_bps must be at most {}", crate::core::collections::MAX_ROYALTY_BPS)));
+    }
     let keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
     let creator_secret = keystore.identity_key();
     let gens = bulletproofs::PedersenGens::default();
@@ -980,8 +987,8 @@ pub fn build_launch_collection_request(keystore_bytes: Vec<u8>, collection_id: S
     let phases: Vec<MintPhase> = serde_json::from_str(&phases_json).map_err(|e| js_err(format!("invalid phases_json: {}", e)))?;
     let metadata_bytes = metadata.into_bytes();
 
-    let signature = LaunchCollectionOp::sign(&collection_id, &creator_pubkey, &name, &symbol, &metadata_bytes, &phases, &creator_secret);
-    let op = LaunchCollectionOp { collection_id, creator_pubkey, name, symbol, metadata: metadata_bytes, phases, signature };
+    let signature = LaunchCollectionOp::sign(&collection_id, &creator_pubkey, &name, &symbol, &metadata_bytes, &phases, royalty_bps, &creator_secret);
+    let op = LaunchCollectionOp { collection_id, creator_pubkey, name, symbol, metadata: metadata_bytes, phases, royalty_bps, signature };
     serde_json::to_string(&op).map_err(|_| js_err("failed to serialize collection launch"))
 }
 

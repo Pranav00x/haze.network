@@ -1379,6 +1379,7 @@ mod tests {
             owner_pubkey: op.owner_pubkey,
             metadata: op.metadata.clone(),
             minted_at_block: 1,
+            collection_id: None,
         });
         let asset_registry_root = compute_asset_registry_root(&expected_registry);
 
@@ -1486,6 +1487,7 @@ mod tests {
             owner_pubkey: op1.owner_pubkey,
             metadata: op1.metadata.clone(),
             minted_at_block: 1,
+            collection_id: None,
         });
 
         let private_key = Scalar::from(42u64);
@@ -1611,6 +1613,7 @@ mod tests {
             owner_pubkey,
             metadata,
             minted_at_block: 1,
+            collection_id: None,
         });
 
         let (body1, _) = build_coinbase_only_body(rng, 1);
@@ -1651,7 +1654,8 @@ mod tests {
             asset_id: "marketswap-punk".to_string(),
             new_owner_pubkey: buyer_pubkey,
             required_kernel_excess: Some(phantom_excess),
-            signature: TransferAssetOp::sign("marketswap-punk", &buyer_pubkey, &Some(phantom_excess), &owner_secret),
+            required_royalty_kernel_excess: None,
+            signature: TransferAssetOp::sign("marketswap-punk", &buyer_pubkey, &Some(phantom_excess), &None, &owner_secret),
         };
 
         let mut registry_after = std::collections::HashMap::new();
@@ -1660,6 +1664,7 @@ mod tests {
             owner_pubkey: buyer_pubkey,
             metadata: vec![1u8; 4],
             minted_at_block: 1,
+            collection_id: None,
         });
 
         let private_key = Scalar::from(42u64);
@@ -1723,7 +1728,8 @@ mod tests {
             asset_id: "marketswap-punk".to_string(),
             new_owner_pubkey: buyer_pubkey,
             required_kernel_excess: Some(payment_excess),
-            signature: TransferAssetOp::sign("marketswap-punk", &buyer_pubkey, &Some(payment_excess), &owner_secret),
+            required_royalty_kernel_excess: None,
+            signature: TransferAssetOp::sign("marketswap-punk", &buyer_pubkey, &Some(payment_excess), &None, &owner_secret),
         };
         let mut registry_after = std::collections::HashMap::new();
         registry_after.insert("marketswap-punk".to_string(), crate::core::assets::AssetRecord {
@@ -1731,6 +1737,7 @@ mod tests {
             owner_pubkey: buyer_pubkey,
             metadata: vec![1u8; 4],
             minted_at_block: 1,
+            collection_id: None,
         });
         let (body3, _) = build_coinbase_only_body(&mut rng, 3);
         let mut header3 = BlockHeader {
@@ -1772,7 +1779,8 @@ mod tests {
             asset_id: "marketswap-punk".to_string(),
             new_owner_pubkey: buyer_pubkey,
             required_kernel_excess: Some(payment_excess),
-            signature: TransferAssetOp::sign("marketswap-punk", &buyer_pubkey, &Some(payment_excess), &owner_secret),
+            required_royalty_kernel_excess: None,
+            signature: TransferAssetOp::sign("marketswap-punk", &buyer_pubkey, &Some(payment_excess), &None, &owner_secret),
         };
         let mut registry_after = std::collections::HashMap::new();
         registry_after.insert("marketswap-punk".to_string(), crate::core::assets::AssetRecord {
@@ -1780,6 +1788,7 @@ mod tests {
             owner_pubkey: buyer_pubkey,
             metadata: vec![1u8; 4],
             minted_at_block: 1,
+            collection_id: None,
         });
 
         let mut header2 = BlockHeader {
@@ -1886,7 +1895,7 @@ mod tests {
             MintPhase { name: "Public".to_string(), start_time: 300, end_time: 400, price: 1, per_wallet_limit: 5, allowlist_merkle_root: None },
         ];
         let collection_id = "dropcol".to_string();
-        let launch_signature = LaunchCollectionOp::sign(&collection_id, &creator_pubkey, "Drop Collection", "DROP", b"a scheduled drop", &phases, &creator_secret);
+        let launch_signature = LaunchCollectionOp::sign(&collection_id, &creator_pubkey, "Drop Collection", "DROP", b"a scheduled drop", &phases, 0, &creator_secret);
         let launch_op = LaunchCollectionOp {
             collection_id: collection_id.clone(),
             creator_pubkey,
@@ -1894,6 +1903,7 @@ mod tests {
             symbol: "DROP".to_string(),
             metadata: b"a scheduled drop".to_vec(),
             phases: phases.clone(),
+            royalty_bps: 0,
             signature: launch_signature,
         };
 
@@ -1970,7 +1980,7 @@ mod tests {
         let mut collections_after_launch = std::collections::HashMap::new();
         collections_after_launch.insert(collection_id.clone(), crate::core::collections::CollectionRecord {
             collection_id: collection_id.clone(), creator_pubkey, name: "Drop Collection".to_string(), symbol: "DROP".to_string(),
-            metadata: b"a scheduled drop".to_vec(), phases: phases.clone(), launched_at_block: 1,
+            metadata: b"a scheduled drop".to_vec(), phases: phases.clone(), launched_at_block: 1, royalty_bps: 0,
         });
         let (body1, _) = build_coinbase_only_body(&mut rng, 1);
         assert!(apply_mint_block(&mut chain_state, 1, genesis_hash, 50, body1, vec![launch_op], None, &std::collections::HashMap::new(), &collections_after_launch), "launching the collection must apply");
@@ -1982,7 +1992,7 @@ mod tests {
         chain_state.utxos.insert(payment_input2);
         let gtd_mint = make_mint_op(&mut rng, &mut chain_state, "drop-gtd-1", &gtd_buyer_secret, gtd_buyer_pubkey, 0, Some(gtd_proof.clone()), Some(0), payment_excess2);
         let mut registry_after_gtd = std::collections::HashMap::new();
-        registry_after_gtd.insert("drop-gtd-1".to_string(), AssetRecord { asset_id: "drop-gtd-1".to_string(), owner_pubkey: gtd_buyer_pubkey, metadata: gtd_mint.metadata.clone(), minted_at_block: 2 });
+        registry_after_gtd.insert("drop-gtd-1".to_string(), AssetRecord { asset_id: "drop-gtd-1".to_string(), owner_pubkey: gtd_buyer_pubkey, metadata: gtd_mint.metadata.clone(), minted_at_block: 2, collection_id: Some(collection_id.clone()) });
         assert!(apply_mint_block(&mut chain_state, 2, block1_hash, 150, body2, vec![], Some(gtd_mint), &registry_after_gtd, &collections_after_launch), "a valid allowlisted, creator-approved GTD mint within its window must apply");
         let block2_hash = chain_state.last_block_hash;
         assert_eq!(chain_state.asset_registry["drop-gtd-1"].owner_pubkey, gtd_buyer_pubkey);
@@ -1994,7 +2004,7 @@ mod tests {
         chain_state.utxos.insert(payment_input3a);
         let gtd_mint_again = make_mint_op(&mut rng, &mut chain_state, "drop-gtd-2", &gtd_buyer_secret, gtd_buyer_pubkey, 0, Some(gtd_proof.clone()), Some(0), payment_excess3a);
         let mut registry_over_limit = registry_after_gtd.clone();
-        registry_over_limit.insert("drop-gtd-2".to_string(), AssetRecord { asset_id: "drop-gtd-2".to_string(), owner_pubkey: gtd_buyer_pubkey, metadata: gtd_mint_again.metadata.clone(), minted_at_block: 3 });
+        registry_over_limit.insert("drop-gtd-2".to_string(), AssetRecord { asset_id: "drop-gtd-2".to_string(), owner_pubkey: gtd_buyer_pubkey, metadata: gtd_mint_again.metadata.clone(), minted_at_block: 3, collection_id: Some(collection_id.clone()) });
         assert!(!apply_mint_block(&mut chain_state, 3, block2_hash, 150, body3a, vec![], Some(gtd_mint_again), &registry_over_limit, &collections_after_launch), "a second GTD mint from the same wallet must be rejected (per_wallet_limit=1)");
 
         // --- Rejection: minting the FCFS phase's index while still inside the GTD time window (timestamp 150 is outside FCFS's [200,300)). ---
@@ -2002,7 +2012,7 @@ mod tests {
         chain_state.utxos.insert(payment_input3b);
         let fcfs_too_early = make_mint_op(&mut rng, &mut chain_state, "drop-fcfs-early", &outsider_secret, outsider_pubkey, 1, None, None, payment_excess3b);
         let mut registry_fcfs_early = registry_after_gtd.clone();
-        registry_fcfs_early.insert("drop-fcfs-early".to_string(), AssetRecord { asset_id: "drop-fcfs-early".to_string(), owner_pubkey: outsider_pubkey, metadata: fcfs_too_early.metadata.clone(), minted_at_block: 3 });
+        registry_fcfs_early.insert("drop-fcfs-early".to_string(), AssetRecord { asset_id: "drop-fcfs-early".to_string(), owner_pubkey: outsider_pubkey, metadata: fcfs_too_early.metadata.clone(), minted_at_block: 3, collection_id: Some(collection_id.clone()) });
         assert!(!apply_mint_block(&mut chain_state, 3, block2_hash, 150, body3b, vec![], Some(fcfs_too_early), &registry_fcfs_early, &collections_after_launch), "a mint attempted before its phase's start_time must be rejected");
 
         // --- Rejection: a GTD mint from a non-allowlisted wallet (bad Merkle proof). ---
@@ -2010,7 +2020,7 @@ mod tests {
         chain_state.utxos.insert(payment_input3c);
         let bad_proof_mint = make_mint_op(&mut rng, &mut chain_state, "drop-gtd-bad", &outsider_secret, outsider_pubkey, 0, Some(gtd_proof.clone()), Some(0), payment_excess3c);
         let mut registry_bad_proof = registry_after_gtd.clone();
-        registry_bad_proof.insert("drop-gtd-bad".to_string(), AssetRecord { asset_id: "drop-gtd-bad".to_string(), owner_pubkey: outsider_pubkey, metadata: bad_proof_mint.metadata.clone(), minted_at_block: 3 });
+        registry_bad_proof.insert("drop-gtd-bad".to_string(), AssetRecord { asset_id: "drop-gtd-bad".to_string(), owner_pubkey: outsider_pubkey, metadata: bad_proof_mint.metadata.clone(), minted_at_block: 3, collection_id: Some(collection_id.clone()) });
         assert!(!apply_mint_block(&mut chain_state, 3, block2_hash, 150, body3c, vec![], Some(bad_proof_mint), &registry_bad_proof, &collections_after_launch), "a mint from a non-allowlisted pubkey (proof doesn't verify against its root) must be rejected");
 
         // --- Rejection: a mint whose creator_signature doesn't match (forged/missing creator approval). ---
@@ -2019,7 +2029,7 @@ mod tests {
         let mut unapproved_mint = make_mint_op(&mut rng, &mut chain_state, "drop-unapproved", &outsider_secret, outsider_pubkey, 2, None, None, payment_excess3d);
         unapproved_mint.creator_signature = Some(MintAssetOp::sign("irrelevant", b"x", &None, &None, &None, &outsider_secret)); // garbage, not a real creator approval
         let mut registry_unapproved = registry_after_gtd.clone();
-        registry_unapproved.insert("drop-unapproved".to_string(), AssetRecord { asset_id: "drop-unapproved".to_string(), owner_pubkey: outsider_pubkey, metadata: unapproved_mint.metadata.clone(), minted_at_block: 3 });
+        registry_unapproved.insert("drop-unapproved".to_string(), AssetRecord { asset_id: "drop-unapproved".to_string(), owner_pubkey: outsider_pubkey, metadata: unapproved_mint.metadata.clone(), minted_at_block: 3, collection_id: Some(collection_id.clone()) });
         assert!(!apply_mint_block(&mut chain_state, 3, block2_hash, 350, body3d, vec![], Some(unapproved_mint), &registry_unapproved, &collections_after_launch), "a mint without a valid creator_signature must be rejected, even if everything else about it is valid");
 
         // --- Block 3: successful Public-phase mint (timestamp 350, within [300,400), no proof needed, real bundled payment). ---
@@ -2027,7 +2037,7 @@ mod tests {
         chain_state.utxos.insert(payment_input3);
         let public_mint = make_mint_op(&mut rng, &mut chain_state, "drop-public-1", &public_buyer_secret, public_buyer_pubkey, 2, None, None, payment_excess3);
         let mut registry_after_public = registry_after_gtd.clone();
-        registry_after_public.insert("drop-public-1".to_string(), AssetRecord { asset_id: "drop-public-1".to_string(), owner_pubkey: public_buyer_pubkey, metadata: public_mint.metadata.clone(), minted_at_block: 3 });
+        registry_after_public.insert("drop-public-1".to_string(), AssetRecord { asset_id: "drop-public-1".to_string(), owner_pubkey: public_buyer_pubkey, metadata: public_mint.metadata.clone(), minted_at_block: 3, collection_id: Some(collection_id.clone()) });
         assert!(apply_mint_block(&mut chain_state, 3, block2_hash, 350, body3, vec![], Some(public_mint), &registry_after_public, &collections_after_launch), "an open Public-phase mint within its window must apply");
         assert_eq!(chain_state.asset_registry["drop-public-1"].owner_pubkey, public_buyer_pubkey);
         assert_eq!(chain_state.collection_mint_counts.get(&(collection_id.clone(), 2u32, owner_bytes(&public_buyer_pubkey))), Some(&1u32));
@@ -2048,6 +2058,174 @@ mod tests {
         // --- Rollback all the way past the launch block itself. ---
         assert!(chain_state.rollback_block().is_some());
         assert!(!chain_state.collection_registry.contains_key(&collection_id), "rolling back the launch block must un-launch the collection");
+    }
+
+    /// A resale of an asset minted from a royalty-charging collection must
+    /// carry BOTH the seller's payment condition AND the creator's royalty
+    /// condition - either one missing or unsatisfied blocks the whole
+    /// transfer, mirroring required_kernel_excess's own trustless-payment
+    /// guarantee but for a second, independent beneficiary. See
+    /// core::assets::TransferAssetOp::required_royalty_kernel_excess.
+    #[test]
+    fn transfer_of_royalty_bearing_asset_requires_both_payment_kernels() {
+        use crate::core::assets::{MintAssetOp, TransferAssetOp, AssetRecord, ASSET_MINT_FEE, compute_asset_registry_root};
+        use crate::core::collections::{LaunchCollectionOp, CollectionRecord, MintPhase, compute_collection_registry_root};
+        use bulletproofs::PedersenGens;
+
+        let mut rng = OsRng;
+        let mut chain_state = ChainState::new();
+        let genesis_block = crate::core::genesis::genesis_block();
+        let genesis_hash = genesis_block.header.hash();
+        assert!(chain_state.apply_block(&genesis_block).is_applied());
+
+        let gens = PedersenGens::default();
+        let private_key = Scalar::from(42u64);
+
+        let creator_secret = Scalar::from(55u64);
+        let creator_pubkey = Commitment(creator_secret * gens.B_blinding);
+        let owner_secret = Scalar::random(&mut rng);
+        let owner_pubkey = Commitment(owner_secret * gens.B_blinding);
+        let buyer_secret = Scalar::random(&mut rng);
+        let buyer_pubkey = Commitment(buyer_secret * gens.B_blinding);
+
+        let phases = vec![MintPhase { name: "Public".to_string(), start_time: 0, end_time: 10_000, price: 1, per_wallet_limit: 10, allowlist_merkle_root: None }];
+        let collection_id = "royaltycol".to_string();
+        let royalty_bps = 1000u16; // 10%
+        let launch_signature = LaunchCollectionOp::sign(&collection_id, &creator_pubkey, "Royalty Collection", "ROY", b"", &phases, royalty_bps, &creator_secret);
+        let launch_op = LaunchCollectionOp {
+            collection_id: collection_id.clone(), creator_pubkey, name: "Royalty Collection".to_string(), symbol: "ROY".to_string(),
+            metadata: vec![], phases: phases.clone(), royalty_bps, signature: launch_signature,
+        };
+
+        let mut collections_after_launch = std::collections::HashMap::new();
+        collections_after_launch.insert(collection_id.clone(), CollectionRecord {
+            collection_id: collection_id.clone(), creator_pubkey, name: "Royalty Collection".to_string(), symbol: "ROY".to_string(),
+            metadata: vec![], phases: phases.clone(), launched_at_block: 1, royalty_bps,
+        });
+        let (body1, _) = build_coinbase_only_body(&mut rng, 1);
+        let mut header1 = BlockHeader {
+            height: 1, prev_hash: genesis_hash, total_kernel_offset: Scalar::zero(), nonce: 0, timestamp: 0,
+            validator_commitment: Commitment::new(1_000_000, private_key), validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root: empty_registry_root(), chain_id: crate::core::genesis::CHAIN_ID,
+            asset_registry_root: compute_asset_registry_root(&std::collections::HashMap::new()),
+            collection_registry_root: compute_collection_registry_root(&collections_after_launch),
+        };
+        header1.validator_signature = Signature::sign(&header1.hash(), &private_key);
+        let block1 = Block { header: header1, body: body1, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![launch_op] };
+        assert!(chain_state.apply_block(&block1).is_applied(), "launching the royalty-charging collection must apply");
+        let block1_hash = chain_state.last_block_hash;
+
+        // --- Block 2: mint the asset. A collection mint always requires a
+        // real payment kernel + creator approval regardless of phase.price
+        // (see the mint gate's own doc comment) - reuse build_body_with_payment
+        // for that condition; consensus never checks who a kernel actually
+        // paid, only that it exists, so this stands in for "the mint price
+        // landed somewhere real" without needing to model the full payment
+        // flow here too.
+        let (body2, mint_payment_input, mint_payment_excess) = build_body_with_payment(&mut rng, 2, 1);
+        chain_state.utxos.insert(mint_payment_input);
+        let r_fee = Scalar::random(&mut rng);
+        let fee_input = Commitment::new(ASSET_MINT_FEE, r_fee);
+        chain_state.utxos.insert(fee_input);
+        let fee_payment = Transaction {
+            inputs: vec![Input { commitment: fee_input }],
+            outputs: vec![],
+            kernels: vec![TxKernel { excess: Commitment::new(0, r_fee), fee: ASSET_MINT_FEE, signature: Signature::sign(&ASSET_MINT_FEE.to_le_bytes(), &r_fee) }],
+        };
+        let metadata = vec![9u8; 4];
+        let collection_id_opt = Some(collection_id.clone());
+        let phase_index_opt = Some(0u32);
+        let required_excess_opt = Some(mint_payment_excess);
+        let mint_signature = MintAssetOp::sign("royalty-punk", &metadata, &collection_id_opt, &phase_index_opt, &required_excess_opt, &owner_secret);
+        let creator_signature = MintAssetOp::sign_collection_approval("royalty-punk", &collection_id, 0, &mint_payment_excess, &owner_pubkey, &creator_secret);
+        let mint_op = MintAssetOp {
+            asset_id: "royalty-punk".to_string(), owner_pubkey, metadata, fee_payment,
+            collection_id: collection_id_opt, phase_index: phase_index_opt,
+            allowlist_proof: None, allowlist_leaf_index: None,
+            required_kernel_excess: required_excess_opt, signature: mint_signature, creator_signature: Some(creator_signature),
+        };
+        let mut registry_after_mint = std::collections::HashMap::new();
+        registry_after_mint.insert("royalty-punk".to_string(), AssetRecord {
+            asset_id: "royalty-punk".to_string(), owner_pubkey, metadata: mint_op.metadata.clone(), minted_at_block: 2,
+            collection_id: Some(collection_id.clone()),
+        });
+        let mut header2 = BlockHeader {
+            height: 2, prev_hash: block1_hash, total_kernel_offset: Scalar::zero(), nonce: 0, timestamp: 0,
+            validator_commitment: Commitment::new(1_000_000, private_key), validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root: empty_registry_root(), chain_id: crate::core::genesis::CHAIN_ID,
+            asset_registry_root: compute_asset_registry_root(&registry_after_mint),
+            collection_registry_root: compute_collection_registry_root(&collections_after_launch),
+        };
+        header2.validator_signature = Signature::sign(&header2.hash(), &private_key);
+        let block2 = Block { header: header2, body: body2, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![mint_op], transfer_asset_ops: vec![], launch_collection_ops: vec![] };
+        assert!(chain_state.apply_block(&block2).is_applied(), "the royalty-collection mint must apply");
+        let block2_hash = chain_state.last_block_hash;
+        assert_eq!(chain_state.asset_registry["royalty-punk"].collection_id, Some(collection_id.clone()));
+
+        // --- Block 3 (rejected): a resale whose seller payment lands but
+        // omits the royalty condition entirely must be rejected outright. ---
+        let (body3_missing, seller_input_missing, seller_excess_missing) = build_body_with_payment(&mut rng, 3, 90);
+        chain_state.utxos.insert(seller_input_missing);
+        let transfer_missing_royalty = TransferAssetOp {
+            asset_id: "royalty-punk".to_string(),
+            new_owner_pubkey: buyer_pubkey,
+            required_kernel_excess: Some(seller_excess_missing),
+            required_royalty_kernel_excess: None,
+            signature: TransferAssetOp::sign("royalty-punk", &buyer_pubkey, &Some(seller_excess_missing), &None, &owner_secret),
+        };
+        let mut registry_after_transfer = std::collections::HashMap::new();
+        registry_after_transfer.insert("royalty-punk".to_string(), AssetRecord {
+            asset_id: "royalty-punk".to_string(), owner_pubkey: buyer_pubkey, metadata: vec![9u8; 4], minted_at_block: 2,
+            collection_id: Some(collection_id.clone()),
+        });
+        let mut header3_missing = BlockHeader {
+            height: 3, prev_hash: block2_hash, total_kernel_offset: Scalar::zero(), nonce: 0, timestamp: 0,
+            validator_commitment: Commitment::new(1_000_000, private_key), validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root: empty_registry_root(), chain_id: crate::core::genesis::CHAIN_ID,
+            asset_registry_root: compute_asset_registry_root(&registry_after_transfer),
+            collection_registry_root: compute_collection_registry_root(&collections_after_launch),
+        };
+        header3_missing.validator_signature = Signature::sign(&header3_missing.hash(), &private_key);
+        let block3_missing = Block { header: header3_missing, body: body3_missing, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![transfer_missing_royalty], launch_collection_ops: vec![] };
+        assert!(!chain_state.apply_block(&block3_missing).is_applied(), "a resale of a royalty-bearing asset without a royalty condition must be rejected, even though the seller's own payment landed");
+        assert_eq!(chain_state.asset_registry["royalty-punk"].owner_pubkey, owner_pubkey, "ownership must not have changed");
+
+        // --- Block 3 (accepted): both the seller's payment AND the
+        // creator's royalty payment land in the same block as the transfer -
+        // the one-block atomic swap case, extended to two beneficiaries. ---
+        let (body3, seller_input, seller_excess) = build_body_with_payment(&mut rng, 3, 90);
+        chain_state.utxos.insert(seller_input);
+        let r_royalty_in = Scalar::random(&mut rng);
+        let r_royalty_out = Scalar::random(&mut rng);
+        let royalty_input_commitment = Commitment::new(10, r_royalty_in);
+        let royalty_output = Output { commitment: Commitment::new(10, r_royalty_out), proof: RangeProof::prove(10, &r_royalty_out), note: vec![] };
+        let royalty_excess_r = r_royalty_in - r_royalty_out;
+        let royalty_kernel = TxKernel { excess: Commitment::new(0, royalty_excess_r), fee: 0, signature: Signature::sign(&0u64.to_le_bytes(), &royalty_excess_r) };
+        let royalty_excess = royalty_kernel.excess;
+        chain_state.utxos.insert(royalty_input_commitment);
+        let mut body3_with_royalty = body3;
+        body3_with_royalty.inputs.push(Input { commitment: royalty_input_commitment });
+        body3_with_royalty.outputs.push(royalty_output);
+        body3_with_royalty.kernels.push(royalty_kernel);
+
+        let transfer_op = TransferAssetOp {
+            asset_id: "royalty-punk".to_string(),
+            new_owner_pubkey: buyer_pubkey,
+            required_kernel_excess: Some(seller_excess),
+            required_royalty_kernel_excess: Some(royalty_excess),
+            signature: TransferAssetOp::sign("royalty-punk", &buyer_pubkey, &Some(seller_excess), &Some(royalty_excess), &owner_secret),
+        };
+        let mut header3 = BlockHeader {
+            height: 3, prev_hash: block2_hash, total_kernel_offset: Scalar::zero(), nonce: 0, timestamp: 0,
+            validator_commitment: Commitment::new(1_000_000, private_key), validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root: empty_registry_root(), chain_id: crate::core::genesis::CHAIN_ID,
+            asset_registry_root: compute_asset_registry_root(&registry_after_transfer),
+            collection_registry_root: compute_collection_registry_root(&collections_after_launch),
+        };
+        header3.validator_signature = Signature::sign(&header3.hash(), &private_key);
+        let block3 = Block { header: header3, body: body3_with_royalty, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![transfer_op], launch_collection_ops: vec![] };
+        assert!(chain_state.apply_block(&block3).is_applied(), "a resale with BOTH the seller's payment and the creator's royalty payment present must apply");
+        assert_eq!(chain_state.asset_registry["royalty-punk"].owner_pubkey, buyer_pubkey, "ownership must transfer once both conditions are satisfied");
     }
 }
 

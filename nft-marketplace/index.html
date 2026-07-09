@@ -189,6 +189,9 @@
       <input type="text" id="launch-collection-symbol-input" placeholder="e.g. PUNK" autocomplete="off" />
       <label>Description</label>
       <input type="text" id="launch-collection-metadata-input" placeholder="e.g. a description or link" autocomplete="off" />
+      <label>Secondary sale royalty (%)</label>
+      <input type="number" id="launch-collection-royalty-input" min="0" max="100" step="0.01" value="0" />
+      <div class="keystore-note" style="margin-top:4px;">Paid to you automatically, trustlessly, every time this collection's NFTs resell on the marketplace - fixed forever once launched.</div>
 
       <div class="phase-heading">GTD round</div>
       <label>Start (unix seconds)</label>
@@ -501,7 +504,7 @@ function collectionCard(col) {
   }).join("");
   card.innerHTML = `
     <div class="card-title">${col.name}</div>
-    <div class="card-desc">${col.symbol} &middot; <span class="keystore-note">${col.collection_id}</span></div>
+    <div class="card-desc">${col.symbol} &middot; <span class="keystore-note">${col.collection_id}</span>${col.royalty_bps > 0 ? ` &middot; ${(col.royalty_bps / 100).toFixed(2)}% creator royalty` : ""}</div>
     ${phaseRows}
   `;
   card.querySelectorAll("[data-mint-collection]").forEach(btn => {
@@ -563,8 +566,11 @@ document.getElementById("launch-collection-btn").addEventListener("click", () =>
     return { name: r.name, start_time: r.start_time, end_time: r.end_time, price: r.price, per_wallet_limit: r.per_wallet_limit, allowlist_pubkeys_hex };
   });
 
+  const royaltyPercent = parseFloat(document.getElementById("launch-collection-royalty-input").value || "0");
+  const royaltyBps = Math.round(royaltyPercent * 100);
+
   window.location.href = deepLinkUrl("launch_collection", {
-    collection_id: collectionId, name, symbol, metadata, phases: JSON.stringify(phases),
+    collection_id: collectionId, name, symbol, metadata, phases: JSON.stringify(phases), royalty_bps: royaltyBps,
   });
 });
 

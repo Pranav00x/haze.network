@@ -637,7 +637,8 @@ mod tests {
             asset_id: "some-asset".to_string(),
             new_owner_pubkey: new_owner,
             required_kernel_excess,
-            signature: TransferAssetOp::sign("some-asset", &new_owner, &required_kernel_excess, &owner_secret),
+            required_royalty_kernel_excess: None,
+            signature: TransferAssetOp::sign("some-asset", &new_owner, &required_kernel_excess, &None, &owner_secret),
         };
         assert!(mempool.add_transfer_asset_op(op), "a conditional transfer must be accepted into the mempool regardless of whether its condition is currently satisfiable");
     }

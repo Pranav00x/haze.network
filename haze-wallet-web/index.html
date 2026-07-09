@@ -1181,19 +1181,58 @@ function handleMarketplaceDeepLink() {
         return;
       }
       try {
+        // If the asset came from a collection that charges a royalty, the
+        // price splits into two independent trustless payments: one to the
+        // seller, one to the collection's original creator - see
+        // core::assets::TransferAssetOp::required_royalty_kernel_excess.
+        // Both are ordinary two-party interactive sends run in parallel;
+        // the transfer itself won't apply until BOTH kernels exist.
+        let royaltyPubkeyHex = null;
+        let royaltyAmount = 0n;
+        try {
+          const asset = await fetchJson(`/v1/assets/${encodeURIComponent(assetId)}`);
+          if (asset.collection_id) {
+            const collection = await fetchJson(`/v1/collections/${encodeURIComponent(asset.collection_id)}`);
+            if (collection.royalty_bps > 0) {
+              royaltyPubkeyHex = bytesToHex(collection.creator_pubkey);
+              royaltyAmount = (BigInt(price) * BigInt(collection.royalty_bps)) / 10000n;
+            }
+          }
+        } catch (e) { /* asset/collection lookup failing just means no royalty is applied */ }
+        const sellerAmount = BigInt(price) - royaltyAmount;
+
         const storeBytes = loadWalletStoreBytes();
         const fee = await getSuggestedFee();
-        const slate = create_send_slate(sessionKeystoreBytes, storeBytes, BigInt(price), fee);
-        sessionKeystoreBytes = slate.updated_keystore_bytes;
+        const sellerSlate = create_send_slate(sessionKeystoreBytes, storeBytes, sellerAmount, fee);
+        sessionKeystoreBytes = sellerSlate.updated_keystore_bytes;
         const myPubkeyHex = wallet_identity_pubkey_hex(sessionKeystoreBytes);
         await fetch(API_BASE + "/v1/inbox/" + sellerPubkeyHex, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ from_pubkey_hex: myPubkeyHex, kind: "request", payload_json: slate.slate_json }),
+          body: JSON.stringify({ from_pubkey_hex: myPubkeyHex, kind: "request", payload_json: sellerSlate.slate_json }),
         });
-        pendingPurchase = { assetId, sellerPubkeyHex, price: price.toString(), pendingSlateBytes: slate.pending_slate_bytes, returnUrl };
+
+        let royaltySlate = null;
+        if (royaltyPubkeyHex && royaltyAmount > 0n) {
+          const storeBytes2 = loadWalletStoreBytes();
+          royaltySlate = create_send_slate(sessionKeystoreBytes, storeBytes2, royaltyAmount, fee);
+          sessionKeystoreBytes = royaltySlate.updated_keystore_bytes;
+          await fetch(API_BASE + "/v1/inbox/" + royaltyPubkeyHex, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ from_pubkey_hex: myPubkeyHex, kind: "request", payload_json: royaltySlate.slate_json }),
+          });
+        }
+
+        pendingPurchase = {
+          assetId, sellerPubkeyHex, price: price.toString(), returnUrl,
+          pendingSlateBytes: sellerSlate.pending_slate_bytes,
+          royaltyPubkeyHex, royaltyAmount: royaltyAmount.toString(),
+          pendingRoyaltySlateBytes: royaltySlate ? royaltySlate.pending_slate_bytes : null,
+          sellerDone: false, royaltyDone: !royaltyPubkeyHex,
+        };
         banner.querySelector("#dl-approve").disabled = true;
-        msgEl.innerHTML = `<div class="message success">Offer sent - waiting for the seller to accept. You'll be redirected back to ${origin} once the purchase completes.</div>`;
+        msgEl.innerHTML = `<div class="message success">Offer sent - waiting for ${royaltyPubkeyHex ? "the seller and the creator" : "the seller"} to accept. You'll be redirected back to ${origin} once the purchase completes.</div>`;
       } catch (e) {
         msgEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
       }
@@ -1204,11 +1243,12 @@ function handleMarketplaceDeepLink() {
     const name = params.get("name") || "";
     const symbol = params.get("symbol") || "";
     const metadata = params.get("metadata") || "";
+    const royaltyBps = parseInt(params.get("royalty_bps") || "0", 10);
     let phases = [];
     try { phases = JSON.parse(params.get("phases") || "[]"); } catch (e) { phases = []; }
     banner.innerHTML = `
       <h2>Launch a collection?</h2>
-      <div class="sub"><strong>${origin}</strong> is asking you to launch <strong>${name}</strong> (${symbol}, id "${collectionId}") with ${phases.length} round(s). Costs nothing to launch; each round's price is paid by minters directly to you, trustlessly.</div>
+      <div class="sub"><strong>${origin}</strong> is asking you to launch <strong>${name}</strong> (${symbol}, id "${collectionId}") with ${phases.length} round(s)${royaltyBps > 0 ? ` and a ${(royaltyBps / 100).toFixed(2)}% secondary-sale royalty paid to you` : ""}. Costs nothing to launch; each round's price is paid by minters directly to you, trustlessly.</div>
       <button class="btn-primary" id="dl-approve">Approve &amp; launch</button>
       <button class="btn-ghost btn-small" id="dl-deny" style="margin-left:8px;">Deny</button>
       <div id="dl-message"></div>
@@ -1232,7 +1272,7 @@ function handleMarketplaceDeepLink() {
           return { name: p.name, start_time: p.start_time, end_time: p.end_time, price: p.price, per_wallet_limit: p.per_wallet_limit, allowlist_merkle_root };
         });
 
-        const opJson = build_launch_collection_request(sessionKeystoreBytes, collectionId, name, symbol, metadata, JSON.stringify(onChainPhases));
+        const opJson = build_launch_collection_request(sessionKeystoreBytes, collectionId, name, symbol, metadata, JSON.stringify(onChainPhases), royaltyBps);
         const res = await fetch(API_BASE + "/v1/collections/launch", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -2197,10 +2237,14 @@ function renderDashboard() {
   // becomes real once the buyer's payment actually lands on-chain (see
   // core::assets::TransferAssetOp::required_kernel_excess) - if the buyer
   // never broadcasts that payment, this signed transfer is simply inert
-  // forever, and this wallet keeps the asset.
+  // forever, and this wallet keeps the asset. If the asset's collection
+  // charges a royalty, req.royalty_kernel_excess_hex is a second,
+  // independent condition (see required_royalty_kernel_excess) - the seller
+  // just passes it through here; consensus (not the seller) is what
+  // actually enforces the creator gets paid before this transfer can apply.
   async function autoRespondToWantTransfer(msg) {
     const req = JSON.parse(msg.payload_json);
-    const opJson = build_transfer_asset_request(sessionKeystoreBytes, req.asset_id, req.buyer_pubkey_hex, req.kernel_excess_hex);
+    const opJson = build_transfer_asset_request(sessionKeystoreBytes, req.asset_id, req.buyer_pubkey_hex, req.kernel_excess_hex, req.royalty_kernel_excess_hex || null);
 
     await fetch(API_BASE + "/v1/inbox/" + req.buyer_pubkey_hex, {
       method: "POST",
@@ -2234,6 +2278,35 @@ function renderDashboard() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ from_pubkey_hex: myPubkeyHex, kind: "signed_collection_mint", payload_json: JSON.stringify({ creator_signature_hex: signatureHex }) }),
     });
+  }
+
+  // Sends "want_transfer" to the seller once every payment leg of the
+  // current purchase has a response - just the seller's own leg for a
+  // non-royalty asset, or both the seller's and the collection creator's
+  // legs for one that charges a royalty (see the "buy" deep-link handler
+  // and the two "response" branches in pollInbox below). Both kernel
+  // excesses are included whenever a royalty leg exists, so the seller can
+  // build a TransferAssetOp conditioned on both (see
+  // core::assets::TransferAssetOp::required_royalty_kernel_excess).
+  async function maybeSendWantTransfer() {
+    if (!pendingPurchase || !pendingPurchase.sellerDone || !pendingPurchase.royaltyDone) return;
+    const myPubkeyHex = wallet_identity_pubkey_hex(sessionKeystoreBytes);
+    await fetch(API_BASE + "/v1/inbox/" + pendingPurchase.sellerPubkeyHex, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from_pubkey_hex: myPubkeyHex,
+        kind: "want_transfer",
+        payload_json: JSON.stringify({
+          asset_id: pendingPurchase.assetId,
+          buyer_pubkey_hex: myPubkeyHex,
+          kernel_excess_hex: pendingPurchase.kernelExcessHex,
+          royalty_kernel_excess_hex: pendingPurchase.royaltyKernelExcessHex || null,
+        }),
+      }),
+    });
+    const messageEl = document.getElementById("buy-asset-message");
+    messageEl.innerHTML = `<div class="message success">Payment${pendingPurchase.royaltyPubkeyHex ? "s" : ""} accepted for "${pendingPurchase.assetId}" - waiting for the seller to sign the transfer&hellip;</div>`;
   }
 
   async function pollInbox() {
@@ -2277,7 +2350,10 @@ function renderDashboard() {
           // payment slate. Finalize it LOCALLY but do NOT broadcast yet -
           // the payment and the asset transfer must go out together (see
           // "signed_transfer" below), otherwise a defecting seller could
-          // pocket the payment without ever sending the transfer back.
+          // pocket the payment without ever sending the transfer back. If
+          // this purchase also has a royalty leg (see the "buy" deep-link
+          // handler above), "want_transfer" isn't sent until BOTH legs have
+          // a response - see the shared maybeSendWantTransfer() below.
           const messageEl = document.getElementById("buy-asset-message");
           try {
             const finalized = finalize_slate(pendingPurchase.pendingSlateBytes, msg.payload_json);
@@ -2287,17 +2363,33 @@ function renderDashboard() {
               finalizedTxJson: finalized.transaction_json,
               spentCommitmentsHex: finalized.spent_commitments_hex,
               change: finalized.change,
+              kernelExcessHex,
+              sellerDone: true,
             };
-            await fetch(API_BASE + "/v1/inbox/" + pendingPurchase.sellerPubkeyHex, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                from_pubkey_hex: myPubkeyHex,
-                kind: "want_transfer",
-                payload_json: JSON.stringify({ asset_id: pendingPurchase.assetId, buyer_pubkey_hex: myPubkeyHex, kernel_excess_hex: kernelExcessHex }),
-              }),
-            });
-            messageEl.innerHTML = `<div class="message success">Payment accepted for "${pendingPurchase.assetId}" - waiting for the seller to sign the transfer&hellip;</div>`;
+            messageEl.innerHTML = `<div class="message success">Seller accepted the payment for "${pendingPurchase.assetId}"${pendingPurchase.royaltyDone ? "" : " - waiting for the creator to accept the royalty&hellip;"}</div>`;
+            await maybeSendWantTransfer();
+          } catch (e) {
+            messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+            pendingPurchase = null;
+          }
+        } else if (msg.kind === "response" && pendingPurchase && pendingPurchase.royaltyPubkeyHex && msg.from_pubkey_hex === pendingPurchase.royaltyPubkeyHex) {
+          // The royalty leg's own independent response, from the collection's
+          // creator rather than the seller - same finalize-but-don't-broadcast
+          // reasoning as the seller leg above.
+          const messageEl = document.getElementById("buy-asset-message");
+          try {
+            const finalized = finalize_slate(pendingPurchase.pendingRoyaltySlateBytes, msg.payload_json);
+            const royaltyKernelExcessHex = tx_kernel_excess_hex(finalized.transaction_json);
+            pendingPurchase = {
+              ...pendingPurchase,
+              finalizedRoyaltyTxJson: finalized.transaction_json,
+              royaltySpentCommitmentsHex: finalized.spent_commitments_hex,
+              royaltyChange: finalized.change,
+              royaltyKernelExcessHex,
+              royaltyDone: true,
+            };
+            messageEl.innerHTML = `<div class="message success">Creator accepted the royalty for "${pendingPurchase.assetId}"${pendingPurchase.sellerDone ? "" : " - waiting for the seller to accept&hellip;"}</div>`;
+            await maybeSendWantTransfer();
           } catch (e) {
             messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
             pendingPurchase = null;
@@ -2325,6 +2417,26 @@ function renderDashboard() {
             let storeBytes = loadWalletStoreBytes();
             storeBytes = commit_slate_send(storeBytes, pendingPurchase.spentCommitmentsHex, pendingPurchase.change);
             saveWalletStoreBytes(storeBytes);
+
+            // The royalty leg (if this asset's collection charges one) is a
+            // second, independent payment - broadcast it too before the
+            // transfer, same reasoning as the seller's own payment above.
+            if (pendingPurchase.royaltyPubkeyHex && pendingPurchase.finalizedRoyaltyTxJson) {
+              const royaltyPayRes = await fetch(API_BASE + "/v1/transactions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: pendingPurchase.finalizedRoyaltyTxJson,
+              });
+              if (!royaltyPayRes.ok) {
+                const text = await royaltyPayRes.text();
+                messageEl.innerHTML = `<div class="message error">Node rejected the royalty payment: ${text}</div>`;
+                pendingPurchase = null;
+                continue;
+              }
+              let storeBytes2 = loadWalletStoreBytes();
+              storeBytes2 = commit_slate_send(storeBytes2, pendingPurchase.royaltySpentCommitmentsHex, pendingPurchase.royaltyChange);
+              saveWalletStoreBytes(storeBytes2);
+            }
 
             const transferRes = await fetch(API_BASE + "/v1/assets/transfer", {
               method: "POST",

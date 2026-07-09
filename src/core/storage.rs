@@ -188,6 +188,7 @@ impl Storage {
                     owner_pubkey: op.owner_pubkey,
                     metadata: op.metadata.clone(),
                     minted_at_block: block.header.height,
+                    collection_id: op.collection_id.clone(),
                 });
             }
             for op in &block.transfer_asset_ops {
@@ -197,6 +198,7 @@ impl Storage {
                         owner_pubkey: op.new_owner_pubkey,
                         metadata: existing.metadata.clone(),
                         minted_at_block: existing.minted_at_block,
+                        collection_id: existing.collection_id.clone(),
                     };
                     state.asset_registry.insert(op.asset_id.clone(), updated);
                 }
@@ -216,6 +218,7 @@ impl Storage {
                     metadata: op.metadata.clone(),
                     phases: op.phases.clone(),
                     launched_at_block: block.header.height,
+                    royalty_bps: op.royalty_bps,
                 });
             }
             for op in &block.mint_ops {

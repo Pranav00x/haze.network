@@ -183,6 +183,7 @@ mod tests {
             owner_pubkey: seller_pubkey,
             metadata: vec![],
             minted_at_block: 1,
+            collection_id: None,
         });
         assert!(listing.validate_against_registry(&registry).is_ok());
 
@@ -232,11 +233,11 @@ mod tests {
         state.add_or_replace(listing_c);
 
         let mut registry = HashMap::new();
-        registry.insert("touched-asset".to_string(), AssetRecord { asset_id: "touched-asset".to_string(), owner_pubkey: seller_a, metadata: vec![], minted_at_block: 1 });
+        registry.insert("touched-asset".to_string(), AssetRecord { asset_id: "touched-asset".to_string(), owner_pubkey: seller_a, metadata: vec![], minted_at_block: 1, collection_id: None });
         // stale-owner-asset's registry now shows a DIFFERENT owner than the listing's seller.
-        registry.insert("stale-owner-asset".to_string(), AssetRecord { asset_id: "stale-owner-asset".to_string(), owner_pubkey: Commitment::new(0, Scalar::from(42u64)), metadata: vec![], minted_at_block: 1 });
+        registry.insert("stale-owner-asset".to_string(), AssetRecord { asset_id: "stale-owner-asset".to_string(), owner_pubkey: Commitment::new(0, Scalar::from(42u64)), metadata: vec![], minted_at_block: 1, collection_id: None });
         let _ = seller_b;
-        registry.insert("still-valid-asset".to_string(), AssetRecord { asset_id: "still-valid-asset".to_string(), owner_pubkey: seller_c, metadata: vec![], minted_at_block: 1 });
+        registry.insert("still-valid-asset".to_string(), AssetRecord { asset_id: "still-valid-asset".to_string(), owner_pubkey: seller_c, metadata: vec![], minted_at_block: 1, collection_id: None });
 
         state.clear_stale(&["touched-asset".to_string()], &registry);
 

@@ -491,6 +491,7 @@ impl ChainState {
                 metadata: op.metadata.clone(),
                 phases: op.phases.clone(),
                 launched_at_block: block.header.height,
+                royalty_bps: op.royalty_bps,
             });
         }
 
@@ -577,10 +578,17 @@ impl ChainState {
                 owner_pubkey: op.owner_pubkey,
                 metadata: op.metadata.clone(),
                 minted_at_block: block.header.height,
+                collection_id: op.collection_id.clone(),
             });
         }
 
-        // 4e. Validate asset transfers - same shape as 4c.
+        // 4e. Validate asset transfers - same shape as 4c. A transfer's
+        // asset_id always refers to an AssetRecord from an earlier block
+        // (assets_this_block, shared with the mint loop above, blocks a
+        // same-block mint+transfer of the same asset), so its collection
+        // (if any) was necessarily already launched too - self.collection_registry
+        // is enough, no need for the candidate_collection_registry built
+        // for same-block launches above.
         for op in &block.transfer_asset_ops {
             if !assets_this_block.insert(op.asset_id.as_str()) {
                 return None;
@@ -589,7 +597,7 @@ impl ChainState {
                 Some(r) => r,
                 None => return None,
             };
-            let msg = super::assets::TransferAssetOp::signing_message(&op.asset_id, &op.new_owner_pubkey, &op.required_kernel_excess);
+            let msg = super::assets::TransferAssetOp::signing_message(&op.asset_id, &op.new_owner_pubkey, &op.required_kernel_excess, &op.required_royalty_kernel_excess);
             if !op.signature.verify(&msg, &current.owner_pubkey) {
                 return None;
             }
@@ -605,11 +613,29 @@ impl ChainState {
                     return None;
                 }
             }
+            // Secondary-sale royalty: if the asset's collection charges one,
+            // the creator's cut is a second, independent trustless-payment
+            // condition - both it and the seller's own payment must be
+            // satisfied before the transfer applies. See
+            // TransferAssetOp::required_royalty_kernel_excess's doc comment.
+            if let Some(collection_id) = &current.collection_id {
+                if let Some(collection) = self.collection_registry.get(collection_id) {
+                    if collection.royalty_bps > 0 {
+                        let Some(required_royalty) = op.required_royalty_kernel_excess else { return None };
+                        let satisfied = self.kernel_excesses.contains(&required_royalty)
+                            || block_kernel_excesses.contains(&required_royalty);
+                        if !satisfied {
+                            return None;
+                        }
+                    }
+                }
+            }
             candidate_asset_registry.insert(op.asset_id.clone(), AssetRecord {
                 asset_id: op.asset_id.clone(),
                 owner_pubkey: op.new_owner_pubkey,
                 metadata: current.metadata.clone(),
                 minted_at_block: current.minted_at_block,
+                collection_id: current.collection_id.clone(),
             });
         }
 

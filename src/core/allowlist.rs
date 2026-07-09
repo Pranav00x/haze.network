@@ -148,6 +148,7 @@ mod tests {
             metadata: vec![],
             phases: vec![],
             launched_at_block: 1,
+            royalty_bps: 0,
         });
         assert!(entry.validate_against_registry(&registry).is_ok());
 

@@ -190,7 +190,7 @@ export function build_create_listing_request(keystore_bytes: Uint8Array, asset_i
  * block-inclusion (see LaunchCollectionOp's own doc comment). The caller
  * must POST the returned JSON to /v1/collections/launch.
  */
-export function build_launch_collection_request(keystore_bytes: Uint8Array, collection_id: string, name: string, symbol: string, metadata: string, phases_json: string): string;
+export function build_launch_collection_request(keystore_bytes: Uint8Array, collection_id: string, name: string, symbol: string, metadata: string, phases_json: string, royalty_bps: number): string;
 
 /**
  * Builds a MintAssetOp paying `fee` (must be >= ASSET_MINT_FEE) from the
@@ -253,7 +253,7 @@ export function build_stake_request(keystore_bytes: Uint8Array, store_bytes: Uin
  * lets a seller sign a transfer before a buyer's payment lands, safely -
  * it's cryptographically inert until that payment is actually on-chain.
  */
-export function build_transfer_asset_request(keystore_bytes: Uint8Array, asset_id: string, new_owner_pubkey_hex: string, required_kernel_excess_hex?: string | null): string;
+export function build_transfer_asset_request(keystore_bytes: Uint8Array, asset_id: string, new_owner_pubkey_hex: string, required_kernel_excess_hex?: string | null, required_royalty_kernel_excess_hex?: string | null): string;
 
 /**
  * Builds a TransferNameOp handing a name this wallet currently owns to a
@@ -543,12 +543,12 @@ export interface InitOutput {
     readonly build_cancel_listing_request: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly build_collection_mint_asset_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: bigint, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number) => [number, number, number];
     readonly build_create_listing_request: (a: number, b: number, c: number, d: number, e: bigint, f: bigint) => [number, number, number, number];
-    readonly build_launch_collection_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number, number, number];
+    readonly build_launch_collection_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number) => [number, number, number, number];
     readonly build_mint_asset_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: bigint) => [number, number, number];
     readonly build_register_name_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: bigint) => [number, number, number];
     readonly build_sponsored_register_name_request: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly build_stake_request: (a: number, b: number, c: number, d: number, e: bigint) => [number, number, number, number];
-    readonly build_transfer_asset_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly build_transfer_asset_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
     readonly build_transfer_name_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
     readonly claim_genesis: (a: number, b: number) => [number, number, number, number];
     readonly commit_mint_asset: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];

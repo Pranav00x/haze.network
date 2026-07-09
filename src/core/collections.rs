@@ -26,6 +26,9 @@ pub const MIN_COLLECTION_ID_LENGTH: usize = 3;
 pub const MAX_COLLECTION_ID_LENGTH: usize = 64;
 pub const MAX_COLLECTION_NAME_LENGTH: usize = 64;
 pub const MAX_COLLECTION_SYMBOL_LENGTH: usize = 16;
+/// Basis points denominator (10000 = 100%) - caps royalty_bps so a creator
+/// can't demand more than the entire resale price.
+pub const MAX_ROYALTY_BPS: u16 = 10000;
 
 /// One round of a collection's mint schedule - e.g. a "GTD" allowlist round,
 /// an "FCFS" allowlist round, or an open "Public" round (allowlist_merkle_root
@@ -56,6 +59,14 @@ pub struct CollectionRecord {
     pub metadata: Vec<u8>,
     pub phases: Vec<MintPhase>,
     pub launched_at_block: u64,
+    /// Basis points (0-MAX_ROYALTY_BPS) of every secondary-sale price paid
+    /// to creator_pubkey on top of the seller's proceeds - see
+    /// TransferAssetOp::required_royalty_kernel_excess for how this is
+    /// enforced trustlessly at consensus. Fixed for the collection's entire
+    /// lifetime (set once at launch, never editable) - a buyer computing
+    /// the royalty split needs a value that can't change out from under a
+    /// transfer they've already conditioned their payment on.
+    pub royalty_bps: u16,
 }
 
 /// A collection launch, carried in a block alongside (not instead of) the
@@ -72,6 +83,7 @@ pub struct LaunchCollectionOp {
     pub symbol: String,
     pub metadata: Vec<u8>,
     pub phases: Vec<MintPhase>,
+    pub royalty_bps: u16,
     pub signature: Signature,
 }
 
@@ -89,6 +101,7 @@ pub enum CollectionError {
     InvalidPhaseWindow,
     PhasesNotSequential,
     ZeroPerWalletLimit,
+    RoyaltyTooHigh,
 }
 
 pub fn validate_collection_id(collection_id: &str) -> Result<(), CollectionError> {
@@ -135,7 +148,7 @@ impl LaunchCollectionOp {
     /// pricing, or allowlist roots than what was actually signed. Distinct
     /// domain-separation prefix from MintAssetOp/TransferAssetOp so a launch
     /// signature can never be replayed as a mint/transfer signature.
-    pub fn signing_message(collection_id: &str, creator_pubkey: &Commitment, name: &str, symbol: &str, metadata: &[u8], phases: &[MintPhase]) -> Vec<u8> {
+    pub fn signing_message(collection_id: &str, creator_pubkey: &Commitment, name: &str, symbol: &str, metadata: &[u8], phases: &[MintPhase], royalty_bps: u16) -> Vec<u8> {
         let mut msg = b"HazeLaunchCollection:".to_vec();
         msg.extend_from_slice(collection_id.as_bytes());
         msg.extend_from_slice(creator_pubkey.as_point().compress().as_bytes());
@@ -143,11 +156,12 @@ impl LaunchCollectionOp {
         msg.extend_from_slice(symbol.as_bytes());
         msg.extend_from_slice(metadata);
         msg.extend_from_slice(&bincode::serialize(phases).expect("phases serialize"));
+        msg.extend_from_slice(&royalty_bps.to_le_bytes());
         msg
     }
 
-    pub fn sign(collection_id: &str, creator_pubkey: &Commitment, name: &str, symbol: &str, metadata: &[u8], phases: &[MintPhase], creator_secret: &Scalar) -> Signature {
-        Signature::sign(&Self::signing_message(collection_id, creator_pubkey, name, symbol, metadata, phases), creator_secret)
+    pub fn sign(collection_id: &str, creator_pubkey: &Commitment, name: &str, symbol: &str, metadata: &[u8], phases: &[MintPhase], royalty_bps: u16, creator_secret: &Scalar) -> Signature {
+        Signature::sign(&Self::signing_message(collection_id, creator_pubkey, name, symbol, metadata, phases, royalty_bps), creator_secret)
     }
 
     /// Validates this op in isolation (id/name/symbol/metadata shape, phase
@@ -167,9 +181,12 @@ impl LaunchCollectionOp {
         if self.metadata.len() > MAX_METADATA_BYTES {
             return Err(CollectionError::MetadataTooLong);
         }
+        if self.royalty_bps > MAX_ROYALTY_BPS {
+            return Err(CollectionError::RoyaltyTooHigh);
+        }
         validate_phases(&self.phases)?;
 
-        let msg = Self::signing_message(&self.collection_id, &self.creator_pubkey, &self.name, &self.symbol, &self.metadata, &self.phases);
+        let msg = Self::signing_message(&self.collection_id, &self.creator_pubkey, &self.name, &self.symbol, &self.metadata, &self.phases, self.royalty_bps);
         if !self.signature.verify(&msg, &self.creator_pubkey) {
             return Err(CollectionError::InvalidSignature);
         }
@@ -224,8 +241,8 @@ mod tests {
         let secret = Scalar::from(7u64);
         let gens = bulletproofs::PedersenGens::default();
         let creator_pubkey = Commitment(secret * gens.B_blinding);
-        let signature = LaunchCollectionOp::sign("cryptopunks", &creator_pubkey, "CryptoPunks", "PUNK", b"a collection", &phases, &secret);
-        (LaunchCollectionOp { collection_id: "cryptopunks".to_string(), creator_pubkey, name: "CryptoPunks".to_string(), symbol: "PUNK".to_string(), metadata: b"a collection".to_vec(), phases, signature }, creator_pubkey)
+        let signature = LaunchCollectionOp::sign("cryptopunks", &creator_pubkey, "CryptoPunks", "PUNK", b"a collection", &phases, 500, &secret);
+        (LaunchCollectionOp { collection_id: "cryptopunks".to_string(), creator_pubkey, name: "CryptoPunks".to_string(), symbol: "PUNK".to_string(), metadata: b"a collection".to_vec(), phases, royalty_bps: 500, signature }, creator_pubkey)
     }
 
     #[test]
@@ -284,6 +301,22 @@ mod tests {
         assert_eq!(op.validate_standalone(), Err(CollectionError::ZeroPerWalletLimit));
     }
 
+    #[test]
+    fn rejects_royalty_above_max_bps() {
+        let phases = vec![phase("GTD", 100, 200, 10, 1, None)];
+        let (mut op, _) = signed_op(phases);
+        op.royalty_bps = MAX_ROYALTY_BPS + 1;
+        assert_eq!(op.validate_standalone(), Err(CollectionError::RoyaltyTooHigh));
+    }
+
+    #[test]
+    fn tampering_royalty_bps_invalidates_signature() {
+        let phases = vec![phase("GTD", 100, 200, 10, 1, None)];
+        let (mut op, _) = signed_op(phases);
+        op.royalty_bps = 250;
+        assert_eq!(op.validate_standalone(), Err(CollectionError::InvalidSignature));
+    }
+
     /// Mirrors MintAssetOp/TransferAssetOp's load-bearing binding tests:
     /// tampering any signed field (here, any phase field) must invalidate
     /// the signature.
@@ -321,10 +354,10 @@ mod tests {
         let gens = bulletproofs::PedersenGens::default();
         let creator_pubkey = Commitment(secret * gens.B_blinding);
 
-        let launch_sig = LaunchCollectionOp::sign("cryptopunks", &creator_pubkey, "CryptoPunks", "PUNK", b"meta", &phases, &secret);
+        let launch_sig = LaunchCollectionOp::sign("cryptopunks", &creator_pubkey, "CryptoPunks", "PUNK", b"meta", &phases, 500, &secret);
         // A launch signature must never verify as a mint or transfer signature.
         assert!(!launch_sig.verify(&MintAssetOp::signing_message("cryptopunks", b"meta", &None, &None, &None), &creator_pubkey));
-        assert!(!launch_sig.verify(&TransferAssetOp::signing_message("cryptopunks", &creator_pubkey, &None), &creator_pubkey));
+        assert!(!launch_sig.verify(&TransferAssetOp::signing_message("cryptopunks", &creator_pubkey, &None, &None), &creator_pubkey));
     }
 
     #[test]
@@ -338,6 +371,7 @@ mod tests {
             metadata: op_a.metadata.clone(),
             phases: op_a.phases.clone(),
             launched_at_block: 1,
+            royalty_bps: op_a.royalty_bps,
         };
         let secret_b = Scalar::from(9u64);
         let gens = bulletproofs::PedersenGens::default();
@@ -350,6 +384,7 @@ mod tests {
             metadata: vec![],
             phases: vec![phase("Public", 0, 1000, 5, 10, None)],
             launched_at_block: 2,
+            royalty_bps: 0,
         };
 
         let mut registry_1 = HashMap::new();

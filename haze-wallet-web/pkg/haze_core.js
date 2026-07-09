@@ -1100,9 +1100,10 @@ export function build_create_listing_request(keystore_bytes, asset_id, price, li
  * @param {string} symbol
  * @param {string} metadata
  * @param {string} phases_json
+ * @param {number} royalty_bps
  * @returns {string}
  */
-export function build_launch_collection_request(keystore_bytes, collection_id, name, symbol, metadata, phases_json) {
+export function build_launch_collection_request(keystore_bytes, collection_id, name, symbol, metadata, phases_json, royalty_bps) {
     let deferred8_0;
     let deferred8_1;
     try {
@@ -1118,7 +1119,7 @@ export function build_launch_collection_request(keystore_bytes, collection_id, n
         const len4 = WASM_VECTOR_LEN;
         const ptr5 = passStringToWasm0(phases_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len5 = WASM_VECTOR_LEN;
-        const ret = wasm.build_launch_collection_request(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4, ptr5, len5);
+        const ret = wasm.build_launch_collection_request(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4, ptr5, len5, royalty_bps);
         var ptr7 = ret[0];
         var len7 = ret[1];
         if (ret[3]) {
@@ -1283,11 +1284,12 @@ export function build_stake_request(keystore_bytes, store_bytes, min_value) {
  * @param {string} asset_id
  * @param {string} new_owner_pubkey_hex
  * @param {string | null} [required_kernel_excess_hex]
+ * @param {string | null} [required_royalty_kernel_excess_hex]
  * @returns {string}
  */
-export function build_transfer_asset_request(keystore_bytes, asset_id, new_owner_pubkey_hex, required_kernel_excess_hex) {
-    let deferred6_0;
-    let deferred6_1;
+export function build_transfer_asset_request(keystore_bytes, asset_id, new_owner_pubkey_hex, required_kernel_excess_hex, required_royalty_kernel_excess_hex) {
+    let deferred7_0;
+    let deferred7_1;
     try {
         const ptr0 = passArray8ToWasm0(keystore_bytes, wasm.__wbindgen_malloc);
         const len0 = WASM_VECTOR_LEN;
@@ -1297,18 +1299,20 @@ export function build_transfer_asset_request(keystore_bytes, asset_id, new_owner
         const len2 = WASM_VECTOR_LEN;
         var ptr3 = isLikeNone(required_kernel_excess_hex) ? 0 : passStringToWasm0(required_kernel_excess_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         var len3 = WASM_VECTOR_LEN;
-        const ret = wasm.build_transfer_asset_request(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
-        var ptr5 = ret[0];
-        var len5 = ret[1];
+        var ptr4 = isLikeNone(required_royalty_kernel_excess_hex) ? 0 : passStringToWasm0(required_royalty_kernel_excess_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len4 = WASM_VECTOR_LEN;
+        const ret = wasm.build_transfer_asset_request(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4);
+        var ptr6 = ret[0];
+        var len6 = ret[1];
         if (ret[3]) {
-            ptr5 = 0; len5 = 0;
+            ptr6 = 0; len6 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
-        deferred6_0 = ptr5;
-        deferred6_1 = len5;
-        return getStringFromWasm0(ptr5, len5);
+        deferred7_0 = ptr6;
+        deferred7_1 = len6;
+        return getStringFromWasm0(ptr6, len6);
     } finally {
-        wasm.__wbindgen_free(deferred6_0, deferred6_1, 1);
+        wasm.__wbindgen_free(deferred7_0, deferred7_1, 1);
     }
 }
 

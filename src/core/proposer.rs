@@ -271,6 +271,7 @@ impl Proposer {
                             metadata: op.metadata.clone(),
                             phases: op.phases.clone(),
                             launched_at_block: next_height,
+                            royalty_bps: op.royalty_bps,
                         });
                         launch_collection_ops.push(op);
                     }
@@ -358,6 +359,7 @@ impl Proposer {
                             owner_pubkey: op.owner_pubkey,
                             metadata: op.metadata.clone(),
                             minted_at_block: next_height,
+                            collection_id: op.collection_id.clone(),
                         });
                         mint_ops.push(op);
                     }
@@ -394,7 +396,7 @@ impl Proposer {
                             continue;
                         }
                         let Some(current) = original_asset_registry.get(&op.asset_id) else { continue };
-                        let msg = crate::core::assets::TransferAssetOp::signing_message(&op.asset_id, &op.new_owner_pubkey, &op.required_kernel_excess);
+                        let msg = crate::core::assets::TransferAssetOp::signing_message(&op.asset_id, &op.new_owner_pubkey, &op.required_kernel_excess, &op.required_royalty_kernel_excess);
                         if !op.signature.verify(&msg, &current.owner_pubkey) {
                             continue;
                         }
@@ -405,12 +407,25 @@ impl Proposer {
                                 continue;
                             }
                         }
+                        if let Some(collection_id) = &current.collection_id {
+                            if let Some(collection) = collection_registry_snapshot.get(collection_id) {
+                                if collection.royalty_bps > 0 {
+                                    let Some(required_royalty) = op.required_royalty_kernel_excess else { continue };
+                                    let satisfied = historical_kernel_excesses.contains(&required_royalty)
+                                        || candidate_kernel_excesses.contains(&required_royalty);
+                                    if !satisfied {
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
                         assets_touched.insert(op.asset_id.clone());
                         asset_registry_snapshot.insert(op.asset_id.clone(), crate::core::assets::AssetRecord {
                             asset_id: op.asset_id.clone(),
                             owner_pubkey: op.new_owner_pubkey,
                             metadata: current.metadata.clone(),
                             minted_at_block: current.minted_at_block,
+                            collection_id: current.collection_id.clone(),
                         });
                         transfer_asset_ops.push(op);
                     }

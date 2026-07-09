@@ -54,6 +54,13 @@ pub struct AssetRecord {
     /// consensus at all beyond the length cap, just carried along.
     pub metadata: Vec<u8>,
     pub minted_at_block: u64,
+    /// Which collection this asset was minted from, if any - carried
+    /// forward from MintAssetOp.collection_id at mint time and never
+    /// changed afterward, so a later resale can look up the collection's
+    /// royalty_bps/creator_pubkey (see core::collections::CollectionRecord,
+    /// TransferAssetOp::required_royalty_kernel_excess) regardless of how
+    /// many times the asset has changed hands since.
+    pub collection_id: Option<String>,
 }
 
 /// An asset mint, carried in a block alongside (not instead of) the normal
@@ -269,6 +276,16 @@ pub struct TransferAssetOp {
     /// condition off and get an unconditional transfer through. `None`
     /// behaves exactly like an ordinary unconditional transfer.
     pub required_kernel_excess: Option<Commitment>,
+    /// If the asset's collection (see AssetRecord.collection_id) has a
+    /// nonzero royalty_bps, this must be Some and a TxKernel with this
+    /// exact excess must exist on-chain before the transfer applies - the
+    /// same trustless-payment primitive as required_kernel_excess, just a
+    /// second independent condition, so a resale can't complete without
+    /// BOTH the seller's proceeds AND the original creator's cut actually
+    /// landing (see ChainState::apply_linear_block's transfer_asset_ops
+    /// loop). Ignored (need not be Some) when the asset has no collection
+    /// or that collection's royalty_bps is 0.
+    pub required_royalty_kernel_excess: Option<Commitment>,
     /// Signed by the *current* owner's secret key - verified against
     /// whatever AssetRecord.owner_pubkey currently is, not anything in this
     /// struct, so a stale/forged transfer can't just supply its own key.
@@ -279,12 +296,11 @@ impl TransferAssetOp {
     /// Domain-separated from MintAssetOp::signing_message (distinct prefix)
     /// so a mint signature can never be replayed as a transfer signature or
     /// vice versa, and binds in the new owner pubkey (so a transfer can't be
-    /// redirected to a different destination after the fact) and the
-    /// required_kernel_excess condition (so it can't be stripped to make a
-    /// conditional transfer unconditional, or retargeted to a different
-    /// payment). `None` and every distinct `Some(_)` produce distinct
-    /// byte sequences.
-    pub fn signing_message(asset_id: &str, new_owner_pubkey: &Commitment, required_kernel_excess: &Option<Commitment>) -> Vec<u8> {
+    /// redirected to a different destination after the fact) and both
+    /// payment conditions (so neither can be stripped or retargeted after
+    /// signing). `None` and every distinct `Some(_)` produce distinct byte
+    /// sequences for each field independently.
+    pub fn signing_message(asset_id: &str, new_owner_pubkey: &Commitment, required_kernel_excess: &Option<Commitment>, required_royalty_kernel_excess: &Option<Commitment>) -> Vec<u8> {
         let mut msg = b"HazeAssetTransfer:".to_vec();
         msg.extend_from_slice(asset_id.as_bytes());
         msg.extend_from_slice(new_owner_pubkey.as_point().compress().as_bytes());
@@ -295,11 +311,18 @@ impl TransferAssetOp {
             }
             None => msg.push(0u8),
         }
+        match required_royalty_kernel_excess {
+            Some(c) => {
+                msg.push(1u8);
+                msg.extend_from_slice(c.as_point().compress().as_bytes());
+            }
+            None => msg.push(0u8),
+        }
         msg
     }
 
-    pub fn sign(asset_id: &str, new_owner_pubkey: &Commitment, required_kernel_excess: &Option<Commitment>, current_owner_secret: &Scalar) -> Signature {
-        Signature::sign(&Self::signing_message(asset_id, new_owner_pubkey, required_kernel_excess), current_owner_secret)
+    pub fn sign(asset_id: &str, new_owner_pubkey: &Commitment, required_kernel_excess: &Option<Commitment>, required_royalty_kernel_excess: &Option<Commitment>, current_owner_secret: &Scalar) -> Signature {
+        Signature::sign(&Self::signing_message(asset_id, new_owner_pubkey, required_kernel_excess, required_royalty_kernel_excess), current_owner_secret)
     }
 }
 
@@ -361,12 +384,14 @@ mod tests {
             owner_pubkey: Commitment::new(0, blinding_a),
             metadata: vec![1u8; 4],
             minted_at_block: 1,
+            collection_id: None,
         };
         let record_b = AssetRecord {
             asset_id: "bob-punk".to_string(),
             owner_pubkey: Commitment::new(0, blinding_b),
             metadata: vec![2u8; 4],
             minted_at_block: 2,
+            collection_id: None,
         };
 
         let mut registry_1 = HashMap::new();
@@ -408,7 +433,7 @@ mod tests {
         let mint_sig = MintAssetOp::sign("cryptopunk", &metadata_hash, &None, &None, &None, &secret);
         // A mint signature must never verify as a valid transfer signature
         // for the same asset_id, even targeting the same pubkey.
-        assert!(!mint_sig.verify(&TransferAssetOp::signing_message("cryptopunk", &owner_pubkey, &None), &owner_pubkey));
+        assert!(!mint_sig.verify(&TransferAssetOp::signing_message("cryptopunk", &owner_pubkey, &None, &None), &owner_pubkey));
     }
 
     /// Mirrors transfer_signing_message_binds_required_kernel_excess: the
@@ -498,29 +523,29 @@ mod tests {
         let kernel_excess_a = Commitment::new(0, Scalar::from(100u64));
         let kernel_excess_b = Commitment::new(0, Scalar::from(200u64));
 
-        let sig_conditional_a = TransferAssetOp::sign("cryptopunk", &new_owner, &Some(kernel_excess_a), &secret);
+        let sig_conditional_a = TransferAssetOp::sign("cryptopunk", &new_owner, &Some(kernel_excess_a), &None, &secret);
 
         // Valid against its own exact condition.
         assert!(sig_conditional_a.verify(
-            &TransferAssetOp::signing_message("cryptopunk", &new_owner, &Some(kernel_excess_a)),
+            &TransferAssetOp::signing_message("cryptopunk", &new_owner, &Some(kernel_excess_a), &None),
             &owner_pubkey,
         ));
         // A relayer must not be able to swap in a different required kernel...
         assert!(!sig_conditional_a.verify(
-            &TransferAssetOp::signing_message("cryptopunk", &new_owner, &Some(kernel_excess_b)),
+            &TransferAssetOp::signing_message("cryptopunk", &new_owner, &Some(kernel_excess_b), &None),
             &owner_pubkey,
         ));
         // ...or strip the condition entirely to make it unconditional.
         assert!(!sig_conditional_a.verify(
-            &TransferAssetOp::signing_message("cryptopunk", &new_owner, &None),
+            &TransferAssetOp::signing_message("cryptopunk", &new_owner, &None, &None),
             &owner_pubkey,
         ));
 
         // And the reverse: an unconditional signature must not verify as
         // satisfying any particular condition.
-        let sig_unconditional = TransferAssetOp::sign("cryptopunk", &new_owner, &None, &secret);
+        let sig_unconditional = TransferAssetOp::sign("cryptopunk", &new_owner, &None, &None, &secret);
         assert!(!sig_unconditional.verify(
-            &TransferAssetOp::signing_message("cryptopunk", &new_owner, &Some(kernel_excess_a)),
+            &TransferAssetOp::signing_message("cryptopunk", &new_owner, &Some(kernel_excess_a), &None),
             &owner_pubkey,
         ));
     }
@@ -528,9 +553,28 @@ mod tests {
     #[test]
     fn transfer_signing_message_none_vs_some_are_distinct() {
         let new_owner = Commitment::new(0, Scalar::from(42u64));
-        let msg_none = TransferAssetOp::signing_message("cryptopunk", &new_owner, &None);
-        let msg_some = TransferAssetOp::signing_message("cryptopunk", &new_owner, &Some(Commitment::new(0, Scalar::from(0u64))));
+        let msg_none = TransferAssetOp::signing_message("cryptopunk", &new_owner, &None, &None);
+        let msg_some = TransferAssetOp::signing_message("cryptopunk", &new_owner, &Some(Commitment::new(0, Scalar::from(0u64))), &None);
         assert_ne!(msg_none, msg_some, "None and Some(_) must never produce identical signing messages, even for a zero-ish commitment");
+    }
+
+    /// Mirrors transfer_signing_message_binds_required_kernel_excess: the
+    /// same tamper-resistance property for the independent royalty
+    /// condition.
+    #[test]
+    fn transfer_signing_message_binds_required_royalty_kernel_excess() {
+        let secret = Scalar::from(7u64);
+        let gens = bulletproofs::PedersenGens::default();
+        let owner_pubkey = Commitment(secret * gens.B_blinding);
+        let new_owner = Commitment::new(0, Scalar::from(42u64));
+        let royalty_a = Commitment::new(0, Scalar::from(300u64));
+        let royalty_b = Commitment::new(0, Scalar::from(400u64));
+
+        let sig = TransferAssetOp::sign("cryptopunk", &new_owner, &None, &Some(royalty_a), &secret);
+
+        assert!(sig.verify(&TransferAssetOp::signing_message("cryptopunk", &new_owner, &None, &Some(royalty_a)), &owner_pubkey));
+        assert!(!sig.verify(&TransferAssetOp::signing_message("cryptopunk", &new_owner, &None, &Some(royalty_b)), &owner_pubkey));
+        assert!(!sig.verify(&TransferAssetOp::signing_message("cryptopunk", &new_owner, &None, &None), &owner_pubkey));
     }
 
     #[test]

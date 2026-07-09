@@ -80,7 +80,7 @@ pub async fn handle_transfer_asset(
         return Ok(error_reply(StatusCode::NOT_FOUND, format!("asset '{}' is not minted", op.asset_id)));
     };
 
-    let msg = TransferAssetOp::signing_message(&op.asset_id, &op.new_owner_pubkey, &op.required_kernel_excess);
+    let msg = TransferAssetOp::signing_message(&op.asset_id, &op.new_owner_pubkey, &op.required_kernel_excess, &op.required_royalty_kernel_excess);
     if !op.signature.verify(&msg, &current.owner_pubkey) {
         return Ok(error_reply(StatusCode::FORBIDDEN, "signature does not match the asset's current owner"));
     }
@@ -99,6 +99,25 @@ pub async fn handle_transfer_asset(
         };
         if !satisfied {
             return Ok(error_reply(StatusCode::CONFLICT, "required_kernel_excess does not exist on-chain yet - broadcast the payment transaction first"));
+        }
+    }
+
+    // Same fast-feedback idea for the independent royalty condition (see
+    // TransferAssetOp::required_royalty_kernel_excess) - not a hard gate,
+    // just an earlier, clearer error than a silent drop at block-assembly
+    // time.
+    if let Some(collection_id) = &current.collection_id {
+        let c = chain.lock().unwrap();
+        if let Some(collection) = c.collection_registry.get(collection_id) {
+            if collection.royalty_bps > 0 {
+                match op.required_royalty_kernel_excess {
+                    None => return Ok(error_reply(StatusCode::BAD_REQUEST, "this collection charges a royalty - required_royalty_kernel_excess must be set")),
+                    Some(required_royalty) if !c.kernel_excesses.contains(&required_royalty) => {
+                        return Ok(error_reply(StatusCode::CONFLICT, "required_royalty_kernel_excess does not exist on-chain yet - broadcast the royalty payment first"));
+                    }
+                    Some(_) => {}
+                }
+            }
         }
     }
 
