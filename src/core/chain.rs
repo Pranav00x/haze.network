@@ -202,7 +202,7 @@ impl ChainState {
     pub fn proposer_priority_order(&self, height: u64, prev_hash: [u8; 32]) -> Vec<Commitment> {
         if self.active_validators.is_empty() {
             // Default to genesis validator commitment
-            let genesis_blinding = Scalar::from(42u64);
+            let genesis_blinding = crate::core::genesis::genesis_validator_blinding();
             return vec![Commitment::new(1_000_000, genesis_blinding)];
         }
 
@@ -328,7 +328,7 @@ impl ChainState {
         // commitment may propose, matching Proposer::start_proposing's own
         // fallback.
         let proposer_commitment = block.header.validator_commitment;
-        let genesis_default = Commitment::new(1_000_000, Scalar::from(42u64));
+        let genesis_default = Commitment::new(1_000_000, crate::core::genesis::genesis_validator_blinding());
 
         let stake_value = if self.active_validators.is_empty() {
             if proposer_commitment != genesis_default {

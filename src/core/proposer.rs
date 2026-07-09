@@ -98,8 +98,9 @@ impl Proposer {
                     }
                 }
 
-                // If validator set is empty and we possess the genesis staking key (Scalar(42)), we are the genesis proposer
-                if my_val.is_none() && c.active_validators.is_empty() && private_key == Scalar::from(42u64) {
+                // If validator set is empty and we possess the genesis staking key
+                // (see core::genesis::genesis_validator_blinding), we are the genesis proposer
+                if my_val.is_none() && c.active_validators.is_empty() && private_key == crate::core::genesis::genesis_validator_blinding() {
                     my_val = Some(crate::core::chain::Validator {
                         commitment: Commitment::new(1_000_000, private_key),
                         value: 1_000_000,

@@ -6,6 +6,24 @@ use crate::crypto::schnorr::Signature;
 use bulletproofs::RangeProof as BpRangeProof;
 use curve25519_dalek_ng::scalar::Scalar;
 
+/// The validator-stake / claim-genesis output's blinding factor - see
+/// GENESIS_VALIDATOR_BLINDING's doc comment for why this is configurable
+/// rather than a hardcoded constant.
+pub fn genesis_validator_blinding() -> Scalar {
+    match std::env::var("HAZE_GENESIS_VALIDATOR_BLINDING") {
+        Ok(hex) if hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()) => {
+            let mut bytes = [0u8; 32];
+            for i in 0..32 {
+                bytes[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16)
+                    .expect("hex-digit check above guarantees this parses");
+            }
+            Scalar::from_bits(bytes)
+        }
+        Ok(_) => panic!("HAZE_GENESIS_VALIDATOR_BLINDING is set but isn't 64 hex chars - refusing to silently fall back to the public devnet default on what looks like a real deployment"),
+        Err(_) => Scalar::from(42u64),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tokenomics - LOCKED. Changing anything below (supply, split, halving
 // schedule, or genesis output serialization) is a hard fork of this chain's
@@ -34,17 +52,29 @@ use curve25519_dalek_ng::scalar::Scalar;
 // rejected by ChainState::apply_linear_block.
 //
 // Blinding secrecy: every locked output below (team/investor tranches,
-// airdrop, treasury) is backed by a real, randomly-generated secret - not a
-// small hardcoded integer like the untouched validator-stake output
-// (blinding=42, which is INTENTIONALLY public, a devnet claim-genesis
-// convenience). Only the resulting PUBLIC data (commitment + range proof +
-// kernel excess/signature) is committed here; the secrets themselves were
+// airdrop, treasury) is backed by a real, randomly-generated secret. Only
+// the resulting PUBLIC data (commitment + range proof + kernel
+// excess/signature) is committed here; the secrets themselves were
 // generated once via src/bin/genesis_keygen.rs and handed off out-of-band -
 // they do not exist anywhere in this repo or its history. This is possible
 // because a Bulletproofs range proof only needs the secret to be
 // *generated*, never to be *verified* - once the proof is embedded here,
 // every node can validate it against the public commitment without ever
 // knowing the blinding factor.
+//
+// The one output NOT covered by that scheme is the validator-stake /
+// claim-genesis output: its blinding factor is genesis_validator_blinding()
+// (see above), which defaults to the small, publicly-known integer 42 for
+// zero-config devnet convenience (anyone can run `haze node --stake-key 42`
+// and immediately propose blocks before any real validator has registered).
+// That default is fine for a throwaway devnet but is a real vulnerability
+// on any long-lived network: whoever runs a node first can act as the sole
+// validator, and until a real validator registers, EVERYONE knows the key
+// that can do that. Before starting a testnet or mainnet genesis node for
+// real, set HAZE_GENESIS_VALIDATOR_BLINDING (64 hex chars) to a freshly
+// generated secret on every node that will ever produce this chain's
+// genesis block or bootstrap-validate its early blocks, and keep that
+// secret as privately as the treasury/team/investor secrets above.
 pub const TOTAL_SUPPLY_TARGET: u64 = 21_000_000_000;
 
 /// Block-reward halving schedule (~65% of TOTAL_SUPPLY_TARGET, emitted over
@@ -301,7 +331,7 @@ pub const TREASURY_OUTPUT: LockedOutputData = LockedOutputData {
 /// real, privately-held secrets (see the module doc comment).
 pub fn genesis_block() -> Block {
     let genesis_val = 1_000_000u64;
-    let genesis_blinding = Scalar::from(42u64);
+    let genesis_blinding = genesis_validator_blinding();
 
     let validator_commitment = Commitment::new(genesis_val, genesis_blinding);
     let validator_proof = RangeProof::prove(genesis_val, &genesis_blinding);
