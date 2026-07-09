@@ -18,6 +18,8 @@ use crate::core::transaction::{Transaction, Input, Output, TxKernel};
 use crate::core::registry::{RegisterNameOp, TransferNameOp, NAME_REGISTRATION_FEE, validate_name};
 use crate::core::assets::{MintAssetOp, TransferAssetOp, ASSET_MINT_FEE, validate_asset_id};
 use crate::core::marketplace::{Listing, cancel_signing_message};
+use crate::core::collections::{LaunchCollectionOp, MintPhase, allowlist_leaf};
+use crate::core::merkle::{merkle_root, build_merkle_proof};
 use crate::wallet::keystore::Keystore;
 use crate::wallet::store::{WalletStore, OutputStatus, GENESIS_INDEX};
 use crate::wallet::planner::{self, PlanError};
@@ -578,7 +580,7 @@ pub fn build_register_name_request(keystore_bytes: Vec<u8>, store_bytes: Vec<u8>
     let mut keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
     let store = WalletStore::from_bytes(&store_bytes).ok_or_else(|| js_err("invalid wallet store bytes"))?;
 
-    let selected = planner::select_spendable(&store, fee)
+    let selected = planner::select_spendable_confirmed_only(&store, fee)
         .map_err(|e| match e {
             PlanError::InsufficientBalance { have, need } => js_err(format!("insufficient balance: have {}, need {}", have, need)),
         })?;
@@ -784,7 +786,7 @@ pub fn build_mint_asset_request(keystore_bytes: Vec<u8>, store_bytes: Vec<u8>, a
     let mut keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
     let store = WalletStore::from_bytes(&store_bytes).ok_or_else(|| js_err("invalid wallet store bytes"))?;
 
-    let selected = planner::select_spendable(&store, fee)
+    let selected = planner::select_spendable_confirmed_only(&store, fee)
         .map_err(|e| match e {
             PlanError::InsufficientBalance { have, need } => js_err(format!("insufficient balance: have {}, need {}", have, need)),
         })?;
@@ -830,14 +832,20 @@ pub fn build_mint_asset_request(keystore_bytes: Vec<u8>, store_bytes: Vec<u8>, a
     let owner_secret = keystore.identity_key();
     let gens = bulletproofs::PedersenGens::default();
     let owner_pubkey = Commitment(owner_secret * gens.B_blinding);
-    let signature = MintAssetOp::sign(&asset_id, &metadata_bytes, &owner_secret);
+    let signature = MintAssetOp::sign(&asset_id, &metadata_bytes, &None, &None, &None, &owner_secret);
 
     let op = MintAssetOp {
         asset_id,
         owner_pubkey,
         metadata: metadata_bytes,
         fee_payment,
+        collection_id: None,
+        phase_index: None,
+        allowlist_proof: None,
+        allowlist_leaf_index: None,
+        required_kernel_excess: None,
         signature,
+        creator_signature: None,
     };
     let op_json = serde_json::to_string(&op).map_err(|_| js_err("failed to serialize mint"))?;
 
@@ -950,4 +958,239 @@ pub fn build_cancel_listing_request(keystore_bytes: Vec<u8>, asset_id: String) -
         signature: Signature,
     }
     serde_json::to_string(&CancelListingRequest { asset_id, seller_pubkey, signature }).map_err(|_| js_err("failed to serialize cancellation"))
+}
+
+/// Builds a signed LaunchCollectionOp for a scheduled multi-phase NFT drop
+/// (see core::collections) - `phases_json` is the JSON serialization of a
+/// `Vec<MintPhase>` (the caller builds this array client-side: each phase
+/// has `name`, `start_time`, `end_time`, `price`, `per_wallet_limit`, and
+/// optional `allowlist_merkle_root` - for an allowlisted phase, compute the
+/// root client-side first via `compute_allowlist_merkle_proof`'s root_hex,
+/// or build it directly from a pubkey list; a Public/open phase omits the
+/// root entirely). No fee_payment - launching costs nothing beyond ordinary
+/// block-inclusion (see LaunchCollectionOp's own doc comment). The caller
+/// must POST the returned JSON to /v1/collections/launch.
+#[wasm_bindgen]
+pub fn build_launch_collection_request(keystore_bytes: Vec<u8>, collection_id: String, name: String, symbol: String, metadata: String, phases_json: String) -> Result<String, JsValue> {
+    let keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
+    let creator_secret = keystore.identity_key();
+    let gens = bulletproofs::PedersenGens::default();
+    let creator_pubkey = Commitment(creator_secret * gens.B_blinding);
+
+    let phases: Vec<MintPhase> = serde_json::from_str(&phases_json).map_err(|e| js_err(format!("invalid phases_json: {}", e)))?;
+    let metadata_bytes = metadata.into_bytes();
+
+    let signature = LaunchCollectionOp::sign(&collection_id, &creator_pubkey, &name, &symbol, &metadata_bytes, &phases, &creator_secret);
+    let op = LaunchCollectionOp { collection_id, creator_pubkey, name, symbol, metadata: metadata_bytes, phases, signature };
+    serde_json::to_string(&op).map_err(|_| js_err("failed to serialize collection launch"))
+}
+
+/// Sibling to build_mint_asset_request for a mint claimed against a
+/// collection's scheduled phase (see core::collections) - takes the same
+/// spendable-UTXO-funded fee_payment path, plus the collection-drop fields.
+/// `allowlist_proof_hex`/`allowlist_leaf_index` are only required when the
+/// target phase actually has an allowlist_merkle_root (see
+/// compute_allowlist_merkle_proof); `required_kernel_excess_hex`, if
+/// provided, is the payment-conditioning primitive (same as
+/// build_transfer_asset_request's) - typically supplied by the collection
+/// creator's auto-responding wallet once it has independently verified an
+/// incoming payment slate pays the phase's price, not built by the minter
+/// themselves. A separate sibling (not a change to build_mint_asset_request)
+/// so every existing plain-mint call site keeps working unchanged.
+#[wasm_bindgen]
+pub fn build_collection_mint_asset_request(
+    keystore_bytes: Vec<u8>, store_bytes: Vec<u8>, asset_id: String, metadata: String, fee: u64,
+    collection_id: String, phase_index: u32,
+    allowlist_proof_hex: Option<Vec<String>>, allowlist_leaf_index: Option<u32>,
+    required_kernel_excess_hex: Option<String>,
+) -> Result<WasmMintAssetResult, JsValue> {
+    validate_asset_id(&asset_id).map_err(|e| js_err(format!("invalid asset id: {:?}", e)))?;
+    if fee < ASSET_MINT_FEE {
+        return Err(js_err(format!("fee must be at least {}", ASSET_MINT_FEE)));
+    }
+    if metadata.len() > crate::core::assets::MAX_METADATA_BYTES {
+        return Err(js_err(format!("metadata must be at most {} bytes", crate::core::assets::MAX_METADATA_BYTES)));
+    }
+
+    let mut keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
+    let store = WalletStore::from_bytes(&store_bytes).ok_or_else(|| js_err("invalid wallet store bytes"))?;
+
+    let selected = planner::select_spendable_confirmed_only(&store, fee)
+        .map_err(|e| match e {
+            PlanError::InsufficientBalance { have, need } => js_err(format!("insufficient balance: have {}, need {}", have, need)),
+        })?;
+    let selected_total: u64 = selected.iter().map(|(_, _, value)| value).sum();
+
+    let mut input_blindings: Vec<Scalar> = Vec::new();
+    let mut inputs: Vec<Input> = Vec::new();
+    let mut spent_commitments_hex: Vec<String> = Vec::new();
+    for (index, commitment, _value) in &selected {
+        input_blindings.push(planner::blinding_for(&keystore, *index));
+        inputs.push(Input { commitment: *commitment });
+        spent_commitments_hex.push(commitment.to_hex());
+    }
+
+    let change_value = selected_total - fee;
+    let (outputs, change, change_blinding) = if change_value > 0 {
+        let change_index = keystore.allocate_index();
+        let change_blinding = keystore.derive_blinding(change_index);
+        let change_commitment = Commitment::new(change_value, change_blinding);
+        let change_proof = RangeProof::prove(change_value, &change_blinding);
+        let change_note = crate::wallet::note::seal(&keystore.note_key(), change_index, change_value);
+        let output = Output { commitment: change_commitment, proof: change_proof, note: change_note };
+        let change_info = WasmOwnedOutput { index: change_index, value: change_value, commitment_hex: change_commitment.to_hex() };
+        (vec![output], Some(change_info), change_blinding)
+    } else {
+        (vec![], None, Scalar::zero())
+    };
+
+    let sum_input_blinding: Scalar = input_blindings.iter().sum();
+    let excess_r = sum_input_blinding - change_blinding;
+    let fee_payment = Transaction {
+        inputs,
+        outputs,
+        kernels: vec![TxKernel {
+            excess: Commitment::new(0, excess_r),
+            fee,
+            signature: Signature::sign(&fee.to_le_bytes(), &excess_r),
+        }],
+    };
+
+    let metadata_bytes = metadata.into_bytes();
+    let owner_secret = keystore.identity_key();
+    let gens = bulletproofs::PedersenGens::default();
+    let owner_pubkey = Commitment(owner_secret * gens.B_blinding);
+
+    let allowlist_proof = allowlist_proof_hex
+        .map(|hexes| hexes.iter().map(|h| hex_to_32(h)).collect::<Result<Vec<[u8; 32]>, JsValue>>())
+        .transpose()?;
+    let required_kernel_excess = required_kernel_excess_hex
+        .map(|h| Commitment::from_hex(&h).ok_or_else(|| js_err("invalid required kernel excess hex")))
+        .transpose()?;
+
+    let collection_id_opt = Some(collection_id);
+    let phase_index_opt = Some(phase_index);
+    let signature = MintAssetOp::sign(&asset_id, &metadata_bytes, &collection_id_opt, &phase_index_opt, &required_kernel_excess, &owner_secret);
+
+    let op = MintAssetOp {
+        asset_id,
+        owner_pubkey,
+        metadata: metadata_bytes,
+        fee_payment,
+        collection_id: collection_id_opt,
+        phase_index: phase_index_opt,
+        allowlist_proof,
+        allowlist_leaf_index,
+        required_kernel_excess,
+        signature,
+        // Left unset here - see attach_creator_signature_to_mint below.
+        // Building this op selects/spends this wallet's UTXOs for
+        // fee_payment; that selection can't be redone once the creator's
+        // approval comes back without risking a different (conflicting)
+        // set of inputs, so the creator's signature is patched into this
+        // exact already-built op_json afterward instead of rebuilding it.
+        creator_signature: None,
+    };
+    let op_json = serde_json::to_string(&op).map_err(|_| js_err("failed to serialize mint"))?;
+
+    Ok(WasmMintAssetResult {
+        op_json,
+        updated_keystore_bytes: keystore.to_bytes(),
+        spent_commitments_hex,
+        change,
+    })
+}
+
+/// Patches a collection creator's approval signature (see
+/// MintAssetOp::creator_signature and sign_collection_mint_approval) into an
+/// already-built mint op_json (from build_collection_mint_asset_request),
+/// without needing to rebuild it - rebuilding would re-select this wallet's
+/// spendable UTXOs and could pick a different (conflicting) fee_payment.
+#[wasm_bindgen]
+pub fn attach_creator_signature_to_mint(op_json: String, creator_signature_hex: String) -> Result<String, JsValue> {
+    let mut op: MintAssetOp = serde_json::from_str(&op_json).map_err(|_| js_err("invalid mint op json"))?;
+    op.creator_signature = Some(Signature::from_hex(&creator_signature_hex).ok_or_else(|| js_err("invalid creator signature hex"))?);
+    serde_json::to_string(&op).map_err(|_| js_err("failed to serialize mint"))
+}
+
+/// The collection creator's side of the approval handshake (see
+/// MintAssetOp::creator_signature's doc comment) - signs approval for one
+/// specific (asset_id, collection_id, phase_index, required_kernel_excess,
+/// owner_pubkey) combination. The creator's own wallet should independently
+/// verify (against the phase's timing/allowlist/price and the actual
+/// on-chain payment) before calling this - this function only produces the
+/// signature, it doesn't validate anything itself.
+#[wasm_bindgen]
+pub fn sign_collection_mint_approval(keystore_bytes: Vec<u8>, asset_id: String, collection_id: String, phase_index: u32, required_kernel_excess_hex: String, owner_pubkey_hex: String) -> Result<String, JsValue> {
+    let keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
+    let creator_secret = keystore.identity_key();
+    let required_kernel_excess = Commitment::from_hex(&required_kernel_excess_hex).ok_or_else(|| js_err("invalid required kernel excess hex"))?;
+    let owner_pubkey = Commitment::from_hex(&owner_pubkey_hex).ok_or_else(|| js_err("invalid owner pubkey hex"))?;
+    let signature = MintAssetOp::sign_collection_approval(&asset_id, &collection_id, phase_index, &required_kernel_excess, &owner_pubkey, &creator_secret);
+    Ok(signature.to_hex())
+}
+
+fn hex_to_32(hex: &str) -> Result<[u8; 32], JsValue> {
+    if hex.len() != 64 {
+        return Err(js_err("expected a 32-byte (64 hex char) value"));
+    }
+    let mut bytes = [0u8; 32];
+    for i in 0..32 {
+        bytes[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).map_err(|_| js_err("invalid hex"))?;
+    }
+    Ok(bytes)
+}
+
+#[wasm_bindgen(getter_with_clone)]
+pub struct WasmMerkleProofResult {
+    pub proof_hex: Vec<String>,
+    pub leaf_index: u32,
+    pub root_hex: String,
+}
+
+/// Computes `target_pubkey_hex`'s Merkle inclusion proof against the full
+/// plaintext allowlist `pubkeys_hex` (fetched from the off-chain allowlist
+/// endpoint - see core::allowlist) - lets a minter (or the wallet UI
+/// building a collection launch) get everything build_collection_mint_asset_request
+/// needs without re-deriving the tree by hand. Returns an error if
+/// target_pubkey_hex isn't actually present in the list.
+#[wasm_bindgen]
+pub fn compute_allowlist_merkle_proof(pubkeys_hex: Vec<String>, target_pubkey_hex: String) -> Result<WasmMerkleProofResult, JsValue> {
+    let pubkeys: Vec<Commitment> = pubkeys_hex.iter()
+        .map(|h| Commitment::from_hex(h).ok_or_else(|| js_err(format!("invalid pubkey hex: {}", h))))
+        .collect::<Result<Vec<_>, _>>()?;
+    let target = Commitment::from_hex(&target_pubkey_hex).ok_or_else(|| js_err("invalid target pubkey hex"))?;
+
+    let leaf_index = pubkeys.iter().position(|p| *p == target)
+        .ok_or_else(|| js_err("target pubkey is not present in the allowlist"))?;
+
+    let leaves: Vec<[u8; 32]> = pubkeys.iter().map(allowlist_leaf).collect();
+    let root = merkle_root(&leaves);
+    let proof = build_merkle_proof(&leaves, leaf_index);
+
+    Ok(WasmMerkleProofResult {
+        proof_hex: proof.iter().map(|p| p.iter().map(|b| format!("{:02x}", b)).collect()).collect(),
+        leaf_index: leaf_index as u32,
+        root_hex: root.iter().map(|b| format!("{:02x}", b)).collect(),
+    })
+}
+
+/// Signs an allowlist publish (see core::allowlist::AllowlistEntry) so the
+/// off-chain, best-effort allowlist gossip can be cross-checked against this
+/// collection's registered creator_pubkey server-side. `pubkeys_hex` is the
+/// full plaintext list being published for this collection/phase.
+#[wasm_bindgen]
+pub fn sign_allowlist_publish(keystore_bytes: Vec<u8>, collection_id: String, phase_index: u32, pubkeys_hex: Vec<String>, published_at: u64) -> Result<String, JsValue> {
+    let keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
+    let creator_secret = keystore.identity_key();
+    let gens = bulletproofs::PedersenGens::default();
+    let creator_pubkey = Commitment(creator_secret * gens.B_blinding);
+
+    let pubkeys: Vec<Commitment> = pubkeys_hex.iter()
+        .map(|h| Commitment::from_hex(h).ok_or_else(|| js_err(format!("invalid pubkey hex: {}", h))))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let signature = crate::core::allowlist::AllowlistEntry::sign(&collection_id, phase_index, &pubkeys, published_at, &creator_secret);
+    let entry = crate::core::allowlist::AllowlistEntry { collection_id, phase_index, creator_pubkey, pubkeys, published_at, signature };
+    serde_json::to_string(&entry).map_err(|_| js_err("failed to serialize allowlist publish"))
 }

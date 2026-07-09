@@ -236,9 +236,55 @@ impl Proposer {
 
                     let name_registry_root = crate::core::registry::compute_registry_root(&name_registry_snapshot);
 
+                    // Computed early (rather than just before BlockHeader
+                    // construction, as before) since a collection mint's
+                    // phase-timing gate below needs it too - this candidate
+                    // block's own timestamp will be set to (approximately)
+                    // this same value further down.
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+
+                    // Pull pending collection launches - same filtering
+                    // pattern as name_ops above, separate namespace (see
+                    // core::collections). No fee-payment/UTXO involvement to
+                    // check (launches have none, by design).
+                    let candidate_launch_ops = {
+                        let mut mp = self.mempool.lock().unwrap();
+                        mp.take_launch_collection_ops()
+                    };
+                    let mut collection_registry_snapshot = {
+                        let c = self.chain.lock().unwrap();
+                        c.collection_registry.clone()
+                    };
+                    let mut launch_collection_ops = Vec::new();
+                    for op in candidate_launch_ops {
+                        if op.validate_standalone().is_err() || collection_registry_snapshot.contains_key(&op.collection_id) {
+                            continue;
+                        }
+                        collection_registry_snapshot.insert(op.collection_id.clone(), crate::core::collections::CollectionRecord {
+                            collection_id: op.collection_id.clone(),
+                            creator_pubkey: op.creator_pubkey,
+                            name: op.name.clone(),
+                            symbol: op.symbol.clone(),
+                            metadata: op.metadata.clone(),
+                            phases: op.phases.clone(),
+                            launched_at_block: next_height,
+                        });
+                        launch_collection_ops.push(op);
+                    }
+                    let collection_registry_root = crate::core::collections::compute_collection_registry_root(&collection_registry_snapshot);
+
                     // Pull pending asset mints/transfers - same filtering
                     // pattern as name_ops/transfer_ops above, separate
-                    // namespace (see core::assets).
+                    // namespace (see core::assets). A collection-tagged mint
+                    // additionally needs the phase's timing/allowlist/quota
+                    // rules satisfied - mirrors ChainState::apply_linear_block's
+                    // gates exactly (this is soft/best-effort pre-filtering;
+                    // apply_linear_block remains the sole hard consensus gate,
+                    // so a bug here can only produce a wasted/rejected
+                    // candidate block, never an invalid one that lands).
                     let candidate_mint_ops = {
                         let mut mp = self.mempool.lock().unwrap();
                         mp.take_mint_ops()
@@ -247,6 +293,22 @@ impl Proposer {
                         let c = self.chain.lock().unwrap();
                         c.asset_registry.clone()
                     };
+                    let mut candidate_mint_counts = {
+                        let c = self.chain.lock().unwrap();
+                        c.collection_mint_counts.clone()
+                    };
+                    // Kernels this candidate block would itself add from its
+                    // main body alone (before any name/mint fee-payment
+                    // kernels are folded in below) - a collection mint's
+                    // required_kernel_excess payment is an ordinary
+                    // transaction that landed in tx via mempool.aggregate(),
+                    // so it's already covered here.
+                    let body_kernel_excesses: std::collections::HashSet<Commitment> =
+                        tx.kernels.iter().map(|k| k.excess).collect();
+                    let historical_kernel_excesses_for_mints = {
+                        let c = self.chain.lock().unwrap();
+                        c.kernel_excesses.clone()
+                    };
                     let mut mint_ops = Vec::new();
                     for op in candidate_mint_ops {
                         let inputs_ok = op.fee_payment.inputs.iter()
@@ -254,6 +316,40 @@ impl Proposer {
                         if !inputs_ok || asset_registry_snapshot.contains_key(&op.asset_id) {
                             continue;
                         }
+
+                        if let (Some(collection_id), Some(phase_index)) = (&op.collection_id, op.phase_index) {
+                            let Some(collection) = collection_registry_snapshot.get(collection_id) else { continue };
+                            let Some(phase) = collection.phases.get(phase_index as usize) else { continue };
+                            if now < phase.start_time || now >= phase.end_time {
+                                continue;
+                            }
+                            if let Some(root) = phase.allowlist_merkle_root {
+                                let (Some(proof), Some(leaf_index)) = (&op.allowlist_proof, op.allowlist_leaf_index) else { continue };
+                                let leaf = crate::core::collections::allowlist_leaf(&op.owner_pubkey);
+                                if !crate::core::merkle::verify_merkle_proof(leaf, proof, leaf_index as usize, root) {
+                                    continue;
+                                }
+                            }
+                            let owner_bytes = *op.owner_pubkey.as_point().compress().as_bytes();
+                            let count_key = (collection_id.clone(), phase_index, owner_bytes);
+                            let current_count = candidate_mint_counts.get(&count_key).copied().unwrap_or(0);
+                            if current_count >= phase.per_wallet_limit {
+                                continue;
+                            }
+                            let Some(required_excess) = op.required_kernel_excess else { continue };
+                            let satisfied = historical_kernel_excesses_for_mints.contains(&required_excess)
+                                || body_kernel_excesses.contains(&required_excess);
+                            if !satisfied {
+                                continue;
+                            }
+                            let Some(creator_sig) = &op.creator_signature else { continue };
+                            let approval_msg = crate::core::assets::MintAssetOp::collection_approval_signing_message(&op.asset_id, collection_id, phase_index, &required_excess, &op.owner_pubkey);
+                            if !creator_sig.verify(&approval_msg, &collection.creator_pubkey) {
+                                continue;
+                            }
+                            candidate_mint_counts.insert(count_key, current_count + 1);
+                        }
+
                         for i in &op.fee_payment.inputs {
                             spent_this_block.insert(i.commitment);
                         }
@@ -365,11 +461,6 @@ impl Proposer {
                     tx.outputs.push(coinbase_output);
                     tx.kernels.push(coinbase_kernel);
 
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs();
-
                     let mut header = BlockHeader {
                         height: next_height,
                         prev_hash,
@@ -381,6 +472,7 @@ impl Proposer {
                         name_registry_root,
                         chain_id: crate::core::genesis::CHAIN_ID,
                         asset_registry_root,
+                        collection_registry_root,
                     };
 
                     // Sign the block header
@@ -394,6 +486,7 @@ impl Proposer {
                         transfer_ops,
                         mint_ops,
                         transfer_asset_ops,
+                        launch_collection_ops,
                     };
 
                     // Apply locally

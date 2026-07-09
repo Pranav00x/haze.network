@@ -11,6 +11,7 @@ use crate::core::block::Block;
 use crate::core::transaction::{Transaction, TxKernel};
 use crate::core::storage::Storage;
 use crate::core::marketplace::MarketplaceState;
+use crate::core::allowlist::AllowlistState;
 use crate::crypto::pedersen::Commitment;
 use super::dandelion::{DandelionRouter, TxState, compute_tx_id};
 use super::message::P2pMessage;
@@ -114,6 +115,7 @@ pub struct P2pServer {
     chain: Arc<Mutex<ChainState>>,
     storage: Arc<Storage>,
     marketplace: Arc<MarketplaceState>,
+    allowlist: Arc<AllowlistState>,
     pub peer_manager: Arc<PeerManager>,
     /// This node's own configured --bind address, mirrored here (in addition
     /// to being threaded through start()'s TCP call chain as before) so
@@ -123,13 +125,14 @@ pub struct P2pServer {
 }
 
 impl P2pServer {
-    pub fn new(mempool: Arc<Mutex<Mempool>>, chain: Arc<Mutex<ChainState>>, storage: Arc<Storage>, marketplace: Arc<MarketplaceState>) -> Self {
+    pub fn new(mempool: Arc<Mutex<Mempool>>, chain: Arc<Mutex<ChainState>>, storage: Arc<Storage>, marketplace: Arc<MarketplaceState>, allowlist: Arc<AllowlistState>) -> Self {
         Self {
             router: Arc::new(DandelionRouter::new(0.20)), // 20% fluff probability
             mempool,
             chain,
             storage,
             marketplace,
+            allowlist,
             peer_manager: Arc::new(PeerManager::new()),
             own_listen_addr: Mutex::new(String::new()),
         }
@@ -166,6 +169,7 @@ impl P2pServer {
             Arc::clone(&self.chain),
             Arc::clone(&self.storage),
             Arc::clone(&self.marketplace),
+            Arc::clone(&self.allowlist),
             Arc::clone(&self.router),
             own_listen_addr,
         ).await;
@@ -185,11 +189,12 @@ impl P2pServer {
             let c = Arc::clone(&self.chain);
             let st = Arc::clone(&self.storage);
             let mkt = Arc::clone(&self.marketplace);
+            let al = Arc::clone(&self.allowlist);
             let r = Arc::clone(&self.router);
             let own_listen_addr = own_listen_addr.clone();
 
             tokio::spawn(async move {
-                connect_to_peer(peer, pm, mp, c, st, mkt, r, own_listen_addr).await;
+                connect_to_peer(peer, pm, mp, c, st, mkt, al, r, own_listen_addr).await;
             });
         }
 
@@ -199,6 +204,7 @@ impl P2pServer {
         let c = Arc::clone(&self.chain);
         let st = Arc::clone(&self.storage);
         let mkt = Arc::clone(&self.marketplace);
+        let al = Arc::clone(&self.allowlist);
         let r = Arc::clone(&self.router);
 
         loop {
@@ -210,6 +216,7 @@ impl P2pServer {
             let c_clone = Arc::clone(&c);
             let st_clone = Arc::clone(&st);
             let mkt_clone = Arc::clone(&mkt);
+            let al_clone = Arc::clone(&al);
             let r_clone = Arc::clone(&r);
             let peer_str = peer_addr.to_string();
             let own_listen_addr = own_listen_addr.clone();
@@ -217,7 +224,7 @@ impl P2pServer {
             tokio::spawn(async move {
                 let (read_half, write_half) = stream.into_split();
                 let write_handle = pm_clone.add_peer(peer_str.clone(), PeerWriter::Tcp(write_half));
-                handle_peer_connection(PeerReader::Tcp(read_half), write_handle, peer_str, pm_clone, mp_clone, c_clone, st_clone, mkt_clone, r_clone, own_listen_addr).await;
+                handle_peer_connection(PeerReader::Tcp(read_half), write_handle, peer_str, pm_clone, mp_clone, c_clone, st_clone, mkt_clone, al_clone, r_clone, own_listen_addr).await;
             });
         }
     }
@@ -239,12 +246,13 @@ fn connect_to_peer(
     c: Arc<Mutex<ChainState>>,
     st: Arc<Storage>,
     mkt: Arc<MarketplaceState>,
+    al: Arc<AllowlistState>,
     r: Arc<DandelionRouter>,
     own_listen_addr: String,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
     Box::pin(async move {
         if peer_addr.starts_with("ws://") || peer_addr.starts_with("wss://") {
-            connect_to_ws_peer(peer_addr, pm, mp, c, st, mkt, r, own_listen_addr).await;
+            connect_to_ws_peer(peer_addr, pm, mp, c, st, mkt, al, r, own_listen_addr).await;
             return;
         }
 
@@ -268,7 +276,7 @@ fn connect_to_peer(
                     let _ = transport::write_message(&mut writer, &P2pMessage::GetPeers).await;
 
                     let write_handle = pm.add_peer(peer_addr.clone(), writer);
-                    handle_peer_connection(PeerReader::Tcp(read_half), write_handle, peer_addr, pm, mp, c, st, mkt, r, own_listen_addr).await;
+                    handle_peer_connection(PeerReader::Tcp(read_half), write_handle, peer_addr, pm, mp, c, st, mkt, al, r, own_listen_addr).await;
                 }
             }
             Err(e) => {
@@ -289,6 +297,7 @@ async fn connect_to_ws_peer(
     c: Arc<Mutex<ChainState>>,
     st: Arc<Storage>,
     mkt: Arc<MarketplaceState>,
+    al: Arc<AllowlistState>,
     r: Arc<DandelionRouter>,
     own_listen_addr: String,
 ) {
@@ -315,7 +324,7 @@ async fn connect_to_ws_peer(
                 let _ = transport::write_message(&mut writer, &P2pMessage::GetPeers).await;
 
                 let write_handle = pm.add_peer(peer_addr.clone(), writer);
-                handle_peer_connection(PeerReader::WsClient(ws_read), write_handle, peer_addr, pm, mp, c, st, mkt, r, own_listen_addr).await;
+                handle_peer_connection(PeerReader::WsClient(ws_read), write_handle, peer_addr, pm, mp, c, st, mkt, al, r, own_listen_addr).await;
             }
         }
         Err(e) => {
@@ -435,6 +444,7 @@ async fn handle_peer_connection(
     chain: Arc<Mutex<ChainState>>,
     storage: Arc<Storage>,
     marketplace: Arc<MarketplaceState>,
+    allowlist: Arc<AllowlistState>,
     router: Arc<DandelionRouter>,
     own_listen_addr: String,
 ) {
@@ -522,6 +532,8 @@ async fn handle_peer_connection(
                                         .chain(block.transfer_asset_ops.iter().map(|op| op.asset_id.clone()))
                                         .collect();
                                     mp.clear_stale_transfer_asset_ops(&touched_assets);
+                                    let launched_collections: Vec<String> = block.launch_collection_ops.iter().map(|op| op.collection_id.clone()).collect();
+                                    mp.clear_stale_launch_collection_ops(&launched_collections);
                                     let asset_registry_snapshot = chain.lock().unwrap().asset_registry.clone();
                                     marketplace.clear_stale(&touched_assets, &asset_registry_snapshot);
                                 }
@@ -609,6 +621,30 @@ async fn handle_peer_connection(
                                 pm.broadcast(&P2pMessage::CancelListing { asset_id, seller_pubkey, signature }).await;
                             }
                         }
+                        P2pMessage::NewLaunchCollectionOp(op) => {
+                            let collection_id = op.collection_id.clone();
+                            let added = {
+                                let mut mp = mempool.lock().unwrap();
+                                mp.add_launch_collection_op(op.clone())
+                            };
+                            if added {
+                                println!("P2P: Queued collection launch '{}' from {}, propagating.", collection_id, peer_addr);
+                                pm.broadcast(&P2pMessage::NewLaunchCollectionOp(op)).await;
+                            }
+                        }
+                        P2pMessage::NewAllowlist(entry) => {
+                            let collection_id = entry.collection_id.clone();
+                            let phase_index = entry.phase_index;
+                            let valid = entry.validate_standalone().is_ok() && {
+                                let c = chain.lock().unwrap();
+                                entry.validate_against_registry(&c.collection_registry).is_ok()
+                            };
+                            if valid {
+                                allowlist.publish(entry.clone());
+                                println!("P2P: Queued allowlist publish for '{}' phase {} from {}, propagating.", collection_id, phase_index, peer_addr);
+                                pm.broadcast(&P2pMessage::NewAllowlist(entry)).await;
+                            }
+                        }
                         P2pMessage::ChainInfo { height, tip_hash } => {
                             let our_height = { chain.lock().unwrap().current_height };
                             println!("P2P: Peer {} reports chain height {} (tip {:?}, ours: {})", peer_addr, height, tip_hash, our_height);
@@ -692,6 +728,8 @@ async fn handle_peer_connection(
                                         .chain(block.transfer_asset_ops.iter().map(|op| op.asset_id.clone()))
                                         .collect();
                                     mp.clear_stale_transfer_asset_ops(&touched_assets);
+                                    let launched_collections: Vec<String> = block.launch_collection_ops.iter().map(|op| op.collection_id.clone()).collect();
+                                    mp.clear_stale_launch_collection_ops(&launched_collections);
                                     let asset_registry_snapshot = chain.lock().unwrap().asset_registry.clone();
                                     marketplace.clear_stale(&touched_assets, &asset_registry_snapshot);
                                 } else {
@@ -809,10 +847,11 @@ async fn handle_peer_connection(
                                 let c2 = Arc::clone(&chain);
                                 let st2 = Arc::clone(&storage);
                                 let mkt2 = Arc::clone(&marketplace);
+                                let al2 = Arc::clone(&allowlist);
                                 let r2 = Arc::clone(&router);
                                 let own_listen_addr2 = own_listen_addr.clone();
                                 tokio::spawn(async move {
-                                    connect_to_peer(candidate, pm2, mp2, c2, st2, mkt2, r2, own_listen_addr2).await;
+                                    connect_to_peer(candidate, pm2, mp2, c2, st2, mkt2, al2, r2, own_listen_addr2).await;
                                 });
                             }
                         }

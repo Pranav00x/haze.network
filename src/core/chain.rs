@@ -5,6 +5,8 @@ use super::transaction::{TxKernel, Output};
 use super::block::Block;
 use super::registry::{NameRecord, compute_registry_root};
 use super::assets::{AssetRecord, compute_asset_registry_root};
+use super::collections::{CollectionRecord, compute_collection_registry_root, allowlist_leaf};
+use super::merkle::verify_merkle_proof;
 use super::compaction::BlockPruneMeta;
 use serde::{Serialize, Deserialize};
 use curve25519_dalek_ng::scalar::Scalar;
@@ -54,6 +56,20 @@ pub struct ChainState {
     /// Pre-transfer AssetRecord for each asset transferred at a given height -
     /// same purpose/pattern as transfer_snapshots.
     pub asset_transfer_snapshots: HashMap<u64, Vec<(String, AssetRecord)>>,
+    /// Collection launches (NFT "drops" with scheduled multi-phase minting)
+    /// - collection_id -> record, committed into consensus state via
+    /// BlockHeader::collection_registry_root (see core::collections). A
+    /// separate namespace from asset_registry - a collection groups mints,
+    /// it isn't an asset itself.
+    pub collection_registry: HashMap<String, CollectionRecord>,
+    /// How many assets a given (collection_id, phase_index, owner pubkey)
+    /// has minted so far - enforces MintPhase::per_wallet_limit. Keyed by
+    /// compressed pubkey bytes rather than Commitment directly since this
+    /// codebase's other maps key on Hash-friendly String/[u8;32] types (see
+    /// core::collections::allowlist_leaf for the analogous reasoning on the
+    /// Merkle side). Incrementally maintained (insert/increment on apply,
+    /// decrement/remove on rollback) - same pattern as kernel_excesses.
+    pub collection_mint_counts: HashMap<(String, u32, [u8; 32]), u32>,
     /// Per-block bookkeeping for horizon-based cut-through (see
     /// core::compaction::compact) - which blocks have had inputs/outputs
     /// physically removed, and how many. Purely a display aid (see
@@ -83,6 +99,12 @@ pub struct AppliedDelta {
     /// Assets transferred by this block, paired with their PRE-transfer
     /// record so a rollback can restore it exactly.
     pub transferred_assets: Vec<(String, AssetRecord)>,
+    /// Collections launched by this block (empty for most blocks).
+    pub new_collections: Vec<(String, CollectionRecord)>,
+    /// Every (collection_id, phase_index, owner pubkey bytes) key this
+    /// block incremented collection_mint_counts for - so a rollback can
+    /// decrement exactly these, no more no less.
+    pub collection_mints_this_block: Vec<(String, u32, [u8; 32])>,
     pub height: u64,
     pub tip_hash: [u8; 32],
 }
@@ -99,6 +121,8 @@ pub struct RollbackDelta {
     pub removed_names: Vec<String>,
     /// Assets un-minted by this rollback.
     pub removed_assets: Vec<String>,
+    /// Collections un-launched by this rollback.
+    pub removed_collections: Vec<String>,
     pub new_height: u64,
     pub new_tip: [u8; 32],
 }
@@ -439,12 +463,58 @@ impl ChainState {
             return None;
         }
 
+        // 4c-prep. Validate collection launches (see core::collections) -
+        // same shape as 4b/4c but for collections rather than names: each op
+        // is checked standalone (id rules, phase sanity, signature) plus the
+        // one chain-state check that can only happen here - collection_id
+        // isn't already taken (by a prior block or an earlier launch in this
+        // same block). No fee-payment / UTXO involvement (LaunchCollectionOp
+        // has none, by design - launching costs nothing beyond ordinary
+        // block-inclusion). Built into a candidate_collection_registry so a
+        // mint later in THIS SAME block can target a collection launched
+        // earlier in it (mirrors block_kernel_excesses letting a payment and
+        // the transfer/mint it unlocks land in one block).
+        let mut collections_this_block: HashSet<&str> = HashSet::new();
+        let mut candidate_collection_registry = self.collection_registry.clone();
+        for op in &block.launch_collection_ops {
+            if op.validate_standalone().is_err() {
+                return None;
+            }
+            if self.collection_registry.contains_key(&op.collection_id) || !collections_this_block.insert(op.collection_id.as_str()) {
+                return None;
+            }
+            candidate_collection_registry.insert(op.collection_id.clone(), CollectionRecord {
+                collection_id: op.collection_id.clone(),
+                creator_pubkey: op.creator_pubkey,
+                name: op.name.clone(),
+                symbol: op.symbol.clone(),
+                metadata: op.metadata.clone(),
+                phases: op.phases.clone(),
+                launched_at_block: block.header.height,
+            });
+        }
+
+        if compute_collection_registry_root(&candidate_collection_registry) != block.header.collection_registry_root {
+            return None;
+        }
+
         // 4d. Validate asset mints (see core::assets) - same shape as 4b,
         // separate namespace from names. `spent_this_block` is shared with
         // names/body so an asset mint's fee-payment can't double-spend an
         // input already claimed by any of them earlier in this same block.
+        // A mint tagged with collection_id/phase_index additionally must:
+        // target a real collection/phase (possibly launched in this same
+        // block, see candidate_collection_registry above), fall within that
+        // phase's [start_time, end_time) window per this block's own
+        // timestamp, satisfy the phase's Merkle allowlist (if any), stay
+        // under the phase's per-wallet mint limit, and - if conditioned on a
+        // payment - only apply once that payment's kernel actually exists
+        // (the same trustless atomic-swap primitive TransferAssetOp already
+        // uses, applied to minting instead of transferring).
         let mut assets_this_block: HashSet<&str> = HashSet::new();
         let mut candidate_asset_registry = self.asset_registry.clone();
+        let mut candidate_mint_counts = self.collection_mint_counts.clone();
+        let mut collection_mints_this_block: Vec<(String, u32, [u8; 32])> = Vec::new();
         for op in &block.mint_ops {
             if op.validate_standalone().is_err() {
                 return None;
@@ -458,6 +528,50 @@ impl ChainState {
                 }
                 spent_this_block.insert(input.commitment);
             }
+
+            if let (Some(collection_id), Some(phase_index)) = (&op.collection_id, op.phase_index) {
+                let Some(collection) = candidate_collection_registry.get(collection_id) else { return None };
+                let Some(phase) = collection.phases.get(phase_index as usize) else { return None };
+                if block.header.timestamp < phase.start_time || block.header.timestamp >= phase.end_time {
+                    return None;
+                }
+                if let Some(root) = phase.allowlist_merkle_root {
+                    let (Some(proof), Some(leaf_index)) = (&op.allowlist_proof, op.allowlist_leaf_index) else { return None };
+                    if !verify_merkle_proof(allowlist_leaf(&op.owner_pubkey), proof, leaf_index as usize, root) {
+                        return None;
+                    }
+                }
+                // A collection mint always requires both a payment condition
+                // and the creator's explicit approval of it - regardless of
+                // phase.price, since op.signature alone is signed by the
+                // BUYER (see MintAssetOp::creator_signature's doc comment
+                // for why the creator's own separate signature is the only
+                // thing that actually ties this mint to a real payment).
+                let (Some(required_excess), Some(creator_sig)) = (op.required_kernel_excess, &op.creator_signature) else { return None };
+                let approval_msg = super::assets::MintAssetOp::collection_approval_signing_message(
+                    &op.asset_id, collection_id, phase_index, &required_excess, &op.owner_pubkey,
+                );
+                if !creator_sig.verify(&approval_msg, &collection.creator_pubkey) {
+                    return None;
+                }
+                let owner_bytes = *op.owner_pubkey.as_point().compress().as_bytes();
+                let count_key = (collection_id.clone(), phase_index, owner_bytes);
+                let current_count = candidate_mint_counts.get(&count_key).copied().unwrap_or(0);
+                if current_count >= phase.per_wallet_limit {
+                    return None;
+                }
+                candidate_mint_counts.insert(count_key.clone(), current_count + 1);
+                collection_mints_this_block.push(count_key);
+            }
+
+            if let Some(required_excess) = op.required_kernel_excess {
+                let satisfied = self.kernel_excesses.contains(&required_excess)
+                    || block_kernel_excesses.contains(&required_excess);
+                if !satisfied {
+                    return None;
+                }
+            }
+
             candidate_asset_registry.insert(op.asset_id.clone(), AssetRecord {
                 asset_id: op.asset_id.clone(),
                 owner_pubkey: op.owner_pubkey,
@@ -562,8 +676,18 @@ impl ChainState {
             self.transfer_snapshots.insert(block.header.height, transferred_names.clone());
         }
 
+        // 7c-prep. Commit each launched collection into the registry - no
+        // fee-payment/UTXO involvement, just an insert (see 4c-prep).
+        let mut new_collections = Vec::new();
+        for op in &block.launch_collection_ops {
+            let record = candidate_collection_registry[&op.collection_id].clone();
+            self.collection_registry.insert(op.collection_id.clone(), record.clone());
+            new_collections.push((op.collection_id.clone(), record));
+        }
+
         // 7d. Apply each asset mint's fee-payment transaction and commit the
-        // registry entry itself - same shape as 7b.
+        // registry entry itself - same shape as 7b. Collection-tagged mints
+        // also commit their incremented per-wallet mint count here.
         let mut new_assets = Vec::new();
         for op in &block.mint_ops {
             for input in &op.fee_payment.inputs {
@@ -577,6 +701,9 @@ impl ChainState {
             let record = candidate_asset_registry[&op.asset_id].clone();
             self.asset_registry.insert(op.asset_id.clone(), record.clone());
             new_assets.push((op.asset_id.clone(), record));
+        }
+        for count_key in &collection_mints_this_block {
+            self.collection_mint_counts.insert(count_key.clone(), candidate_mint_counts[count_key]);
         }
 
         // 7e. Apply asset transfers - same shape as 7c.
@@ -629,6 +756,8 @@ impl ChainState {
             transferred_names,
             new_assets,
             transferred_assets,
+            new_collections,
+            collection_mints_this_block,
             validator_snapshot,
             active_validators_after: self.active_validators.clone(),
             height: self.current_height,
@@ -703,7 +832,11 @@ impl ChainState {
         }
 
         // 3d. Revert each asset mint's fee-payment transaction and registry
-        // entry - same shape as 3b.
+        // entry - same shape as 3b. A collection-tagged mint also decrements
+        // (or removes, if it hits 0) the per-wallet mint count it had
+        // incremented at apply time, so a previously-over-limit mint becomes
+        // acceptable again post-rollback if this was the mint that had
+        // consumed the last slot.
         let mut removed_assets = Vec::new();
         for op in &tip_block.mint_ops {
             for output in &op.fee_payment.outputs {
@@ -721,6 +854,26 @@ impl ChainState {
             }
             self.asset_registry.remove(&op.asset_id);
             removed_assets.push(op.asset_id.clone());
+
+            if let (Some(collection_id), Some(phase_index)) = (&op.collection_id, op.phase_index) {
+                let owner_bytes = *op.owner_pubkey.as_point().compress().as_bytes();
+                let count_key = (collection_id.clone(), phase_index, owner_bytes);
+                if let Some(count) = self.collection_mint_counts.get_mut(&count_key) {
+                    if *count <= 1 {
+                        self.collection_mint_counts.remove(&count_key);
+                    } else {
+                        *count -= 1;
+                    }
+                }
+            }
+        }
+
+        // 3d-prep. Revert each launched collection - pure removal, no
+        // fee-payment/UTXO involvement (see 4c-prep/7c-prep).
+        let mut removed_collections = Vec::new();
+        for op in &tip_block.launch_collection_ops {
+            self.collection_registry.remove(&op.collection_id);
+            removed_collections.push(op.collection_id.clone());
         }
 
         // 3e. Revert each asset transfer back to its pre-transfer record.
@@ -748,6 +901,7 @@ impl ChainState {
             active_validators_after: self.active_validators.clone(),
             removed_names,
             removed_assets,
+            removed_collections,
             new_height: self.current_height,
             new_tip: self.last_block_hash,
         })

@@ -201,7 +201,7 @@ impl FaucetState {
         let mut keystore = self.keystore.lock().unwrap();
         let mut store = self.store.lock().unwrap();
 
-        let selected = planner::select_spendable(&store, fee)?;
+        let selected = planner::select_spendable_confirmed_only(&store, fee)?;
         let selected_total: u64 = selected.iter().map(|(_, _, v)| v).sum();
 
         let mut input_blindings: Vec<Scalar> = Vec::new();
@@ -536,6 +536,7 @@ mod tests {
             name_registry_root: crate::core::registry::compute_registry_root(&std::collections::HashMap::new()),
             chain_id: crate::core::genesis::CHAIN_ID,
             asset_registry_root: crate::core::assets::compute_asset_registry_root(&std::collections::HashMap::new()),
+            collection_registry_root: crate::core::collections::compute_collection_registry_root(&std::collections::HashMap::new()),
         };
         let msg = header.hash();
         header.validator_signature = Signature::sign(&msg, &private_key);
@@ -551,6 +552,7 @@ mod tests {
             transfer_ops: vec![],
             mint_ops: vec![],
             transfer_asset_ops: vec![],
+            launch_collection_ops: vec![],
         };
         assert!(chain.apply_block(&block).is_applied(), "test block must apply cleanly");
 

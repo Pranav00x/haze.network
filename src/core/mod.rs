@@ -7,6 +7,9 @@ pub mod genesis;
 pub mod registry;
 pub mod assets;
 pub mod marketplace;
+pub mod merkle;
+pub mod collections;
+pub mod allowlist;
 pub mod compaction;
 pub mod vesting;
 

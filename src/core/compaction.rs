@@ -298,6 +298,7 @@ mod tests {
             name_registry_root: empty_registry_root(),
             chain_id: crate::core::genesis::CHAIN_ID,
             asset_registry_root: crate::core::assets::compute_asset_registry_root(&std::collections::HashMap::new()),
+            collection_registry_root: crate::core::collections::compute_collection_registry_root(&std::collections::HashMap::new()),
         };
         let msg = header.hash();
         header.validator_signature = Signature::sign(&msg, &private_key);
@@ -309,6 +310,7 @@ mod tests {
             transfer_ops: vec![],
             mint_ops: vec![],
             transfer_asset_ops: vec![],
+            launch_collection_ops: vec![],
         };
 
         (block, r_out, out_commitment)

@@ -352,11 +352,13 @@ pub fn genesis_block() -> Block {
             name_registry_root: super::registry::compute_registry_root(&std::collections::HashMap::new()),
             chain_id: CHAIN_ID,
             asset_registry_root: super::assets::compute_asset_registry_root(&std::collections::HashMap::new()),
+            collection_registry_root: super::collections::compute_collection_registry_root(&std::collections::HashMap::new()),
         },
         body,
         name_ops: vec![],
         transfer_ops: vec![],
         mint_ops: vec![],
         transfer_asset_ops: vec![],
+        launch_collection_ops: vec![],
     }
 }

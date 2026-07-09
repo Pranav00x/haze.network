@@ -599,7 +599,7 @@ pub fn build_register_name_request(keystore_bytes: Vec<u8>, store_bytes: Vec<u8>
     let mut keystore = Keystore::from_bytes(&keystore_bytes).ok_or(FfiError::InvalidKeystore)?;
     let store = WalletStore::from_bytes(&store_bytes).ok_or(FfiError::InvalidStore)?;
 
-    let selected = planner::select_spendable(&store, fee)
+    let selected = planner::select_spendable_confirmed_only(&store, fee)
         .map_err(|e| match e {
             PlanError::InsufficientBalance { have, need } => FfiError::InsufficientBalance { have, need },
         })?;

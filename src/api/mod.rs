@@ -4,4 +4,6 @@ pub mod faucet;
 pub mod names;
 pub mod assets;
 pub mod marketplace;
+pub mod collections;
+pub mod allowlist;
 pub mod inbox;

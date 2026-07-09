@@ -2,6 +2,7 @@ use super::transaction::Transaction;
 use super::cut_through::aggregate_and_cut_through;
 use super::registry::{RegisterNameOp, TransferNameOp, NAME_REGISTRATION_FEE};
 use super::assets::{MintAssetOp, TransferAssetOp, ASSET_MINT_FEE};
+use super::collections::LaunchCollectionOp;
 
 /// Caps how many name registrations/transfers can land in a single block,
 /// bounding block size the same way SYNC_BATCH_SIZE bounds a sync batch
@@ -11,6 +12,10 @@ pub const MAX_TRANSFER_OPS_PER_BLOCK: usize = 10;
 /// Same reasoning as MAX_NAME_OPS_PER_BLOCK, separate namespace.
 pub const MAX_MINT_OPS_PER_BLOCK: usize = 10;
 pub const MAX_TRANSFER_ASSET_OPS_PER_BLOCK: usize = 10;
+/// Collection launches are rare relative to individual mints (a creator
+/// launches once, then potentially thousands mint against it) - a small cap
+/// is plenty and keeps block assembly cheap.
+pub const MAX_LAUNCH_OPS_PER_BLOCK: usize = 5;
 
 /// Caps how many ordinary payment transactions land in a single block. Before
 /// this existed, aggregate() pulled in the ENTIRE mempool unconditionally -
@@ -84,6 +89,7 @@ pub struct Mempool {
     pending_transfer_ops: Vec<TransferNameOp>,
     pending_mint_ops: Vec<MintAssetOp>,
     pending_transfer_asset_ops: Vec<TransferAssetOp>,
+    pending_launch_collection_ops: Vec<LaunchCollectionOp>,
 }
 
 impl Mempool {
@@ -94,6 +100,7 @@ impl Mempool {
             pending_transfer_ops: Vec::new(),
             pending_mint_ops: Vec::new(),
             pending_transfer_asset_ops: Vec::new(),
+            pending_launch_collection_ops: Vec::new(),
         }
     }
 
@@ -305,6 +312,36 @@ impl Mempool {
         use std::collections::HashSet;
         let touched: HashSet<&String> = touched_assets.iter().collect();
         self.pending_transfer_asset_ops.retain(|op| !touched.contains(&op.asset_id));
+    }
+
+    /// Validates a collection launch standalone (chain-state check -
+    /// collection_id uniqueness - happens again at block-apply time, same as
+    /// add_mint_op/add_name_op).
+    pub fn add_launch_collection_op(&mut self, op: LaunchCollectionOp) -> bool {
+        if op.validate_standalone().is_err() {
+            return false;
+        }
+        if self.pending_launch_collection_ops.iter().any(|o| o.collection_id == op.collection_id) {
+            return false;
+        }
+        self.pending_launch_collection_ops.push(op);
+        true
+    }
+
+    /// Drains up to MAX_LAUNCH_OPS_PER_BLOCK pending collection launches. No
+    /// fee-based priority sort needed - LaunchCollectionOp has no
+    /// fee_payment, so FIFO (insertion order) is the natural tie-break.
+    pub fn take_launch_collection_ops(&mut self) -> Vec<LaunchCollectionOp> {
+        let n = self.pending_launch_collection_ops.len().min(MAX_LAUNCH_OPS_PER_BLOCK);
+        self.pending_launch_collection_ops.drain(0..n).collect()
+    }
+
+    /// Drops any still-pending launch for a collection_id a just-applied
+    /// block already touched - same pattern as clear_stale_transfer_asset_ops.
+    pub fn clear_stale_launch_collection_ops(&mut self, touched_collections: &[String]) {
+        use std::collections::HashSet;
+        let touched: HashSet<&String> = touched_collections.iter().collect();
+        self.pending_launch_collection_ops.retain(|op| !touched.contains(&op.collection_id));
     }
 }
 
@@ -540,9 +577,13 @@ mod tests {
         let owner_secret = Scalar::random(&mut rng);
         let owner_pubkey = Commitment(owner_secret * gens.B_blinding);
         let metadata = vec![3u8; 4];
-        let signature = MintAssetOp::sign(asset_id, &metadata, &owner_secret);
+        let signature = MintAssetOp::sign(asset_id, &metadata, &None, &None, &None, &owner_secret);
 
-        MintAssetOp { asset_id: asset_id.to_string(), owner_pubkey, metadata, fee_payment, signature }
+        MintAssetOp {
+            asset_id: asset_id.to_string(), owner_pubkey, metadata, fee_payment,
+            collection_id: None, phase_index: None, allowlist_proof: None, allowlist_leaf_index: None, required_kernel_excess: None,
+            signature, creator_signature: None,
+        }
     }
 
     #[test]

@@ -96,12 +96,19 @@
   .btn-ghost:hover { color: var(--ink); border-color: var(--mist); }
   .btn-danger { background: transparent; color: var(--danger); border: 1px solid color-mix(in oklch, var(--danger) 40%, transparent); }
 
-  input {
+  input, textarea {
     width: 100%; background: var(--fog-2); border: 1px solid var(--fog-3); color: var(--ink);
     font-family: var(--font-mono); font-size: 14px; border-radius: 3px; padding: 10px 12px; outline: none;
   }
-  input:focus { border-color: var(--mist); }
+  input:focus, textarea:focus { border-color: var(--mist); }
+  textarea { min-height: 70px; resize: vertical; }
   label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-faint); margin: 12px 0 5px; }
+
+  .launch-panel { background: var(--fog-1); border: 1px solid var(--fog-3); border-radius: 8px; padding: 24px; max-width: 620px; }
+  .phase-heading { font-family: var(--font-display); font-size: 15px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--fog-3); }
+  .phase-heading:first-of-type { border-top: none; padding-top: 0; }
+  .card-phase { margin-top: 6px; font-size: 12.5px; color: var(--ink-dim); }
+  .card-phase .btn-primary { padding: 6px 14px; font-size: 12px; margin-left: 8px; }
 
   .message { font-size: 13px; padding: 10px 14px; border-radius: 3px; margin-top: 12px; }
   .message.error { background: color-mix(in oklch, var(--danger) 12%, transparent); color: var(--danger); border: 1px solid color-mix(in oklch, var(--danger) 30%, transparent); }
@@ -163,6 +170,63 @@
   <div class="section" id="my-assets-section" style="display:none;">
     <h2>My assets</h2>
     <div class="listings-grid" id="my-assets-grid"></div>
+  </div>
+
+  <div class="section">
+    <h2>Drops</h2>
+    <div class="listings-grid" id="collections-grid"></div>
+  </div>
+
+  <div class="section">
+    <h2>Launch a collection</h2>
+    <div class="launch-panel">
+      <div class="keystore-note" style="margin-bottom:8px;">A scheduled, multi-phase NFT drop (GTD allowlist round, FCFS allowlist round, then Public). Costs nothing to launch; each round's price is paid by minters directly to you, trustlessly - a mint only becomes valid once the payment is actually on-chain.</div>
+      <label>Collection ID</label>
+      <input type="text" id="launch-collection-id-input" placeholder="e.g. cryptopunks" autocomplete="off" />
+      <label>Name</label>
+      <input type="text" id="launch-collection-name-input" placeholder="e.g. CryptoPunks" autocomplete="off" />
+      <label>Symbol</label>
+      <input type="text" id="launch-collection-symbol-input" placeholder="e.g. PUNK" autocomplete="off" />
+      <label>Description</label>
+      <input type="text" id="launch-collection-metadata-input" placeholder="e.g. a description or link" autocomplete="off" />
+
+      <div class="phase-heading">GTD round</div>
+      <label>Start (unix seconds)</label>
+      <input type="number" id="phase-gtd-start" min="0" />
+      <label>End (unix seconds)</label>
+      <input type="number" id="phase-gtd-end" min="0" />
+      <label>Price</label>
+      <input type="number" id="phase-gtd-price" min="0" value="0" />
+      <label>Per-wallet limit</label>
+      <input type="number" id="phase-gtd-limit" min="1" value="1" />
+      <label>Allowlisted pubkeys (one per line, hex - leave empty to skip this round)</label>
+      <textarea id="phase-gtd-allowlist" placeholder="one pubkey hex per line"></textarea>
+
+      <div class="phase-heading">FCFS round</div>
+      <label>Start (unix seconds)</label>
+      <input type="number" id="phase-fcfs-start" min="0" />
+      <label>End (unix seconds)</label>
+      <input type="number" id="phase-fcfs-end" min="0" />
+      <label>Price</label>
+      <input type="number" id="phase-fcfs-price" min="0" value="0" />
+      <label>Per-wallet limit</label>
+      <input type="number" id="phase-fcfs-limit" min="1" value="2" />
+      <label>Allowlisted pubkeys (one per line, hex - leave empty to skip this round)</label>
+      <textarea id="phase-fcfs-allowlist" placeholder="one pubkey hex per line"></textarea>
+
+      <div class="phase-heading">Public round</div>
+      <label>Start (unix seconds)</label>
+      <input type="number" id="phase-public-start" min="0" />
+      <label>End (unix seconds)</label>
+      <input type="number" id="phase-public-end" min="0" />
+      <label>Price</label>
+      <input type="number" id="phase-public-price" min="0" value="0" />
+      <label>Per-wallet limit</label>
+      <input type="number" id="phase-public-limit" min="1" value="10" />
+
+      <button class="btn-primary" id="launch-collection-btn" style="margin-top:20px;">Launch collection</button>
+      <div id="launch-collection-message"></div>
+    </div>
   </div>
 </main>
 
@@ -309,7 +373,7 @@ async function handleWalletReturn() {
       } catch (e) { /* leave disconnected */ }
     }
     window.history.replaceState({}, "", window.location.pathname);
-  } else if (params.has("listed") || params.has("bought")) {
+  } else if (params.has("listed") || params.has("bought") || params.has("launched") || params.has("minted")) {
     window.history.replaceState({}, "", window.location.pathname);
   }
 }
@@ -418,13 +482,101 @@ async function refreshMyAssets() {
   }
 }
 
+function phaseStatus(phase) {
+  const now = Math.floor(Date.now() / 1000);
+  if (now < phase.start_time) return "upcoming";
+  if (now >= phase.end_time) return "ended";
+  return "active";
+}
+
+function collectionCard(col) {
+  const card = document.createElement("div");
+  card.className = "card";
+  const phaseRows = col.phases.map((phase, i) => {
+    const status = phaseStatus(phase);
+    const mintBtn = status === "active"
+      ? `<button class="btn-primary" data-mint-collection="${col.collection_id}" data-mint-phase="${i}">Mint</button>`
+      : "";
+    return `<div class="card-phase"><strong>${phase.name}</strong> (${status}) - price ${phase.price}, limit ${phase.per_wallet_limit}${phase.allowlist_merkle_root ? " - allowlisted" : ""}${mintBtn}</div>`;
+  }).join("");
+  card.innerHTML = `
+    <div class="card-title">${col.name}</div>
+    <div class="card-desc">${col.symbol} &middot; <span class="keystore-note">${col.collection_id}</span></div>
+    ${phaseRows}
+  `;
+  card.querySelectorAll("[data-mint-collection]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      window.location.href = deepLinkUrl("mint_collection", { collection_id: btn.dataset.mintCollection, phase_index: btn.dataset.mintPhase });
+    });
+  });
+  return card;
+}
+
+async function refreshCollections() {
+  const grid = document.getElementById("collections-grid");
+  try {
+    const collections = await fetchJson("/v1/collections?limit=100");
+    if (collections.length === 0) {
+      grid.innerHTML = `<div class="empty-state">No collections launched yet. Launch one below.</div>`;
+      return;
+    }
+    grid.innerHTML = "";
+    collections.forEach(col => grid.appendChild(collectionCard(col)));
+  } catch (e) {
+    grid.innerHTML = `<div class="empty-state">Can&rsquo;t reach a node at <strong>${API_BASE}</strong> - click the node indicator above to point at a running Haze node.</div>`;
+  }
+}
+
+function readPhaseRow(prefix, name) {
+  const start = parseInt(document.getElementById(`phase-${prefix}-start`).value || "0", 10);
+  const end = parseInt(document.getElementById(`phase-${prefix}-end`).value || "0", 10);
+  const price = parseInt(document.getElementById(`phase-${prefix}-price`).value || "0", 10);
+  const per_wallet_limit = parseInt(document.getElementById(`phase-${prefix}-limit`).value || "1", 10);
+  return { name, start_time: start, end_time: end, price, per_wallet_limit, start, end };
+}
+
+document.getElementById("launch-collection-btn").addEventListener("click", () => {
+  const messageEl = document.getElementById("launch-collection-message");
+  const collectionId = document.getElementById("launch-collection-id-input").value.trim();
+  const name = document.getElementById("launch-collection-name-input").value.trim();
+  const symbol = document.getElementById("launch-collection-symbol-input").value.trim();
+  const metadata = document.getElementById("launch-collection-metadata-input").value.trim();
+  if (!collectionId || !name) {
+    messageEl.innerHTML = `<div class="message error">Enter at least a collection ID and a name.</div>`;
+    return;
+  }
+
+  const rows = [
+    { ...readPhaseRow("gtd", "GTD"), allowlistEl: "phase-gtd-allowlist" },
+    { ...readPhaseRow("fcfs", "FCFS"), allowlistEl: "phase-fcfs-allowlist" },
+    { ...readPhaseRow("public", "Public"), allowlistEl: null },
+  ].filter(r => r.end > r.start); // a round with no window configured is simply omitted
+  if (rows.length === 0) {
+    messageEl.innerHTML = `<div class="message error">Configure at least one round (its end time must be after its start time).</div>`;
+    return;
+  }
+
+  const phases = rows.map(r => {
+    const allowlist_pubkeys_hex = r.allowlistEl
+      ? document.getElementById(r.allowlistEl).value.trim().split("\n").map(s => s.trim()).filter(Boolean)
+      : [];
+    return { name: r.name, start_time: r.start_time, end_time: r.end_time, price: r.price, per_wallet_limit: r.per_wallet_limit, allowlist_pubkeys_hex };
+  });
+
+  window.location.href = deepLinkUrl("launch_collection", {
+    collection_id: collectionId, name, symbol, metadata, phases: JSON.stringify(phases),
+  });
+});
+
 async function main() {
   await init();
   renderIndicators();
   await handleWalletReturn();
   renderConnectBox();
   await refreshListings();
+  await refreshCollections();
   setInterval(refreshListings, 8000);
+  setInterval(refreshCollections, 8000);
 }
 main();
 </script>

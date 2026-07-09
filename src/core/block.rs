@@ -3,6 +3,7 @@ use crate::crypto::schnorr::Signature;
 use super::transaction::Transaction;
 use super::registry::{RegisterNameOp, TransferNameOp};
 use super::assets::{MintAssetOp, TransferAssetOp};
+use super::collections::LaunchCollectionOp;
 use serde::{Serialize, Deserialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -31,6 +32,12 @@ pub struct BlockHeader {
     /// pattern and same reasoning as name_registry_root, kept as a separate
     /// field/root since assets and names are unrelated namespaces.
     pub asset_registry_root: [u8; 32],
+    /// Commitment to the full collection-registry state after this block is
+    /// applied (see core::collections::compute_collection_registry_root) -
+    /// same pattern as asset_registry_root, kept separate since a
+    /// collection launch is its own consensus record distinct from any
+    /// individual asset mint.
+    pub collection_registry_root: [u8; 32],
 }
 
 impl BlockHeader {
@@ -48,6 +55,7 @@ impl BlockHeader {
         hasher.update(&self.name_registry_root);
         hasher.update(&self.chain_id.to_le_bytes());
         hasher.update(&self.asset_registry_root);
+        hasher.update(&self.collection_registry_root);
         let result = hasher.finalize();
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&result);
@@ -91,6 +99,11 @@ pub struct Block {
     /// core::assets::TransferAssetOp) - same shape as transfer_ops.
     #[serde(default)]
     pub transfer_asset_ops: Vec<TransferAssetOp>,
+    /// Collection launches included in this block (see
+    /// core::collections::LaunchCollectionOp) - same shape as mint_ops, a
+    /// separate namespace from individual asset mints.
+    #[serde(default)]
+    pub launch_collection_ops: Vec<LaunchCollectionOp>,
 }
 
 impl Block {

@@ -39,6 +39,15 @@ export class WasmKeystoreAndMnemonic {
     mnemonic: string;
 }
 
+export class WasmMerkleProofResult {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    leaf_index: number;
+    proof_hex: string[];
+    root_hex: string;
+}
+
 export class WasmMintAssetResult {
     private constructor();
     free(): void;
@@ -131,10 +140,35 @@ export class WasmSweepResult {
 }
 
 /**
+ * Patches a collection creator's approval signature (see
+ * MintAssetOp::creator_signature and sign_collection_mint_approval) into an
+ * already-built mint op_json (from build_collection_mint_asset_request),
+ * without needing to rebuild it - rebuilding would re-select this wallet's
+ * spendable UTXOs and could pick a different (conflicting) fee_payment.
+ */
+export function attach_creator_signature_to_mint(op_json: string, creator_signature_hex: string): string;
+
+/**
  * Builds a signed cancellation for a listing this wallet previously
  * created - see POST /v1/marketplace/cancel.
  */
 export function build_cancel_listing_request(keystore_bytes: Uint8Array, asset_id: string): string;
+
+/**
+ * Sibling to build_mint_asset_request for a mint claimed against a
+ * collection's scheduled phase (see core::collections) - takes the same
+ * spendable-UTXO-funded fee_payment path, plus the collection-drop fields.
+ * `allowlist_proof_hex`/`allowlist_leaf_index` are only required when the
+ * target phase actually has an allowlist_merkle_root (see
+ * compute_allowlist_merkle_proof); `required_kernel_excess_hex`, if
+ * provided, is the payment-conditioning primitive (same as
+ * build_transfer_asset_request's) - typically supplied by the collection
+ * creator's auto-responding wallet once it has independently verified an
+ * incoming payment slate pays the phase's price, not built by the minter
+ * themselves. A separate sibling (not a change to build_mint_asset_request)
+ * so every existing plain-mint call site keeps working unchanged.
+ */
+export function build_collection_mint_asset_request(keystore_bytes: Uint8Array, store_bytes: Uint8Array, asset_id: string, metadata: string, fee: bigint, collection_id: string, phase_index: number, allowlist_proof_hex?: string[] | null, allowlist_leaf_index?: number | null, required_kernel_excess_hex?: string | null): WasmMintAssetResult;
 
 /**
  * Builds a signed marketplace Listing (see core::marketplace) advertising
@@ -143,6 +177,20 @@ export function build_cancel_listing_request(keystore_bytes: Uint8Array, asset_i
  * expected to match, checked server-side at POST /v1/marketplace/list.
  */
 export function build_create_listing_request(keystore_bytes: Uint8Array, asset_id: string, price: bigint, listed_at: bigint): string;
+
+/**
+ * Builds a signed LaunchCollectionOp for a scheduled multi-phase NFT drop
+ * (see core::collections) - `phases_json` is the JSON serialization of a
+ * `Vec<MintPhase>` (the caller builds this array client-side: each phase
+ * has `name`, `start_time`, `end_time`, `price`, `per_wallet_limit`, and
+ * optional `allowlist_merkle_root` - for an allowlisted phase, compute the
+ * root client-side first via `compute_allowlist_merkle_proof`'s root_hex,
+ * or build it directly from a pubkey list; a Public/open phase omits the
+ * root entirely). No fee_payment - launching costs nothing beyond ordinary
+ * block-inclusion (see LaunchCollectionOp's own doc comment). The caller
+ * must POST the returned JSON to /v1/collections/launch.
+ */
+export function build_launch_collection_request(keystore_bytes: Uint8Array, collection_id: string, name: string, symbol: string, metadata: string, phases_json: string): string;
 
 /**
  * Builds a MintAssetOp paying `fee` (must be >= ASSET_MINT_FEE) from the
@@ -262,6 +310,16 @@ export function commit_send(store_bytes: Uint8Array, spent_commitments_hex: stri
 export function commit_slate_send(store_bytes: Uint8Array, spent_commitments_hex: string[], change?: WasmOwnedOutput | null): Uint8Array;
 
 /**
+ * Computes `target_pubkey_hex`'s Merkle inclusion proof against the full
+ * plaintext allowlist `pubkeys_hex` (fetched from the off-chain allowlist
+ * endpoint - see core::allowlist) - lets a minter (or the wallet UI
+ * building a collection launch) get everything build_collection_mint_asset_request
+ * needs without re-deriving the tree by hand. Returns an error if
+ * target_pubkey_hex isn't actually present in the list.
+ */
+export function compute_allowlist_merkle_proof(pubkeys_hex: string[], target_pubkey_hex: string): WasmMerkleProofResult;
+
+/**
  * Sender step 1: builds a slate paying a different wallet `amount`. Returns
  * the slate JSON to hand to the recipient and the private pending-slate
  * bytes to keep locally until `finalize_slate`.
@@ -340,6 +398,25 @@ export function restore_keystore_from_mnemonic(phrase: string): Uint8Array;
 export function reveal_stake_blinding_hex(keystore_bytes: Uint8Array, store_bytes: Uint8Array, min_value: bigint): string;
 
 /**
+ * Signs an allowlist publish (see core::allowlist::AllowlistEntry) so the
+ * off-chain, best-effort allowlist gossip can be cross-checked against this
+ * collection's registered creator_pubkey server-side. `pubkeys_hex` is the
+ * full plaintext list being published for this collection/phase.
+ */
+export function sign_allowlist_publish(keystore_bytes: Uint8Array, collection_id: string, phase_index: number, pubkeys_hex: string[], published_at: bigint): string;
+
+/**
+ * The collection creator's side of the approval handshake (see
+ * MintAssetOp::creator_signature's doc comment) - signs approval for one
+ * specific (asset_id, collection_id, phase_index, required_kernel_excess,
+ * owner_pubkey) combination. The creator's own wallet should independently
+ * verify (against the phase's timing/allowlist/price and the actual
+ * on-chain payment) before calling this - this function only produces the
+ * signature, it doesn't validate anything itself.
+ */
+export function sign_collection_mint_approval(keystore_bytes: Uint8Array, asset_id: string, collection_id: string, phase_index: number, required_kernel_excess_hex: string, owner_pubkey_hex: string): string;
+
+/**
  * Signs an arbitrary UTF-8 message with this wallet's identity key - used
  * by the standalone marketplace site's "connect wallet" handoff (see
  * haze-marketplace-web) to let the wallet prove control of its identity
@@ -414,9 +491,10 @@ export interface InitOutput {
     readonly __wbg_get_wasmfinalizedtx_transaction_json: (a: number) => [number, number];
     readonly __wbg_get_wasmkeystoreandmnemonic_keystore_bytes: (a: number) => [number, number];
     readonly __wbg_get_wasmkeystoreandmnemonic_mnemonic: (a: number) => [number, number];
+    readonly __wbg_get_wasmmerkleproofresult_leaf_index: (a: number) => number;
+    readonly __wbg_get_wasmmerkleproofresult_proof_hex: (a: number) => [number, number];
     readonly __wbg_get_wasmmintassetresult_spent_commitments_hex: (a: number) => [number, number];
     readonly __wbg_get_wasmmintassetresult_updated_keystore_bytes: (a: number) => [number, number];
-    readonly __wbg_get_wasmownedoutput_index: (a: number) => number;
     readonly __wbg_get_wasmownedoutput_value: (a: number) => bigint;
     readonly __wbg_get_wasmrecoveryresult_recovered_count: (a: number) => number;
     readonly __wbg_get_wasmrespondresult_receiver_output: (a: number) => number;
@@ -434,10 +512,11 @@ export interface InitOutput {
     readonly __wbg_set_wasmfinalizedtx_change: (a: number, b: number) => void;
     readonly __wbg_set_wasmfinalizedtx_spent_commitments_hex: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmfinalizedtx_transaction_json: (a: number, b: number, c: number) => void;
+    readonly __wbg_set_wasmmerkleproofresult_leaf_index: (a: number, b: number) => void;
+    readonly __wbg_set_wasmmerkleproofresult_proof_hex: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmmintassetresult_spent_commitments_hex: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmmintassetresult_updated_keystore_bytes: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmownedoutput_commitment_hex: (a: number, b: number, c: number) => void;
-    readonly __wbg_set_wasmownedoutput_index: (a: number, b: number) => void;
     readonly __wbg_set_wasmownedoutput_value: (a: number, b: bigint) => void;
     readonly __wbg_set_wasmrecoveryresult_recovered_count: (a: number, b: number) => void;
     readonly __wbg_set_wasmrespondresult_receiver_output: (a: number, b: number) => void;
@@ -452,6 +531,7 @@ export interface InitOutput {
     readonly __wbg_wasmcreateslateresult_free: (a: number, b: number) => void;
     readonly __wbg_wasmfinalizedtx_free: (a: number, b: number) => void;
     readonly __wbg_wasmkeystoreandmnemonic_free: (a: number, b: number) => void;
+    readonly __wbg_wasmmerkleproofresult_free: (a: number, b: number) => void;
     readonly __wbg_wasmmintassetresult_free: (a: number, b: number) => void;
     readonly __wbg_wasmownedoutput_free: (a: number, b: number) => void;
     readonly __wbg_wasmrecoveryresult_free: (a: number, b: number) => void;
@@ -459,8 +539,11 @@ export interface InitOutput {
     readonly __wbg_wasmrespondresult_free: (a: number, b: number) => void;
     readonly __wbg_wasmsendplan_free: (a: number, b: number) => void;
     readonly __wbg_wasmsweepresult_free: (a: number, b: number) => void;
+    readonly attach_creator_signature_to_mint: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly build_cancel_listing_request: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly build_collection_mint_asset_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: bigint, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number) => [number, number, number];
     readonly build_create_listing_request: (a: number, b: number, c: number, d: number, e: bigint, f: bigint) => [number, number, number, number];
+    readonly build_launch_collection_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number, number, number];
     readonly build_mint_asset_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: bigint) => [number, number, number];
     readonly build_register_name_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: bigint) => [number, number, number];
     readonly build_sponsored_register_name_request: (a: number, b: number, c: number, d: number) => [number, number, number, number];
@@ -471,6 +554,7 @@ export interface InitOutput {
     readonly commit_mint_asset: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly commit_receive: (a: number, b: number, c: number) => [number, number, number, number];
     readonly commit_send: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
+    readonly compute_allowlist_merkle_proof: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly create_send_slate: (a: number, b: number, c: number, d: number, e: bigint, f: bigint) => [number, number, number];
     readonly finalize_slate: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly generate_keystore: () => [number, number];
@@ -481,6 +565,8 @@ export interface InitOutput {
     readonly respond_to_slate: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly restore_keystore_from_mnemonic: (a: number, b: number) => [number, number, number, number];
     readonly reveal_stake_blinding_hex: (a: number, b: number, c: number, d: number, e: bigint) => [number, number, number, number];
+    readonly sign_allowlist_publish: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: bigint) => [number, number, number, number];
+    readonly sign_collection_mint_approval: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => [number, number, number, number];
     readonly sign_identity_message: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly sweep_validator_rewards: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: bigint) => [number, number, number];
     readonly tx_kernel_excess_hex: (a: number, b: number) => [number, number, number, number];
@@ -489,9 +575,11 @@ export interface InitOutput {
     readonly wallet_identity_pubkey_hex: (a: number, b: number) => [number, number, number, number];
     readonly wallet_pending_balance: (a: number, b: number) => [bigint, number, number];
     readonly wallet_store_new: () => [number, number];
+    readonly __wbg_get_wasmownedoutput_index: (a: number) => number;
     readonly __wbg_get_wasmrecoveryresult_recovered_balance: (a: number) => bigint;
     readonly __wbg_get_wasmmintassetresult_change: (a: number) => number;
     readonly __wbg_get_wasmregisternameresult_change: (a: number) => number;
+    readonly __wbg_set_wasmownedoutput_index: (a: number, b: number) => void;
     readonly __wbg_set_wasmrecoveryresult_recovered_balance: (a: number, b: bigint) => void;
     readonly __wbg_set_wasmmintassetresult_change: (a: number, b: number) => void;
     readonly __wbg_set_wasmregisternameresult_change: (a: number, b: number) => void;
@@ -500,6 +588,7 @@ export interface InitOutput {
     readonly __wbg_set_wasmregisternameresult_spent_commitments_hex: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmkeystoreandmnemonic_keystore_bytes: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmkeystoreandmnemonic_mnemonic: (a: number, b: number, c: number) => void;
+    readonly __wbg_set_wasmmerkleproofresult_root_hex: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmmintassetresult_op_json: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmrecoveryresult_keystore_bytes: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmrecoveryresult_store_bytes: (a: number, b: number, c: number) => void;
@@ -511,6 +600,7 @@ export interface InitOutput {
     readonly __wbg_get_wasmrecoveryresult_store_bytes: (a: number) => [number, number];
     readonly __wbg_get_wasmregisternameresult_updated_keystore_bytes: (a: number) => [number, number];
     readonly __wbg_get_wasmrespondresult_updated_keystore_bytes: (a: number) => [number, number];
+    readonly __wbg_get_wasmmerkleproofresult_root_hex: (a: number) => [number, number];
     readonly __wbg_get_wasmmintassetresult_op_json: (a: number) => [number, number];
     readonly __wbg_get_wasmownedoutput_commitment_hex: (a: number) => [number, number];
     readonly __wbg_get_wasmregisternameresult_op_json: (a: number) => [number, number];

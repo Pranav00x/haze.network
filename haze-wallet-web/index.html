@@ -210,6 +210,12 @@
 
   .keystore-note { font-family: var(--font-mono); font-size: 11px; color: var(--ink-faint); word-break: break-all; margin-top: 4px; }
 
+  .asset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-top: 10px; }
+  .asset-card { background: var(--fog-1); border: 1px solid var(--fog-3); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .asset-card-image { width: 100%; aspect-ratio: 1; border-radius: 6px; object-fit: cover; background: var(--fog-2); }
+  .asset-card-title { font-family: var(--font-display); font-size: 14px; font-weight: 500; }
+  .asset-card-id { font-family: var(--font-mono); font-size: 10px; color: var(--ink-faint); word-break: break-all; }
+
   .receive-name-value {
     font-family: var(--font-display);
     font-size: clamp(26px, 5vw, 34px);
@@ -376,6 +382,9 @@ import init, {
   build_mint_asset_request, commit_mint_asset, build_transfer_asset_request, tx_kernel_excess_hex,
   build_create_listing_request, build_cancel_listing_request,
   sign_identity_message,
+  build_launch_collection_request, sign_allowlist_publish,
+  build_collection_mint_asset_request, attach_creator_signature_to_mint,
+  sign_collection_mint_approval, compute_allowlist_merkle_proof,
   generate_keystore_with_mnemonic, restore_keystore_from_mnemonic,
   recover_wallet_from_chain, sweep_validator_rewards
 } from './pkg/haze_core.js';
@@ -617,6 +626,7 @@ let pendingNameSend = null; // { toName, pendingSlateBytes, amount }
 // (e.g. closing the tab) just means the purchase stalls, not a fund loss -
 // nothing irrevocable has happened until both broadcasts below succeed.
 let pendingPurchase = null; // { assetId, sellerPubkeyHex, price, pendingSlateBytes, finalizedTxJson, spentCommitmentsHex, change }
+let pendingCollectionMint = null; // { assetId, collectionId, phaseIndex, creatorPubkeyHex, price, allowlistProofHex, allowlistLeafIndex, pendingSlateBytes, opJson, finalizedTxJson, spentCommitmentsHex, change }
 
 async function fetchJson(path, opts) {
   const res = await fetch(API_BASE + path, opts);
@@ -1030,11 +1040,11 @@ async function pollForAssetConfirmation(assetId, onConfirmed, { intervalMs = 300
 // Passively watching for confirmation isn't enough here: nothing ever
 // resubmits the transfer op on its own, so this actively re-POSTs it until
 // the node accepts it (payment confirmed) or the timeout elapses.
-async function retrySubmitAssetTransfer(opJson, assetId, onConfirmed, onGaveUp, { intervalMs = 3000, timeoutMs = 90000 } = {}) {
+async function retrySubmitAssetTransfer(opJson, assetId, onConfirmed, onGaveUp, { intervalMs = 3000, timeoutMs = 90000, endpoint = "/v1/assets/transfer" } = {}) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
-      const res = await fetch(API_BASE + "/v1/assets/transfer", {
+      const res = await fetch(API_BASE + endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: opJson,
@@ -1189,6 +1199,155 @@ function handleMarketplaceDeepLink() {
       }
     });
     banner.querySelector("#dl-deny").addEventListener("click", deny);
+  } else if (action === "launch_collection") {
+    const collectionId = params.get("collection_id") || "";
+    const name = params.get("name") || "";
+    const symbol = params.get("symbol") || "";
+    const metadata = params.get("metadata") || "";
+    let phases = [];
+    try { phases = JSON.parse(params.get("phases") || "[]"); } catch (e) { phases = []; }
+    banner.innerHTML = `
+      <h2>Launch a collection?</h2>
+      <div class="sub"><strong>${origin}</strong> is asking you to launch <strong>${name}</strong> (${symbol}, id "${collectionId}") with ${phases.length} round(s). Costs nothing to launch; each round's price is paid by minters directly to you, trustlessly.</div>
+      <button class="btn-primary" id="dl-approve">Approve &amp; launch</button>
+      <button class="btn-ghost btn-small" id="dl-deny" style="margin-left:8px;">Deny</button>
+      <div id="dl-message"></div>
+    `;
+    banner.querySelector("#dl-approve").addEventListener("click", async () => {
+      const msgEl = banner.querySelector("#dl-message");
+      try {
+        // Each round's plaintext allowlist (if any) is stripped out of the
+        // on-chain phase record - only its Merkle root goes on-chain, the
+        // list itself is published separately (see core::allowlist), same
+        // gossip-not-consensus split core::marketplace::Listing uses.
+        const phaseAllowlists = []; // [{ phaseIndex, pubkeysHex }]
+        const onChainPhases = phases.map((p, i) => {
+          let allowlist_merkle_root = null;
+          const pubkeysHex = (p.allowlist_pubkeys_hex || []).filter(Boolean);
+          if (pubkeysHex.length > 0) {
+            const proof = compute_allowlist_merkle_proof(pubkeysHex, pubkeysHex[0]);
+            allowlist_merkle_root = proof.root_hex.match(/.{1,2}/g).map(h => parseInt(h, 16));
+            phaseAllowlists.push({ phaseIndex: i, pubkeysHex });
+          }
+          return { name: p.name, start_time: p.start_time, end_time: p.end_time, price: p.price, per_wallet_limit: p.per_wallet_limit, allowlist_merkle_root };
+        });
+
+        const opJson = build_launch_collection_request(sessionKeystoreBytes, collectionId, name, symbol, metadata, JSON.stringify(onChainPhases));
+        const res = await fetch(API_BASE + "/v1/collections/launch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: opJson,
+        });
+        if (!res.ok) {
+          const errJson = await res.json().catch(() => ({}));
+          msgEl.innerHTML = `<div class="message error">Node rejected launch: ${errJson.error || res.status}</div>`;
+          return;
+        }
+
+        for (const { phaseIndex, pubkeysHex } of phaseAllowlists) {
+          const publishedAt = Math.floor(Date.now() / 1000);
+          const entryJson = sign_allowlist_publish(sessionKeystoreBytes, collectionId, phaseIndex, pubkeysHex, publishedAt);
+          await fetch(API_BASE + `/v1/collections/${encodeURIComponent(collectionId)}/phases/${phaseIndex}/allowlist`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: entryJson,
+          });
+        }
+
+        pushActivity({ type: "collection_launched", title: `Launched ${name}`, detail: collectionId });
+        const sep = returnUrl.includes("?") ? "&" : "?";
+        window.location.href = `${returnUrl}${sep}launched=1&collection_id=${encodeURIComponent(collectionId)}`;
+      } catch (e) {
+        msgEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+      }
+    });
+    banner.querySelector("#dl-deny").addEventListener("click", deny);
+  } else if (action === "mint_collection") {
+    const collectionId = params.get("collection_id") || "";
+    const phaseIndex = parseInt(params.get("phase_index") || "0", 10);
+    banner.innerHTML = `
+      <h2>Mint from this drop?</h2>
+      <div class="sub">Loading round details&hellip;</div>
+    `;
+    (async () => {
+      try {
+        const collection = await fetchJson(`/v1/collections/${encodeURIComponent(collectionId)}`);
+        const phase = collection.phases[phaseIndex];
+        if (!phase) {
+          banner.querySelector(".sub").textContent = "This round no longer exists.";
+          return;
+        }
+        banner.innerHTML = `
+          <h2>Mint from this drop?</h2>
+          <div class="sub"><strong>${origin}</strong> is asking you to mint from <strong>${collection.name}</strong>'s <strong>${phase.name}</strong> round for <strong>${phase.price}</strong>. Trustless - your payment only unlocks the mint once it's actually on-chain.</div>
+          <button class="btn-primary" id="dl-approve">Approve &amp; mint</button>
+          <button class="btn-ghost btn-small" id="dl-deny" style="margin-left:8px;">Deny</button>
+          <div id="dl-message"></div>
+        `;
+        banner.querySelector("#dl-approve").addEventListener("click", async () => {
+          const msgEl2 = banner.querySelector("#dl-message");
+          if (pendingCollectionMint) {
+            msgEl2.innerHTML = `<div class="message error">A mint is already in progress - wait for it to complete first.</div>`;
+            return;
+          }
+          try {
+            const creatorPubkeyHex = bytesToHex(collection.creator_pubkey);
+            const myPubkeyHex = wallet_identity_pubkey_hex(sessionKeystoreBytes);
+
+            let allowlistProofHex = null;
+            let allowlistLeafIndex = null;
+            if (phase.allowlist_merkle_root) {
+              const entry = await fetchJson(`/v1/collections/${encodeURIComponent(collectionId)}/phases/${phaseIndex}/allowlist`);
+              const pubkeysHex = entry.pubkeys.map(bytesToHex);
+              if (!pubkeysHex.includes(myPubkeyHex)) {
+                msgEl2.innerHTML = `<div class="message error">You're not on this round's allowlist.</div>`;
+                return;
+              }
+              const proof = compute_allowlist_merkle_proof(pubkeysHex, myPubkeyHex);
+              allowlistProofHex = proof.proof_hex;
+              allowlistLeafIndex = proof.leaf_index;
+            }
+
+            const assetId = `${collectionId}-${Date.now().toString(36)}`;
+            const storeBytes = loadWalletStoreBytes();
+            const fee = await getSuggestedFee();
+            const price = BigInt(phase.price);
+            if (price <= 0n) {
+              // A free round has no payment to exchange - required_kernel_excess
+              // stays unset (this project's mint gate always requires the
+              // creator's own approval regardless of price, so the creator
+              // still needs to co-sign; it just isn't conditioned on any
+              // kernel). Not supported by this UI yet.
+              msgEl2.innerHTML = `<div class="message error">Free rounds aren't supported yet.</div>`;
+              return;
+            }
+            const slate = create_send_slate(sessionKeystoreBytes, storeBytes, price, fee);
+            sessionKeystoreBytes = slate.updated_keystore_bytes;
+
+            pendingCollectionMint = {
+              assetId, collectionId, phaseIndex, creatorPubkeyHex, price: phase.price.toString(),
+              metadata: `Minted from ${collection.name}`,
+              allowlistProofHex, allowlistLeafIndex, pendingSlateBytes: slate.pending_slate_bytes,
+              returnUrl,
+            };
+
+            await fetch(API_BASE + "/v1/inbox/" + creatorPubkeyHex, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ from_pubkey_hex: myPubkeyHex, kind: "request", payload_json: slate.slate_json }),
+            });
+            banner.querySelector("#dl-approve").disabled = true;
+            msgEl2.innerHTML = `<div class="message success">Offer sent for "${assetId}" - waiting for the creator to accept. You'll be redirected back to ${origin} once the mint completes.</div>`;
+          } catch (e) {
+            msgEl2.innerHTML = `<div class="message error">${e.message || e}</div>`;
+            pendingCollectionMint = null;
+          }
+        });
+        banner.querySelector("#dl-deny").addEventListener("click", deny);
+      } catch (e) {
+        banner.querySelector(".sub").textContent = e.message || String(e);
+      }
+    })();
   } else {
     banner.remove();
   }
@@ -1200,6 +1359,7 @@ function renderDashboard() {
     <div class="dashboard">
 
       <div id="buy-asset-message" style="max-width: 480px;"></div>
+      <div id="collection-mint-message" style="max-width: 480px;"></div>
 
       <div class="tab-panel active" data-tab="wallet">
         <div class="stat-row">
@@ -1769,6 +1929,24 @@ function renderDashboard() {
     }
   });
 
+  // Metadata is stored on-chain as raw bytes (core::assets::AssetRecord) -
+  // interpreted as UTF-8, and rendered as a real title/image preview if it
+  // happens to parse as JSON with that shape (a UI convention, not something
+  // consensus enforces - see the asset module's own doc comment). Mirrors
+  // nft-marketplace/index.html's decodeAssetMetadata exactly.
+  function decodeAssetMetadata(bytes) {
+    try {
+      const text = new TextDecoder("utf-8", { fatal: false }).decode(new Uint8Array(bytes));
+      try {
+        const parsed = JSON.parse(text);
+        if (parsed && typeof parsed === "object") return { title: parsed.title, image: parsed.image, raw: text };
+      } catch (_) { /* not JSON */ }
+      return { raw: text };
+    } catch (_) {
+      return { raw: "" };
+    }
+  }
+
   document.getElementById("find-my-assets-btn").addEventListener("click", async () => {
     const resultEl = document.getElementById("find-my-assets-result");
     resultEl.innerHTML = `<div class="message">Searching&hellip;</div>`;
@@ -1779,8 +1957,18 @@ function renderDashboard() {
         resultEl.innerHTML = `<div class="message">No assets found for your identity pubkey.</div>`;
         return;
       }
-      const list = records.map(r => `"${r.asset_id}" (minted at block ${r.minted_at_block})`).join("<br>");
-      resultEl.innerHTML = `<div class="message success">${list}</div>`;
+      const grid = document.createElement("div");
+      grid.className = "asset-grid";
+      for (const r of records) {
+        const meta = decodeAssetMetadata(r.metadata);
+        const card = document.createElement("div");
+        card.className = "asset-card";
+        const image = meta.image ? `<img class="asset-card-image" src="${meta.image}" alt="" onerror="this.style.display='none'">` : "";
+        card.innerHTML = `${image}<div class="asset-card-title">${meta.title || r.asset_id}</div><div class="asset-card-id">${r.asset_id}</div>`;
+        grid.appendChild(card);
+      }
+      resultEl.innerHTML = "";
+      resultEl.appendChild(grid);
     } catch (e) {
       resultEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
     }
@@ -2021,6 +2209,33 @@ function renderDashboard() {
     });
   }
 
+  // Collection-creator-side auto-response to a minter's "want_collection_mint"
+  // - same "no reason a person needs to click a button" philosophy. Unlike
+  // autoRespondToWantTransfer (which signs the WHOLE conditional transfer),
+  // a mint is signed by its own new owner (the minter) - this wallet only
+  // contributes a separate approval co-signature over the exact same
+  // (asset_id, collection_id, phase_index, required_kernel_excess,
+  // owner_pubkey) combination, which is what actually ties the mint to a
+  // real payment (see core::assets::MintAssetOp::creator_signature's doc
+  // comment - without this, a minter could reference any unrelated
+  // pre-existing kernel and mint for free). Only responds if this wallet
+  // really is the collection's registered creator.
+  async function autoRespondToWantCollectionMint(msg) {
+    const req = JSON.parse(msg.payload_json);
+    const myPubkeyHex = wallet_identity_pubkey_hex(sessionKeystoreBytes);
+
+    const collection = await fetchJson(`/v1/collections/${encodeURIComponent(req.collection_id)}`);
+    if (bytesToHex(collection.creator_pubkey) !== myPubkeyHex) return; // not our collection - ignore
+
+    const signatureHex = sign_collection_mint_approval(sessionKeystoreBytes, req.asset_id, req.collection_id, req.phase_index, req.required_kernel_excess_hex, req.owner_pubkey_hex);
+
+    await fetch(API_BASE + "/v1/inbox/" + req.owner_pubkey_hex, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ from_pubkey_hex: myPubkeyHex, kind: "signed_collection_mint", payload_json: JSON.stringify({ creator_signature_hex: signatureHex }) }),
+    });
+  }
+
   async function pollInbox() {
     try {
       const myPubkeyHex = wallet_identity_pubkey_hex(sessionKeystoreBytes);
@@ -2155,6 +2370,138 @@ function renderDashboard() {
             messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
             pendingPurchase = null;
           }
+        } else if (msg.kind === "response" && pendingCollectionMint && msg.from_pubkey_hex === pendingCollectionMint.creatorPubkeyHex) {
+          // Mirrors the marketplace buy flow's "response" handling (step 3):
+          // the creator accepted our payment slate. Finalize LOCALLY but do
+          // NOT broadcast yet - build our own conditional mint op first (see
+          // "signed_collection_mint" below), so payment and mint go out
+          // together once the creator has approved it.
+          const messageEl = document.getElementById("collection-mint-message");
+          try {
+            const finalized = finalize_slate(pendingCollectionMint.pendingSlateBytes, msg.payload_json);
+            const kernelExcessHex = tx_kernel_excess_hex(finalized.transaction_json);
+            const fee = await getSuggestedAssetFee();
+
+            // Mark the payment's own inputs as spent LOCALLY right away
+            // (even though we haven't broadcast it yet - we already hold a
+            // fully finalized, about-to-be-broadcast transaction spending
+            // them) before selecting UTXOs for the mint's separate
+            // fee_payment. Building the mint op against the wallet store's
+            // still-unspent view would let it pick the SAME UTXO the
+            // payment already claims - a real bug hit during testing: the
+            // mint's fee_payment input collided with the payment's input,
+            // so once the payment landed on-chain, the mint's fee_payment
+            // referenced an already-spent UTXO and was silently dropped by
+            // every subsequent block-assembly attempt.
+            let storeBytes = loadWalletStoreBytes();
+            storeBytes = commit_slate_send(storeBytes, finalized.spent_commitments_hex, finalized.change);
+            saveWalletStoreBytes(storeBytes);
+
+            const built = build_collection_mint_asset_request(
+              sessionKeystoreBytes, storeBytes, pendingCollectionMint.assetId, pendingCollectionMint.metadata, fee,
+              pendingCollectionMint.collectionId, pendingCollectionMint.phaseIndex,
+              pendingCollectionMint.allowlistProofHex, pendingCollectionMint.allowlistLeafIndex, kernelExcessHex,
+            );
+            sessionKeystoreBytes = built.updated_keystore_bytes;
+            pendingCollectionMint = {
+              ...pendingCollectionMint,
+              opJson: built.op_json,
+              mintSpentCommitmentsHex: built.spent_commitments_hex,
+              mintChange: built.change,
+              finalizedTxJson: finalized.transaction_json,
+              spentCommitmentsHex: finalized.spent_commitments_hex,
+              change: finalized.change,
+              paymentAlreadyCommitted: true,
+            };
+            await fetch(API_BASE + "/v1/inbox/" + pendingCollectionMint.creatorPubkeyHex, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                from_pubkey_hex: myPubkeyHex,
+                kind: "want_collection_mint",
+                payload_json: JSON.stringify({
+                  asset_id: pendingCollectionMint.assetId,
+                  collection_id: pendingCollectionMint.collectionId,
+                  phase_index: pendingCollectionMint.phaseIndex,
+                  owner_pubkey_hex: myPubkeyHex,
+                  required_kernel_excess_hex: kernelExcessHex,
+                }),
+              }),
+            });
+            messageEl.innerHTML = `<div class="message success">Payment accepted for "${pendingCollectionMint.assetId}" - waiting for the creator's approval&hellip;</div>`;
+          } catch (e) {
+            messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+            pendingCollectionMint = null;
+          }
+        } else if (msg.kind === "signed_collection_mint" && pendingCollectionMint && msg.from_pubkey_hex === pendingCollectionMint.creatorPubkeyHex) {
+          // We now hold the creator's approval co-signature. Broadcast the
+          // payment FIRST, then attach the approval and broadcast the mint -
+          // the mint is inert until that payment's kernel exists on-chain,
+          // so there's no ordering risk in doing it this way.
+          const messageEl = document.getElementById("collection-mint-message");
+          try {
+            const { creator_signature_hex } = JSON.parse(msg.payload_json);
+            const finalOpJson = attach_creator_signature_to_mint(pendingCollectionMint.opJson, creator_signature_hex);
+
+            const payRes = await fetch(API_BASE + "/v1/transactions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: pendingCollectionMint.finalizedTxJson,
+            });
+            if (!payRes.ok) {
+              const text = await payRes.text();
+              messageEl.innerHTML = `<div class="message error">Node rejected payment: ${text}</div>`;
+              pendingCollectionMint = null;
+              continue;
+            }
+            // The payment's inputs were already marked spent locally back
+            // when this op was built (see the "response" handler above) -
+            // doing it again here would double-apply against a wallet
+            // store that may have moved on since. Only the mint's own
+            // fee_payment still needs committing.
+            let storeBytes = loadWalletStoreBytes();
+            if (pendingCollectionMint.mintChange) {
+              storeBytes = commit_mint_asset(storeBytes, pendingCollectionMint.mintSpentCommitmentsHex, pendingCollectionMint.mintChange);
+            }
+            saveWalletStoreBytes(storeBytes);
+
+            const assetId = pendingCollectionMint.assetId;
+            const mintReturnUrl = pendingCollectionMint.returnUrl;
+            const mintRedirectBack = (extra) => {
+              if (!mintReturnUrl) return;
+              const sep = mintReturnUrl.includes("?") ? "&" : "?";
+              window.location.href = `${mintReturnUrl}${sep}${extra}`;
+            };
+            const mintRes = await fetch(API_BASE + "/v1/assets/mint", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: finalOpJson,
+            });
+            if (!mintRes.ok) {
+              const errJson = await mintRes.json().catch(() => ({}));
+              messageEl.innerHTML = `<div class="message error">Payment broadcast, but the mint wasn't accepted yet (${errJson.error || mintRes.status}) - retrying once your payment is mined&hellip;</div>`;
+              retrySubmitAssetTransfer(finalOpJson, assetId, () => {
+                messageEl.innerHTML = `<div class="message success">"${assetId}" minted.</div>`;
+                pushActivity({ type: "collection_mint", title: `Minted ${assetId}`, detail: `from ${pendingCollectionMint.collectionId}` });
+                refreshBalance();
+                mintRedirectBack(`minted=1&asset_id=${encodeURIComponent(assetId)}`);
+              }, () => {
+                messageEl.innerHTML = `<div class="message error">"${assetId}" mint still hasn't been accepted - your payment was broadcast, so nothing is lost, but you may need to try again later.</div>`;
+                mintRedirectBack(`minted=0&asset_id=${encodeURIComponent(assetId)}`);
+              }, { endpoint: "/v1/assets/mint" });
+              pendingCollectionMint = null;
+              continue;
+            }
+
+            messageEl.innerHTML = `<div class="message success">"${assetId}" minted - both broadcast successfully.</div>`;
+            pushActivity({ type: "collection_mint", title: `Minted ${assetId}`, detail: `from ${pendingCollectionMint.collectionId}` });
+            pendingCollectionMint = null;
+            await refreshBalance();
+            mintRedirectBack(`minted=1&asset_id=${encodeURIComponent(assetId)}`);
+          } catch (e) {
+            messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+            pendingCollectionMint = null;
+          }
         } else if (msg.kind === "request") {
           try {
             await autoAcceptIncomingRequest(msg);
@@ -2169,6 +2516,12 @@ function renderDashboard() {
           } catch (e) {
             // Same reasoning as the "request" branch above - lost, retried
             // implicitly if the buyer's wallet re-sends.
+          }
+        } else if (msg.kind === "want_collection_mint") {
+          try {
+            await autoRespondToWantCollectionMint(msg);
+          } catch (e) {
+            // Same reasoning as the "request" branch above.
           }
         }
       }

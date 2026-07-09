@@ -201,6 +201,30 @@ impl Storage {
                     state.asset_registry.insert(op.asset_id.clone(), updated);
                 }
             }
+            // Collection registry (see core::collections) rebuilt the same
+            // way - both the launch itself and every collection-tagged
+            // mint's per-wallet count contribution, since collection_mint_counts
+            // isn't persisted separately either (same #[serde(skip)]-style
+            // reasoning as kernel_excesses, just via block replay instead of
+            // the kernels tree).
+            for op in &block.launch_collection_ops {
+                state.collection_registry.insert(op.collection_id.clone(), super::collections::CollectionRecord {
+                    collection_id: op.collection_id.clone(),
+                    creator_pubkey: op.creator_pubkey,
+                    name: op.name.clone(),
+                    symbol: op.symbol.clone(),
+                    metadata: op.metadata.clone(),
+                    phases: op.phases.clone(),
+                    launched_at_block: block.header.height,
+                });
+            }
+            for op in &block.mint_ops {
+                if let (Some(collection_id), Some(phase_index)) = (&op.collection_id, op.phase_index) {
+                    let owner_bytes = *op.owner_pubkey.as_point().compress().as_bytes();
+                    let count_key = (collection_id.clone(), phase_index, owner_bytes);
+                    *state.collection_mint_counts.entry(count_key).or_insert(0) += 1;
+                }
+            }
         }
 
         state

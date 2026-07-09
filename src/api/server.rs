@@ -9,12 +9,15 @@ use crate::core::chain::ChainState;
 use crate::core::storage::Storage;
 use crate::core::transaction::Transaction;
 use crate::core::marketplace::MarketplaceState;
+use crate::core::allowlist::AllowlistState;
 use crate::p2p::server::P2pServer;
 use super::explorer;
 use super::faucet::{self, FaucetState};
 use super::names;
 use super::assets;
 use super::marketplace;
+use super::collections;
+use super::allowlist;
 use super::inbox::{self, InboxState};
 
 pub struct ApiServer;
@@ -26,6 +29,7 @@ impl ApiServer {
         p2p_server: Arc<P2pServer>,
         storage: Arc<Storage>,
         marketplace_state: Arc<MarketplaceState>,
+        allowlist_state: Arc<AllowlistState>,
         port: u16,
     ) {
         let faucet_state = {
@@ -67,6 +71,12 @@ impl ApiServer {
         let marketplace_filter_4 = marketplace_filter.clone();
         let p2p_filter_9 = p2p_filter.clone();
         let p2p_filter_10 = p2p_filter.clone();
+
+        let allowlist_filter = warp::any().map(move || Arc::clone(&allowlist_state));
+        let allowlist_filter_2 = allowlist_filter.clone();
+        let mempool_filter_10 = mempool_filter.clone();
+        let p2p_filter_11 = p2p_filter.clone();
+        let p2p_filter_12 = p2p_filter.clone();
 
         // Caps request body size for the two write endpoints - now that this
         // API is meant to be internet-facing, an unbounded body from an
@@ -311,6 +321,52 @@ impl ApiServer {
             .and(marketplace_filter_4)
             .and_then(marketplace::handle_get_listing);
 
+        // POST /v1/collections/launch - queues a scheduled multi-phase drop
+        // launch (see api/collections.rs and core::collections) into the
+        // mempool and broadcasts it - same shape as mint_asset_route.
+        let launch_collection_route = warp::post()
+            .and(warp::path!("v1" / "collections" / "launch"))
+            .and(warp::body::content_length_limit(MAX_BODY_SIZE))
+            .and(warp::body::json())
+            .and(mempool_filter_10)
+            .and(p2p_filter_11)
+            .and(chain_filter.clone())
+            .and_then(collections::handle_launch_collection);
+
+        // GET /v1/collections - lists launched collections, newest first.
+        let list_collections_route = warp::get()
+            .and(warp::path!("v1" / "collections"))
+            .and(warp::query::<collections::CollectionsListQuery>())
+            .and(chain_filter.clone())
+            .and_then(collections::handle_list_collections);
+
+        // GET /v1/collections/:collection_id - resolves a single launched collection.
+        let get_collection_route = warp::get()
+            .and(warp::path!("v1" / "collections" / String))
+            .and(chain_filter.clone())
+            .and_then(collections::handle_get_collection);
+
+        // POST /v1/collections/:collection_id/phases/:phase_index/allowlist -
+        // publishes the full plaintext allowlist for one phase (see
+        // api/allowlist.rs and core::allowlist). Not part of consensus - only
+        // the phase's Merkle root is; this just makes the underlying list
+        // fetchable so any client can compute its own inclusion proof.
+        let publish_allowlist_route = warp::post()
+            .and(warp::path!("v1" / "collections" / String / "phases" / u32 / "allowlist"))
+            .and(warp::body::content_length_limit(MAX_BODY_SIZE))
+            .and(warp::body::json())
+            .map(|_collection_id: String, _phase_index: u32, entry: crate::core::allowlist::AllowlistEntry| entry)
+            .and(allowlist_filter)
+            .and(p2p_filter_12)
+            .and(chain_filter.clone())
+            .and_then(allowlist::handle_publish_allowlist);
+
+        // GET /v1/collections/:collection_id/phases/:phase_index/allowlist
+        let get_allowlist_route = warp::get()
+            .and(warp::path!("v1" / "collections" / String / "phases" / u32 / "allowlist"))
+            .and(allowlist_filter_2)
+            .and_then(allowlist::handle_get_allowlist);
+
         // GET /v1/p2p/ws - WebSocket P2P transport, for peers that can't be
         // dialed via raw TCP (see src/p2p/transport.rs for why this exists -
         // Render only proxies a single HTTP(S) port, so this rides on the
@@ -371,6 +427,11 @@ impl ApiServer {
             .or(cancel_listing_route)
             .or(list_listings_route)
             .or(get_listing_route)
+            .or(launch_collection_route)
+            .or(list_collections_route)
+            .or(get_collection_route)
+            .or(publish_allowlist_route)
+            .or(get_allowlist_route)
             .or(p2p_ws_route)
             .or(post_inbox_route)
             .or(get_inbox_route)

@@ -61,14 +61,64 @@ pub struct AssetRecord {
 /// transaction (inputs/outputs/one kernel) whose only job is to pay the mint
 /// fee - reusing the existing balance-equation and fee-collection machinery
 /// instead of inventing a second one. `signature` proves control of
-/// `owner_pubkey` by signing the asset_id and metadata together.
+/// `owner_pubkey` by signing the asset_id and metadata together (plus
+/// collection_id/phase_index/required_kernel_excess when this is a
+/// collection-drop mint - see MintAssetOp::signing_message).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MintAssetOp {
     pub asset_id: String,
     pub owner_pubkey: Commitment,
     pub metadata: Vec<u8>,
     pub fee_payment: Transaction,
+    /// Which collection this mint is claimed against, if any - see
+    /// core::collections. None for an ordinary standalone mint (unchanged
+    /// behavior from before collection drops existed).
+    pub collection_id: Option<String>,
+    /// Index into the collection's phases array - which round (GTD/FCFS/
+    /// Public) this mint claims to be eligible under. Must be Some iff
+    /// collection_id is Some (checked in validate_standalone).
+    pub phase_index: Option<u32>,
+    /// Merkle inclusion proof of owner_pubkey under the claimed phase's
+    /// allowlist_merkle_root (see core::merkle) - only required (and only
+    /// checked, in ChainState::apply_linear_block) when that phase actually
+    /// has an allowlist root; a Public phase (root = None) needs neither.
+    /// Deliberately NOT bound into the signing message - it's derived data
+    /// the signer doesn't need to commit to, so a mint can be resubmitted
+    /// with a refreshed proof (e.g. against a re-gossiped allowlist) without
+    /// invalidating the signature.
+    pub allowlist_proof: Option<Vec<[u8; 32]>>,
+    pub allowlist_leaf_index: Option<u32>,
+    /// If Some, this mint only becomes valid once a TxKernel with this exact
+    /// `excess` commitment exists on this chain (see ChainState::kernel_excesses)
+    /// - the same trustless atomic-swap primitive TransferAssetOp already
+    /// uses, applied to minting. None behaves exactly like an ordinary
+    /// (non-collection or free) mint.
+    pub required_kernel_excess: Option<Commitment>,
+    /// Signed by `owner_pubkey`'s own secret key - unlike TransferAssetOp
+    /// (signed by the asset's *current* owner, i.e. the seller), a mint's
+    /// `owner_pubkey` is the NEW owner (the buyer/minter), since nobody else
+    /// could plausibly authorize claiming a not-yet-existing asset_id.
     pub signature: Signature,
+    /// Required (checked in ChainState::apply_linear_block) whenever
+    /// collection_id is Some - the collection's creator_pubkey's signature
+    /// over collection_approval_signing_message, explicitly approving THIS
+    /// exact (asset_id, collection_id, phase_index, required_kernel_excess,
+    /// owner_pubkey) combination.
+    ///
+    /// This is load-bearing, not decorative: `signature` above is signed by
+    /// the BUYER (the new owner), who has no incentive to only reference a
+    /// kernel that genuinely paid the creator - a buyer could otherwise set
+    /// required_kernel_excess to any unrelated kernel already sitting in the
+    /// chain's public kernel_excesses set (e.g. a stranger's old
+    /// transaction) and mint for free, since apply_linear_block only checks
+    /// kernel *existence*, never who it paid or how much. Requiring the
+    /// creator's own separate signature over this specific combination
+    /// means the creator - the party who actually cares about being paid -
+    /// is the one who verifies (off-chain, in their own wallet) that the
+    /// referenced kernel really is a real payment of the phase's price to
+    /// them, before contributing this signature. None for a non-collection
+    /// mint (no creator to approve).
+    pub creator_signature: Option<Signature>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +130,14 @@ pub enum AssetError {
     InvalidSignature,
     InvalidFeePayment,
     MetadataTooLong,
+    /// collection_id and phase_index must both be Some or both be None -
+    /// never just one (checked in validate_standalone; chain-state-dependent
+    /// collection/phase/allowlist/quota checks live in apply_linear_block).
+    CollectionFieldsMismatched,
+    /// A collection-tagged mint is missing the creator's approval signature,
+    /// or it doesn't verify - see MintAssetOp::creator_signature's doc
+    /// comment for why this is required.
+    MissingOrInvalidCreatorApproval,
 }
 
 pub fn validate_asset_id(asset_id: &str) -> Result<(), AssetError> {
@@ -97,25 +155,74 @@ pub fn validate_asset_id(asset_id: &str) -> Result<(), AssetError> {
 
 impl MintAssetOp {
     /// Builds the message signed to prove ownership of `owner_pubkey` - the
-    /// asset_id and metadata together, so a mint signature can't later
-    /// be replayed to claim a different asset_id or with different metadata
-    /// than what was actually signed.
-    pub fn signing_message(asset_id: &str, metadata: &[u8]) -> Vec<u8> {
+    /// asset_id and metadata together with the collection-drop fields
+    /// (collection_id, phase_index, required_kernel_excess), so a mint
+    /// signature can't later be replayed to claim a different asset_id/
+    /// metadata, be redirected to a different collection/phase, or have its
+    /// payment condition stripped or swapped - same domain-separation
+    /// discipline TransferAssetOp::signing_message uses for
+    /// required_kernel_excess (a tag byte per Option before its payload, so
+    /// None and every distinct Some(_) produce distinct byte sequences).
+    /// allowlist_proof/allowlist_leaf_index are deliberately NOT bound here -
+    /// see their doc comments on MintAssetOp.
+    pub fn signing_message(asset_id: &str, metadata: &[u8], collection_id: &Option<String>, phase_index: &Option<u32>, required_kernel_excess: &Option<Commitment>) -> Vec<u8> {
         let mut msg = asset_id.as_bytes().to_vec();
         msg.extend_from_slice(metadata);
+        match collection_id {
+            Some(id) => {
+                msg.push(1u8);
+                msg.extend_from_slice(id.as_bytes());
+            }
+            None => msg.push(0u8),
+        }
+        match phase_index {
+            Some(i) => {
+                msg.push(1u8);
+                msg.extend_from_slice(&i.to_le_bytes());
+            }
+            None => msg.push(0u8),
+        }
+        match required_kernel_excess {
+            Some(c) => {
+                msg.push(1u8);
+                msg.extend_from_slice(c.as_point().compress().as_bytes());
+            }
+            None => msg.push(0u8),
+        }
         msg
     }
 
-    pub fn sign(asset_id: &str, metadata: &[u8], owner_secret: &Scalar) -> Signature {
-        Signature::sign(&Self::signing_message(asset_id, metadata), owner_secret)
+    pub fn sign(asset_id: &str, metadata: &[u8], collection_id: &Option<String>, phase_index: &Option<u32>, required_kernel_excess: &Option<Commitment>, owner_secret: &Scalar) -> Signature {
+        Signature::sign(&Self::signing_message(asset_id, metadata, collection_id, phase_index, required_kernel_excess), owner_secret)
+    }
+
+    /// Message the collection's creator signs to approve one specific mint -
+    /// see MintAssetOp::creator_signature's doc comment for why this exists.
+    /// Deliberately a distinct, narrower message from signing_message above
+    /// (doesn't include metadata - the creator is approving a payment/phase/
+    /// owner combination, not vouching for arbitrary buyer-supplied
+    /// metadata text).
+    pub fn collection_approval_signing_message(asset_id: &str, collection_id: &str, phase_index: u32, required_kernel_excess: &Commitment, owner_pubkey: &Commitment) -> Vec<u8> {
+        let mut msg = b"HazeCollectionMintApproval:".to_vec();
+        msg.extend_from_slice(asset_id.as_bytes());
+        msg.extend_from_slice(collection_id.as_bytes());
+        msg.extend_from_slice(&phase_index.to_le_bytes());
+        msg.extend_from_slice(required_kernel_excess.as_point().compress().as_bytes());
+        msg.extend_from_slice(owner_pubkey.as_point().compress().as_bytes());
+        msg
+    }
+
+    pub fn sign_collection_approval(asset_id: &str, collection_id: &str, phase_index: u32, required_kernel_excess: &Commitment, owner_pubkey: &Commitment, creator_secret: &Scalar) -> Signature {
+        Signature::sign(&Self::collection_approval_signing_message(asset_id, collection_id, phase_index, required_kernel_excess, owner_pubkey), creator_secret)
     }
 
     /// Validates this op in isolation (asset_id rules, metadata length,
-    /// signature, fee-payment's own internal balance/proof correctness).
-    /// Does NOT check asset_id uniqueness or that fee_payment's inputs are
-    /// real unspent UTXOs - those require chain state and are checked
-    /// separately by the caller (ChainState::apply_linear_block) since they
-    /// can only be verified there.
+    /// collection/phase field pairing, signature, fee-payment's own internal
+    /// balance/proof correctness). Does NOT check asset_id uniqueness, that
+    /// fee_payment's inputs are real unspent UTXOs, collection/phase
+    /// existence, allowlist membership, per-wallet quotas, or the
+    /// required_kernel_excess condition - all of those require chain state
+    /// and are checked separately by the caller (ChainState::apply_linear_block).
     pub fn validate_standalone(&self) -> Result<(), AssetError> {
         validate_asset_id(&self.asset_id)?;
 
@@ -123,7 +230,12 @@ impl MintAssetOp {
             return Err(AssetError::MetadataTooLong);
         }
 
-        if !self.signature.verify(&Self::signing_message(&self.asset_id, &self.metadata), &self.owner_pubkey) {
+        if self.collection_id.is_some() != self.phase_index.is_some() {
+            return Err(AssetError::CollectionFieldsMismatched);
+        }
+
+        let msg = Self::signing_message(&self.asset_id, &self.metadata, &self.collection_id, &self.phase_index, &self.required_kernel_excess);
+        if !self.signature.verify(&msg, &self.owner_pubkey) {
             return Err(AssetError::InvalidSignature);
         }
 
@@ -276,14 +388,14 @@ mod tests {
         let owner_pubkey = Commitment(secret * gens.B_blinding);
         let metadata_hash = b"some metadata".to_vec();
 
-        let sig = MintAssetOp::sign("cryptopunk", &metadata_hash, &secret);
-        assert!(sig.verify(&MintAssetOp::signing_message("cryptopunk", &metadata_hash), &owner_pubkey));
-        assert!(!sig.verify(&MintAssetOp::signing_message("someoneelse", &metadata_hash), &owner_pubkey));
-        assert!(!sig.verify(&MintAssetOp::signing_message("cryptopunk", b"different metadata"), &owner_pubkey));
+        let sig = MintAssetOp::sign("cryptopunk", &metadata_hash, &None, &None, &None, &secret);
+        assert!(sig.verify(&MintAssetOp::signing_message("cryptopunk", &metadata_hash, &None, &None, &None), &owner_pubkey));
+        assert!(!sig.verify(&MintAssetOp::signing_message("someoneelse", &metadata_hash, &None, &None, &None), &owner_pubkey));
+        assert!(!sig.verify(&MintAssetOp::signing_message("cryptopunk", b"different metadata", &None, &None, &None), &owner_pubkey));
 
         let other_secret = Scalar::from(8u64);
         let other_pubkey = Commitment(other_secret * gens.B_blinding);
-        assert!(!sig.verify(&MintAssetOp::signing_message("cryptopunk", &metadata_hash), &other_pubkey));
+        assert!(!sig.verify(&MintAssetOp::signing_message("cryptopunk", &metadata_hash, &None, &None, &None), &other_pubkey));
     }
 
     #[test]
@@ -293,10 +405,83 @@ mod tests {
         let owner_pubkey = Commitment(secret * gens.B_blinding);
         let metadata_hash = b"some metadata".to_vec();
 
-        let mint_sig = MintAssetOp::sign("cryptopunk", &metadata_hash, &secret);
+        let mint_sig = MintAssetOp::sign("cryptopunk", &metadata_hash, &None, &None, &None, &secret);
         // A mint signature must never verify as a valid transfer signature
         // for the same asset_id, even targeting the same pubkey.
         assert!(!mint_sig.verify(&TransferAssetOp::signing_message("cryptopunk", &owner_pubkey, &None), &owner_pubkey));
+    }
+
+    /// Mirrors transfer_signing_message_binds_required_kernel_excess: the
+    /// same tamper-resistance property now applies to a collection-drop
+    /// mint's collection_id, phase_index, and required_kernel_excess.
+    #[test]
+    fn mint_signing_message_binds_collection_phase_and_required_kernel_excess() {
+        let secret = Scalar::from(7u64);
+        let gens = bulletproofs::PedersenGens::default();
+        let owner_pubkey = Commitment(secret * gens.B_blinding);
+        let metadata = b"meta".to_vec();
+        let kernel_excess_a = Commitment::new(0, Scalar::from(100u64));
+        let kernel_excess_b = Commitment::new(0, Scalar::from(200u64));
+
+        let collection_id = Some("cryptopunks".to_string());
+        let phase_index = Some(1u32);
+        let required = Some(kernel_excess_a);
+
+        let sig = MintAssetOp::sign("punk-1", &metadata, &collection_id, &phase_index, &required, &secret);
+
+        assert!(sig.verify(&MintAssetOp::signing_message("punk-1", &metadata, &collection_id, &phase_index, &required), &owner_pubkey));
+
+        // Different collection_id.
+        assert!(!sig.verify(&MintAssetOp::signing_message("punk-1", &metadata, &Some("other".to_string()), &phase_index, &required), &owner_pubkey));
+        // No collection_id at all.
+        assert!(!sig.verify(&MintAssetOp::signing_message("punk-1", &metadata, &None, &phase_index, &required), &owner_pubkey));
+        // Different phase_index.
+        assert!(!sig.verify(&MintAssetOp::signing_message("punk-1", &metadata, &collection_id, &Some(2u32), &required), &owner_pubkey));
+        // Different required_kernel_excess.
+        assert!(!sig.verify(&MintAssetOp::signing_message("punk-1", &metadata, &collection_id, &phase_index, &Some(kernel_excess_b)), &owner_pubkey));
+        // Stripped required_kernel_excess.
+        assert!(!sig.verify(&MintAssetOp::signing_message("punk-1", &metadata, &collection_id, &phase_index, &None), &owner_pubkey));
+    }
+
+    #[test]
+    fn mint_signing_message_none_vs_some_are_distinct_for_every_new_field() {
+        let metadata = b"meta".to_vec();
+        let msg_base = MintAssetOp::signing_message("punk-1", &metadata, &None, &None, &None);
+
+        let msg_with_collection = MintAssetOp::signing_message("punk-1", &metadata, &Some("c".to_string()), &None, &None);
+        let msg_with_phase = MintAssetOp::signing_message("punk-1", &metadata, &None, &Some(0u32), &None);
+        let msg_with_excess = MintAssetOp::signing_message("punk-1", &metadata, &None, &None, &Some(Commitment::new(0, Scalar::from(0u64))));
+
+        assert_ne!(msg_base, msg_with_collection);
+        assert_ne!(msg_base, msg_with_phase);
+        assert_ne!(msg_base, msg_with_excess);
+    }
+
+    #[test]
+    fn validate_standalone_rejects_mismatched_collection_fields() {
+        let secret = Scalar::from(7u64);
+        let gens = bulletproofs::PedersenGens::default();
+        let owner_pubkey = Commitment(secret * gens.B_blinding);
+        let metadata = b"meta".to_vec();
+
+        // collection_id Some, phase_index None - must be rejected before
+        // even reaching the signature check.
+        let collection_id = Some("cryptopunks".to_string());
+        let signature = MintAssetOp::sign("punk-1", &metadata, &collection_id, &None, &None, &secret);
+        let op = MintAssetOp {
+            asset_id: "punk-1".to_string(),
+            owner_pubkey,
+            metadata,
+            fee_payment: crate::core::transaction::Transaction { inputs: vec![], outputs: vec![], kernels: vec![] },
+            collection_id,
+            phase_index: None,
+            allowlist_proof: None,
+            allowlist_leaf_index: None,
+            required_kernel_excess: None,
+            signature,
+            creator_signature: None,
+        };
+        assert_eq!(op.validate_standalone(), Err(AssetError::CollectionFieldsMismatched));
     }
 
     /// The single most important test in this module: the entire
@@ -354,13 +539,19 @@ mod tests {
         let gens = bulletproofs::PedersenGens::default();
         let owner_pubkey = Commitment(secret * gens.B_blinding);
         let metadata = vec![0u8; MAX_METADATA_BYTES];
-        let signature = MintAssetOp::sign("cryptopunk", &metadata, &secret);
+        let signature = MintAssetOp::sign("cryptopunk", &metadata, &None, &None, &None, &secret);
         let op = MintAssetOp {
             asset_id: "cryptopunk".to_string(),
             owner_pubkey,
             metadata,
             fee_payment: crate::core::transaction::Transaction { inputs: vec![], outputs: vec![], kernels: vec![] },
+            collection_id: None,
+            phase_index: None,
+            allowlist_proof: None,
+            allowlist_leaf_index: None,
+            required_kernel_excess: None,
             signature,
+            creator_signature: None,
         };
         // Only the metadata-length check should pass here; fee_payment is
         // deliberately empty/invalid so this asserts on the specific error,
@@ -374,13 +565,19 @@ mod tests {
         let gens = bulletproofs::PedersenGens::default();
         let owner_pubkey = Commitment(secret * gens.B_blinding);
         let metadata = vec![0u8; MAX_METADATA_BYTES + 1];
-        let signature = MintAssetOp::sign("cryptopunk", &metadata, &secret);
+        let signature = MintAssetOp::sign("cryptopunk", &metadata, &None, &None, &None, &secret);
         let op = MintAssetOp {
             asset_id: "cryptopunk".to_string(),
             owner_pubkey,
             metadata,
             fee_payment: crate::core::transaction::Transaction { inputs: vec![], outputs: vec![], kernels: vec![] },
+            collection_id: None,
+            phase_index: None,
+            allowlist_proof: None,
+            allowlist_leaf_index: None,
+            required_kernel_excess: None,
             signature,
+            creator_signature: None,
         };
         assert_eq!(op.validate_standalone(), Err(AssetError::MetadataTooLong));
     }

@@ -95,6 +95,43 @@ pub(crate) fn select_spendable(store: &WalletStore, target: u64) -> Result<Vec<P
     Ok(selected)
 }
 
+/// Like select_spendable, but Confirmed-only - for a name/mint op's
+/// fee_payment specifically (RegisterNameOp, MintAssetOp, and the faucet's
+/// sponsored-registration equivalent), never select_spendable's Pending
+/// outputs. Unlike an ordinary send (plan_send) or interactive slate
+/// (wallet/slate.rs), which produce a ChainState::apply_linear_block body
+/// transaction subject to cut-through aggregation with everything else in
+/// the block (see WalletStore::spendable_including_pending's doc comment for
+/// why chaining off a same-block Pending output is safe there), a name/mint
+/// op's fee_payment is its own standalone Transaction, checked against
+/// self.utxos/utxos_snapshot with no same-block allowance for its own
+/// inputs (only required_kernel_excess payment conditions get that, via
+/// block_kernel_excesses). A Pending output here is exactly the doc
+/// comment's "residual edge case": if the block containing the Pending
+/// output's parent transaction doesn't land at or before the block
+/// containing this fee_payment, the fee_payment's input doesn't exist yet
+/// and the whole op is silently dropped - and since name/mint ops and
+/// ordinary transactions are drawn from entirely separate mempool queues
+/// with independent block-inclusion logic, there's no ordering guarantee
+/// between them at all.
+pub(crate) fn select_spendable_confirmed_only(store: &WalletStore, target: u64) -> Result<Vec<PlannedOutput>, PlanError> {
+    let mut selected: Vec<PlannedOutput> = Vec::new();
+    let mut selected_total = 0u64;
+    for output in store.spendable() {
+        if selected_total >= target {
+            break;
+        }
+        selected.push((output.index, output.commitment, output.value));
+        selected_total += output.value;
+    }
+
+    if selected_total < target {
+        return Err(PlanError::InsufficientBalance { have: store.balance() + store.pending_balance(), need: target });
+    }
+
+    Ok(selected)
+}
+
 /// Builds a real, self-contained Mimblewimble transaction spending the wallet's own
 /// confirmed UTXOs: a destination output of `amount`, an optional change output, and
 /// a signed kernel. Pure and network-free - the caller is responsible for

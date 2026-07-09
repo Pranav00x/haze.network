@@ -4,6 +4,8 @@ use crate::core::block::Block;
 use crate::core::registry::{RegisterNameOp, TransferNameOp};
 use crate::core::assets::{MintAssetOp, TransferAssetOp};
 use crate::core::marketplace::Listing;
+use crate::core::collections::LaunchCollectionOp;
+use crate::core::allowlist::AllowlistEntry;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum P2pMessage {
@@ -70,4 +72,13 @@ pub enum P2pMessage {
         seller_pubkey: crate::crypto::pedersen::Commitment,
         signature: crate::crypto::schnorr::Signature,
     },
+    /// A pending collection launch (see core::collections) - gossiped the
+    /// same way as NewMintOp, same reasoning (a drop's schedule is
+    /// intentionally public).
+    NewLaunchCollectionOp(LaunchCollectionOp),
+    /// An off-chain allowlist publish for one collection phase (see
+    /// core::allowlist) - gossiped the same way as NewListing, no Dandelion
+    /// (an allowlist is meant to be publicly fetchable so any client can
+    /// compute its own Merkle proof).
+    NewAllowlist(AllowlistEntry),
 }
