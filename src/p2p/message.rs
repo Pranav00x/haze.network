@@ -18,7 +18,11 @@ pub enum P2pMessage {
     RegisterValidator {
         commitment: crate::crypto::pedersen::Commitment,
         value: u64,
-        blinding: curve25519_dalek_ng::scalar::Scalar,
+        /// Proof of ownership, NOT the raw blinding factor - see
+        /// ChainState::register_validator/stake_registration_message. Safe
+        /// to gossip: it proves the sender controls this UTXO's spending
+        /// key without ever revealing it.
+        proof: crate::crypto::schnorr::Signature,
     },
     ChainInfo { height: u64, tip_hash: [u8; 32] },
     GetBlocks { from_height: u64 },

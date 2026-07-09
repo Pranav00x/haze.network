@@ -16,6 +16,22 @@ use bulletproofs::PedersenGens;
 pub struct Validator {
     pub commitment: Commitment,
     pub value: u64,
+    /// Proof of ownership - see register_validator/stake_registration_message.
+    /// Cached (rather than only checked once and discarded) so this same
+    /// Validator entry can be safely re-served to other peers via
+    /// GetValidators/ValidatorsList without either leaking a secret or
+    /// requiring the receiving peer to trust an unauthenticated value claim.
+    pub proof: Signature,
+}
+
+/// Binds a stake-registration claim to one specific (commitment, value) pair,
+/// so a signature proving ownership can't be replayed to claim a different
+/// value for the same commitment.
+pub fn stake_registration_message(commitment: &Commitment, value: u64) -> Vec<u8> {
+    let mut msg = b"HazeStakeRegistration:".to_vec();
+    msg.extend_from_slice(commitment.as_point().compress().as_bytes());
+    msg.extend_from_slice(&value.to_le_bytes());
+    msg
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -146,8 +162,21 @@ impl ChainState {
         Self::default()
     }
 
-    pub fn register_validator(&mut self, commitment: Commitment, value: u64, blinding: Scalar) -> bool {
-        if Commitment::new(value, blinding) != commitment {
+    /// Registers (or updates) a validator. `proof` must be a signature over
+    /// stake_registration_message(commitment, value) verifiable against the
+    /// public key implied by commitment - value*B (i.e. it proves knowledge
+    /// of the commitment's blinding factor without revealing it - the same
+    /// technique every kernel signature in this codebase already uses).
+    /// This is also how a peer-relayed entry (via GetValidators/
+    /// ValidatorsList) is verified: the proof travels with the Validator
+    /// entry itself, so re-serving it to another peer neither leaks a
+    /// secret nor requires that peer to blindly trust an unauthenticated
+    /// value claim.
+    pub fn register_validator(&mut self, commitment: Commitment, value: u64, proof: Signature) -> bool {
+        let gens = PedersenGens::default();
+        let pubkey = Commitment(commitment.as_point() - Scalar::from(value) * gens.B);
+        let msg = stake_registration_message(&commitment, value);
+        if !proof.verify(&msg, &pubkey) {
             return false;
         }
         if !self.utxos.contains(&commitment) {
@@ -157,31 +186,9 @@ impl ChainState {
             if self.active_validators[pos].value == value {
                 return false;
             }
-            self.active_validators[pos].value = value;
+            self.active_validators[pos] = Validator { commitment, value, proof };
         } else {
-            self.active_validators.push(Validator { commitment, value });
-        }
-        true
-    }
-
-    /// Adopts a validator entry learned from a peer (via GetValidators/
-    /// ValidatorsList), rather than a fresh registration - so it only checks
-    /// that the commitment matches a UTXO we actually have (proving it's a
-    /// real, still-unspent output), without requiring the blinding factor
-    /// again. The peer already proved ownership once when it was first
-    /// registered; this just lets a syncing/reconnecting node catch up on
-    /// state that isn't otherwise part of block history.
-    pub fn adopt_validator(&mut self, commitment: Commitment, value: u64) -> bool {
-        if !self.utxos.contains(&commitment) {
-            return false;
-        }
-        if let Some(pos) = self.active_validators.iter().position(|v| v.commitment == commitment) {
-            if self.active_validators[pos].value == value {
-                return false;
-            }
-            self.active_validators[pos].value = value;
-        } else {
-            self.active_validators.push(Validator { commitment, value });
+            self.active_validators.push(Validator { commitment, value, proof });
         }
         true
     }

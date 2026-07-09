@@ -20,6 +20,13 @@ mod tests {
         crate::core::registry::compute_registry_root(&std::collections::HashMap::new())
     }
 
+    /// Builds the ownership proof register_validator now requires in place
+    /// of a raw blinding factor - see core::chain::stake_registration_message.
+    fn stake_proof(commitment: &Commitment, value: u64, blinding: &Scalar) -> Signature {
+        let msg = crate::core::chain::stake_registration_message(commitment, value);
+        Signature::sign(&msg, blinding)
+    }
+
     #[test]
     fn test_full_transaction_lifecycle() {
         let mut rng = OsRng;
@@ -270,9 +277,9 @@ mod tests {
         chain_state.utxos.insert(commitment_c);
 
         // 2. Register validators
-        assert!(chain_state.register_validator(commitment_a, 1000, r_a));
-        assert!(chain_state.register_validator(commitment_b, 2000, r_b));
-        assert!(chain_state.register_validator(commitment_c, 3000, r_c));
+        assert!(chain_state.register_validator(commitment_a, 1000, stake_proof(&commitment_a, 1000, &r_a)));
+        assert!(chain_state.register_validator(commitment_b, 2000, stake_proof(&commitment_b, 2000, &r_b)));
+        assert!(chain_state.register_validator(commitment_c, 3000, stake_proof(&commitment_c, 3000, &r_c)));
 
         assert_eq!(chain_state.active_validators.len(), 3);
 
@@ -305,6 +312,63 @@ mod tests {
         assert!(selected_b > 0);
     }
 
+    /// register_validator must not accept an unauthenticated value claim for
+    /// someone else's real, unspent commitment - regression test for a bug
+    /// where a peer-relayed validator entry was trusted without any proof,
+    /// letting an attacker who merely observed a commitment on-chain (all
+    /// commitments are public) claim an arbitrary stake weight for it.
+    #[test]
+    fn register_validator_rejects_a_forged_value_claim_for_a_real_commitment() {
+        let mut rng = OsRng;
+        let mut chain_state = ChainState::new();
+
+        let r = Scalar::random(&mut rng);
+        let real_value = 1_000u64;
+        let commitment = Commitment::new(real_value, r);
+        chain_state.utxos.insert(commitment);
+
+        // A proof genuinely produced for a DIFFERENT value than the one
+        // being claimed here must not validate - same signing message
+        // would need to be re-signed for the new value, which requires the
+        // real blinding factor the attacker doesn't have.
+        let proof_for_real_value = stake_proof(&commitment, real_value, &r);
+        assert!(!chain_state.register_validator(commitment, 999_999_999, proof_for_real_value));
+        assert!(chain_state.active_validators.is_empty());
+
+        // The correctly-signed (commitment, value) pair still works.
+        let proof = stake_proof(&commitment, real_value, &r);
+        assert!(chain_state.register_validator(commitment, real_value, proof));
+        assert_eq!(chain_state.active_validators.len(), 1);
+    }
+
+    /// A validator's cached proof (as carried in ValidatorsList entries) is
+    /// safe to re-submit/relay without ever touching the raw blinding
+    /// factor - this is the whole point of proof-based registration rather
+    /// than broadcasting the secret itself.
+    #[test]
+    fn register_validator_accepts_a_relayed_entrys_own_proof() {
+        let mut rng = OsRng;
+        let mut chain_a = ChainState::new();
+        let mut chain_b = ChainState::new();
+
+        let r = Scalar::random(&mut rng);
+        let value = 4_000u64;
+        let commitment = Commitment::new(value, r);
+        chain_a.utxos.insert(commitment);
+        chain_b.utxos.insert(commitment);
+
+        let proof = stake_proof(&commitment, value, &r);
+        assert!(chain_a.register_validator(commitment, value, proof.clone()));
+
+        // Simulate relaying chain_a's resulting Validator entry (as
+        // ValidatorsList would) to a second, independent node - it must be
+        // accepted purely from the relayed (commitment, value, proof), with
+        // no access to `r` at all.
+        let relayed = chain_a.active_validators[0].clone();
+        assert!(chain_b.register_validator(relayed.commitment, relayed.value, relayed.proof));
+        assert_eq!(chain_b.active_validators.len(), 1);
+    }
+
     /// proposer_priority_order must rank every active validator exactly
     /// once, agree with select_proposer at rank 0, and be deterministic -
     /// the property Proposer::start_proposing's fallback timing relies on.
@@ -322,9 +386,9 @@ mod tests {
         chain_state.utxos.insert(commitment_a);
         chain_state.utxos.insert(commitment_b);
         chain_state.utxos.insert(commitment_c);
-        assert!(chain_state.register_validator(commitment_a, 1000, r_a));
-        assert!(chain_state.register_validator(commitment_b, 2000, r_b));
-        assert!(chain_state.register_validator(commitment_c, 3000, r_c));
+        assert!(chain_state.register_validator(commitment_a, 1000, stake_proof(&commitment_a, 1000, &r_a)));
+        assert!(chain_state.register_validator(commitment_b, 2000, stake_proof(&commitment_b, 2000, &r_b)));
+        assert!(chain_state.register_validator(commitment_c, 3000, stake_proof(&commitment_c, 3000, &r_c)));
 
         let order1 = chain_state.proposer_priority_order(5, [9u8; 32]);
         let order2 = chain_state.proposer_priority_order(5, [9u8; 32]);
@@ -360,12 +424,12 @@ mod tests {
         let r_a = Scalar::random(&mut rng);
         let commitment_a = Commitment::new(500_000, r_a);
         chain_state.utxos.insert(commitment_a);
-        assert!(chain_state.register_validator(commitment_a, 500_000, r_a));
+        assert!(chain_state.register_validator(commitment_a, 500_000, stake_proof(&commitment_a, 500_000, &r_a)));
 
         let r_b = Scalar::random(&mut rng);
         let commitment_b = Commitment::new(500_000, r_b);
         chain_state.utxos.insert(commitment_b);
-        assert!(chain_state.register_validator(commitment_b, 500_000, r_b));
+        assert!(chain_state.register_validator(commitment_b, 500_000, stake_proof(&commitment_b, 500_000, &r_b)));
 
         let prev_hash = genesis.header.hash();
         let primary = chain_state.select_proposer(1, prev_hash);
@@ -489,7 +553,7 @@ mod tests {
         let reg_msg = crate::p2p::message::P2pMessage::RegisterValidator {
             commitment,
             value,
-            blinding: r,
+            proof: stake_proof(&commitment, value, &r),
         };
         let bytes = bincode::serialize(&reg_msg).unwrap();
         let len = bytes.len() as u32;

@@ -101,9 +101,13 @@ impl Proposer {
                 // If validator set is empty and we possess the genesis staking key
                 // (see core::genesis::genesis_validator_blinding), we are the genesis proposer
                 if my_val.is_none() && c.active_validators.is_empty() && private_key == crate::core::genesis::genesis_validator_blinding() {
+                    let commitment = Commitment::new(1_000_000, private_key);
+                    let msg = crate::core::chain::stake_registration_message(&commitment, 1_000_000);
+                    let proof = Signature::sign(&msg, &private_key);
                     my_val = Some(crate::core::chain::Validator {
-                        commitment: Commitment::new(1_000_000, private_key),
+                        commitment,
                         value: 1_000_000,
+                        proof,
                     });
                 }
 

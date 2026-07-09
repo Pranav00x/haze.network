@@ -541,11 +541,11 @@ async fn handle_peer_connection(
                                 pm.broadcast(&P2pMessage::NewBlock(block)).await;
                             }
                         }
-                        P2pMessage::RegisterValidator { commitment, value, blinding } => {
+                        P2pMessage::RegisterValidator { commitment, value, proof } => {
                             println!("P2P: Received RegisterValidator for commitment {:?}", commitment);
                             let registered = {
                                 let mut c = chain.lock().unwrap();
-                                let ok = c.register_validator(commitment, value, blinding);
+                                let ok = c.register_validator(commitment, value, proof.clone());
                                 if ok {
                                     if let Err(e) = storage.persist_active_validators(&c.active_validators) {
                                         println!("Warning: Failed to persist validator registration: {}", e);
@@ -555,7 +555,7 @@ async fn handle_peer_connection(
                             };
                             if registered {
                                 println!("P2P: Validator registered and propagated to peers.");
-                                pm.broadcast(&P2pMessage::RegisterValidator { commitment, value, blinding }).await;
+                                pm.broadcast(&P2pMessage::RegisterValidator { commitment, value, proof }).await;
                             }
                         }
                         P2pMessage::NewNameOp(op) => {
@@ -775,7 +775,7 @@ async fn handle_peer_connection(
                             } else if applied_count == batch_len {
                                 // Block sync just finished - active_validators isn't part of
                                 // block history, so catch up on it now that we have the UTXOs
-                                // needed to verify each entry (see ChainState::adopt_validator).
+                                // needed to verify each entry's proof (see ChainState::register_validator).
                                 let mut w = write_half.lock().await;
                                 let _ = transport::write_message(&mut *w, &P2pMessage::GetValidators).await;
                             }
@@ -817,7 +817,7 @@ async fn handle_peer_connection(
                         P2pMessage::ValidatorsList(validators) => {
                             let adopted = {
                                 let mut c = chain.lock().unwrap();
-                                validators.iter().any(|v| c.adopt_validator(v.commitment, v.value))
+                                validators.iter().any(|v| c.register_validator(v.commitment, v.value, v.proof.clone()))
                             };
                             if adopted {
                                 println!("P2P: Adopted validator set from {} ({} entries)", peer_addr, validators.len());

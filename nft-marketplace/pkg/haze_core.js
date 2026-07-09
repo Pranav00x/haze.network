@@ -225,6 +225,79 @@ export class WasmKeystoreAndMnemonic {
 }
 if (Symbol.dispose) WasmKeystoreAndMnemonic.prototype[Symbol.dispose] = WasmKeystoreAndMnemonic.prototype.free;
 
+export class WasmMerkleProofResult {
+    static __wrap(ptr) {
+        const obj = Object.create(WasmMerkleProofResult.prototype);
+        obj.__wbg_ptr = ptr;
+        WasmMerkleProofResultFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmMerkleProofResultFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmmerkleproofresult_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    get leaf_index() {
+        const ret = wasm.__wbg_get_wasmmerkleproofresult_leaf_index(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {string[]}
+     */
+    get proof_hex() {
+        const ret = wasm.__wbg_get_wasmmerkleproofresult_proof_hex(this.__wbg_ptr);
+        var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {string}
+     */
+    get root_hex() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.__wbg_get_wasmmerkleproofresult_root_hex(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @param {number} arg0
+     */
+    set leaf_index(arg0) {
+        wasm.__wbg_set_wasmmerkleproofresult_leaf_index(this.__wbg_ptr, arg0);
+    }
+    /**
+     * @param {string[]} arg0
+     */
+    set proof_hex(arg0) {
+        const ptr0 = passArrayJsValueToWasm0(arg0, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_wasmmerkleproofresult_proof_hex(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * @param {string} arg0
+     */
+    set root_hex(arg0) {
+        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_wasmmerkleproofresult_root_hex(this.__wbg_ptr, ptr0, len0);
+    }
+}
+if (Symbol.dispose) WasmMerkleProofResult.prototype[Symbol.dispose] = WasmMerkleProofResult.prototype.free;
+
 export class WasmMintAssetResult {
     static __wrap(ptr) {
         const obj = Object.create(WasmMintAssetResult.prototype);
@@ -755,6 +828,61 @@ export class WasmSendPlan {
 }
 if (Symbol.dispose) WasmSendPlan.prototype[Symbol.dispose] = WasmSendPlan.prototype.free;
 
+export class WasmSlateReservation {
+    static __wrap(ptr) {
+        const obj = Object.create(WasmSlateReservation.prototype);
+        obj.__wbg_ptr = ptr;
+        WasmSlateReservationFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmSlateReservationFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmslatereservation_free(ptr, 0);
+    }
+    /**
+     * @returns {WasmOwnedOutput | undefined}
+     */
+    get change() {
+        const ret = wasm.__wbg_get_wasmslatereservation_change(this.__wbg_ptr);
+        return ret === 0 ? undefined : WasmOwnedOutput.__wrap(ret);
+    }
+    /**
+     * @returns {string[]}
+     */
+    get spent_commitments_hex() {
+        const ret = wasm.__wbg_get_wasmslatereservation_spent_commitments_hex(this.__wbg_ptr);
+        var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @param {WasmOwnedOutput | null} [arg0]
+     */
+    set change(arg0) {
+        let ptr0 = 0;
+        if (!isLikeNone(arg0)) {
+            _assertClass(arg0, WasmOwnedOutput);
+            ptr0 = arg0.__destroy_into_raw();
+        }
+        wasm.__wbg_set_wasmslatereservation_change(this.__wbg_ptr, ptr0);
+    }
+    /**
+     * @param {string[]} arg0
+     */
+    set spent_commitments_hex(arg0) {
+        const ptr0 = passArrayJsValueToWasm0(arg0, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_wasmslatereservation_spent_commitments_hex(this.__wbg_ptr, ptr0, len0);
+    }
+}
+if (Symbol.dispose) WasmSlateReservation.prototype[Symbol.dispose] = WasmSlateReservation.prototype.free;
+
 export class WasmSweepResult {
     static __wrap(ptr) {
         const obj = Object.create(WasmSweepResult.prototype);
@@ -867,6 +995,39 @@ export class WasmSweepResult {
 if (Symbol.dispose) WasmSweepResult.prototype[Symbol.dispose] = WasmSweepResult.prototype.free;
 
 /**
+ * Patches a collection creator's approval signature (see
+ * MintAssetOp::creator_signature and sign_collection_mint_approval) into an
+ * already-built mint op_json (from build_collection_mint_asset_request),
+ * without needing to rebuild it - rebuilding would re-select this wallet's
+ * spendable UTXOs and could pick a different (conflicting) fee_payment.
+ * @param {string} op_json
+ * @param {string} creator_signature_hex
+ * @returns {string}
+ */
+export function attach_creator_signature_to_mint(op_json, creator_signature_hex) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(op_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(creator_signature_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.attach_creator_signature_to_mint(ptr0, len0, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
  * Builds a signed cancellation for a listing this wallet previously
  * created - see POST /v1/marketplace/cancel.
  * @param {Uint8Array} keystore_bytes
@@ -894,6 +1055,53 @@ export function build_cancel_listing_request(keystore_bytes, asset_id) {
     } finally {
         wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
     }
+}
+
+/**
+ * Sibling to build_mint_asset_request for a mint claimed against a
+ * collection's scheduled phase (see core::collections) - takes the same
+ * spendable-UTXO-funded fee_payment path, plus the collection-drop fields.
+ * `allowlist_proof_hex`/`allowlist_leaf_index` are only required when the
+ * target phase actually has an allowlist_merkle_root (see
+ * compute_allowlist_merkle_proof); `required_kernel_excess_hex`, if
+ * provided, is the payment-conditioning primitive (same as
+ * build_transfer_asset_request's) - typically supplied by the collection
+ * creator's auto-responding wallet once it has independently verified an
+ * incoming payment slate pays the phase's price, not built by the minter
+ * themselves. A separate sibling (not a change to build_mint_asset_request)
+ * so every existing plain-mint call site keeps working unchanged.
+ * @param {Uint8Array} keystore_bytes
+ * @param {Uint8Array} store_bytes
+ * @param {string} asset_id
+ * @param {string} metadata
+ * @param {bigint} fee
+ * @param {string} collection_id
+ * @param {number} phase_index
+ * @param {string[] | null} [allowlist_proof_hex]
+ * @param {number | null} [allowlist_leaf_index]
+ * @param {string | null} [required_kernel_excess_hex]
+ * @returns {WasmMintAssetResult}
+ */
+export function build_collection_mint_asset_request(keystore_bytes, store_bytes, asset_id, metadata, fee, collection_id, phase_index, allowlist_proof_hex, allowlist_leaf_index, required_kernel_excess_hex) {
+    const ptr0 = passArray8ToWasm0(keystore_bytes, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(store_bytes, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(asset_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ptr3 = passStringToWasm0(metadata, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len3 = WASM_VECTOR_LEN;
+    const ptr4 = passStringToWasm0(collection_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len4 = WASM_VECTOR_LEN;
+    var ptr5 = isLikeNone(allowlist_proof_hex) ? 0 : passArrayJsValueToWasm0(allowlist_proof_hex, wasm.__wbindgen_malloc);
+    var len5 = WASM_VECTOR_LEN;
+    var ptr6 = isLikeNone(required_kernel_excess_hex) ? 0 : passStringToWasm0(required_kernel_excess_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    var len6 = WASM_VECTOR_LEN;
+    const ret = wasm.build_collection_mint_asset_request(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, fee, ptr4, len4, phase_index, ptr5, len5, isLikeNone(allowlist_leaf_index) ? Number.MAX_SAFE_INTEGER : (allowlist_leaf_index) >>> 0, ptr6, len6);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return WasmMintAssetResult.__wrap(ret[0]);
 }
 
 /**
@@ -927,6 +1135,57 @@ export function build_create_listing_request(keystore_bytes, asset_id, price, li
         return getStringFromWasm0(ptr3, len3);
     } finally {
         wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * Builds a signed LaunchCollectionOp for a scheduled multi-phase NFT drop
+ * (see core::collections) - `phases_json` is the JSON serialization of a
+ * `Vec<MintPhase>` (the caller builds this array client-side: each phase
+ * has `name`, `start_time`, `end_time`, `price`, `per_wallet_limit`, and
+ * optional `allowlist_merkle_root` - for an allowlisted phase, compute the
+ * root client-side first via `compute_allowlist_merkle_proof`'s root_hex,
+ * or build it directly from a pubkey list; a Public/open phase omits the
+ * root entirely). No fee_payment - launching costs nothing beyond ordinary
+ * block-inclusion (see LaunchCollectionOp's own doc comment). The caller
+ * must POST the returned JSON to /v1/collections/launch.
+ * @param {Uint8Array} keystore_bytes
+ * @param {string} collection_id
+ * @param {string} name
+ * @param {string} symbol
+ * @param {string} metadata
+ * @param {string} phases_json
+ * @param {number} royalty_bps
+ * @returns {string}
+ */
+export function build_launch_collection_request(keystore_bytes, collection_id, name, symbol, metadata, phases_json, royalty_bps) {
+    let deferred8_0;
+    let deferred8_1;
+    try {
+        const ptr0 = passArray8ToWasm0(keystore_bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(collection_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passStringToWasm0(symbol, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len3 = WASM_VECTOR_LEN;
+        const ptr4 = passStringToWasm0(metadata, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len4 = WASM_VECTOR_LEN;
+        const ptr5 = passStringToWasm0(phases_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len5 = WASM_VECTOR_LEN;
+        const ret = wasm.build_launch_collection_request(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4, ptr5, len5, royalty_bps);
+        var ptr7 = ret[0];
+        var len7 = ret[1];
+        if (ret[3]) {
+            ptr7 = 0; len7 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred8_0 = ptr7;
+        deferred8_1 = len7;
+        return getStringFromWasm0(ptr7, len7);
+    } finally {
+        wasm.__wbindgen_free(deferred8_0, deferred8_1, 1);
     }
 }
 
@@ -1080,11 +1339,12 @@ export function build_stake_request(keystore_bytes, store_bytes, min_value) {
  * @param {string} asset_id
  * @param {string} new_owner_pubkey_hex
  * @param {string | null} [required_kernel_excess_hex]
+ * @param {string | null} [required_royalty_kernel_excess_hex]
  * @returns {string}
  */
-export function build_transfer_asset_request(keystore_bytes, asset_id, new_owner_pubkey_hex, required_kernel_excess_hex) {
-    let deferred6_0;
-    let deferred6_1;
+export function build_transfer_asset_request(keystore_bytes, asset_id, new_owner_pubkey_hex, required_kernel_excess_hex, required_royalty_kernel_excess_hex) {
+    let deferred7_0;
+    let deferred7_1;
     try {
         const ptr0 = passArray8ToWasm0(keystore_bytes, wasm.__wbindgen_malloc);
         const len0 = WASM_VECTOR_LEN;
@@ -1094,18 +1354,20 @@ export function build_transfer_asset_request(keystore_bytes, asset_id, new_owner
         const len2 = WASM_VECTOR_LEN;
         var ptr3 = isLikeNone(required_kernel_excess_hex) ? 0 : passStringToWasm0(required_kernel_excess_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         var len3 = WASM_VECTOR_LEN;
-        const ret = wasm.build_transfer_asset_request(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
-        var ptr5 = ret[0];
-        var len5 = ret[1];
+        var ptr4 = isLikeNone(required_royalty_kernel_excess_hex) ? 0 : passStringToWasm0(required_royalty_kernel_excess_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len4 = WASM_VECTOR_LEN;
+        const ret = wasm.build_transfer_asset_request(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4);
+        var ptr6 = ret[0];
+        var len6 = ret[1];
         if (ret[3]) {
-            ptr5 = 0; len5 = 0;
+            ptr6 = 0; len6 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
-        deferred6_0 = ptr5;
-        deferred6_1 = len5;
-        return getStringFromWasm0(ptr5, len5);
+        deferred7_0 = ptr6;
+        deferred7_1 = len6;
+        return getStringFromWasm0(ptr6, len6);
     } finally {
-        wasm.__wbindgen_free(deferred6_0, deferred6_1, 1);
+        wasm.__wbindgen_free(deferred7_0, deferred7_1, 1);
     }
 }
 
@@ -1308,6 +1570,29 @@ export function commit_slate_send(store_bytes, spent_commitments_hex, change) {
 }
 
 /**
+ * Computes `target_pubkey_hex`'s Merkle inclusion proof against the full
+ * plaintext allowlist `pubkeys_hex` (fetched from the off-chain allowlist
+ * endpoint - see core::allowlist) - lets a minter (or the wallet UI
+ * building a collection launch) get everything build_collection_mint_asset_request
+ * needs without re-deriving the tree by hand. Returns an error if
+ * target_pubkey_hex isn't actually present in the list.
+ * @param {string[]} pubkeys_hex
+ * @param {string} target_pubkey_hex
+ * @returns {WasmMerkleProofResult}
+ */
+export function compute_allowlist_merkle_proof(pubkeys_hex, target_pubkey_hex) {
+    const ptr0 = passArrayJsValueToWasm0(pubkeys_hex, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(target_pubkey_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.compute_allowlist_merkle_proof(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return WasmMerkleProofResult.__wrap(ret[0]);
+}
+
+/**
  * Sender step 1: builds a slate paying a different wallet `amount`. Returns
  * the slate JSON to hand to the recipient and the private pending-slate
  * bytes to keep locally until `finalize_slate`.
@@ -1369,6 +1654,30 @@ export function generate_keystore() {
 export function generate_keystore_with_mnemonic() {
     const ret = wasm.generate_keystore_with_mnemonic();
     return WasmKeystoreAndMnemonic.__wrap(ret);
+}
+
+/**
+ * Sender-side: the inputs/change a pending slate has ALREADY selected at
+ * create_send_slate time, before the recipient has even responded (see
+ * PendingSlate.spent_commitments/change - both are fixed at planning time,
+ * the interactive round-trip only adds the recipient's own signature
+ * share). Lets a caller building a SECOND, independent slate off the same
+ * wallet store (e.g. a royalty payment alongside a marketplace payment)
+ * eagerly commit_slate_send this one's reservation first, so the second
+ * selection can't pick the same commitment - the same UTXO-collision this
+ * project has hit before whenever two payments were built back-to-back
+ * against a store that hadn't yet been told about the first one's picks.
+ * @param {Uint8Array} pending_slate_bytes
+ * @returns {WasmSlateReservation}
+ */
+export function pending_slate_reservation(pending_slate_bytes) {
+    const ptr0 = passArray8ToWasm0(pending_slate_bytes, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.pending_slate_reservation(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return WasmSlateReservation.__wrap(ret[0]);
 }
 
 /**
@@ -1516,6 +1825,88 @@ export function reveal_stake_blinding_hex(keystore_bytes, store_bytes, min_value
         return getStringFromWasm0(ptr3, len3);
     } finally {
         wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * Signs an allowlist publish (see core::allowlist::AllowlistEntry) so the
+ * off-chain, best-effort allowlist gossip can be cross-checked against this
+ * collection's registered creator_pubkey server-side. `pubkeys_hex` is the
+ * full plaintext list being published for this collection/phase.
+ * @param {Uint8Array} keystore_bytes
+ * @param {string} collection_id
+ * @param {number} phase_index
+ * @param {string[]} pubkeys_hex
+ * @param {bigint} published_at
+ * @returns {string}
+ */
+export function sign_allowlist_publish(keystore_bytes, collection_id, phase_index, pubkeys_hex, published_at) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const ptr0 = passArray8ToWasm0(keystore_bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(collection_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArrayJsValueToWasm0(pubkeys_hex, wasm.__wbindgen_malloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.sign_allowlist_publish(ptr0, len0, ptr1, len1, phase_index, ptr2, len2, published_at);
+        var ptr4 = ret[0];
+        var len4 = ret[1];
+        if (ret[3]) {
+            ptr4 = 0; len4 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+    }
+}
+
+/**
+ * The collection creator's side of the approval handshake (see
+ * MintAssetOp::creator_signature's doc comment) - signs approval for one
+ * specific (asset_id, collection_id, phase_index, required_kernel_excess,
+ * owner_pubkey) combination. The creator's own wallet should independently
+ * verify (against the phase's timing/allowlist/price and the actual
+ * on-chain payment) before calling this - this function only produces the
+ * signature, it doesn't validate anything itself.
+ * @param {Uint8Array} keystore_bytes
+ * @param {string} asset_id
+ * @param {string} collection_id
+ * @param {number} phase_index
+ * @param {string} required_kernel_excess_hex
+ * @param {string} owner_pubkey_hex
+ * @returns {string}
+ */
+export function sign_collection_mint_approval(keystore_bytes, asset_id, collection_id, phase_index, required_kernel_excess_hex, owner_pubkey_hex) {
+    let deferred7_0;
+    let deferred7_1;
+    try {
+        const ptr0 = passArray8ToWasm0(keystore_bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(asset_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(collection_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passStringToWasm0(required_kernel_excess_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len3 = WASM_VECTOR_LEN;
+        const ptr4 = passStringToWasm0(owner_pubkey_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len4 = WASM_VECTOR_LEN;
+        const ret = wasm.sign_collection_mint_approval(ptr0, len0, ptr1, len1, ptr2, len2, phase_index, ptr3, len3, ptr4, len4);
+        var ptr6 = ret[0];
+        var len6 = ret[1];
+        if (ret[3]) {
+            ptr6 = 0; len6 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred7_0 = ptr6;
+        deferred7_1 = len6;
+        return getStringFromWasm0(ptr6, len6);
+    } finally {
+        wasm.__wbindgen_free(deferred7_0, deferred7_1, 1);
     }
 }
 
@@ -1840,6 +2231,9 @@ const WasmFinalizedTxFinalization = (typeof FinalizationRegistry === 'undefined'
 const WasmKeystoreAndMnemonicFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmkeystoreandmnemonic_free(ptr, 1));
+const WasmMerkleProofResultFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmmerkleproofresult_free(ptr, 1));
 const WasmMintAssetResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmmintassetresult_free(ptr, 1));
@@ -1858,6 +2252,9 @@ const WasmRespondResultFinalization = (typeof FinalizationRegistry === 'undefine
 const WasmSendPlanFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmsendplan_free(ptr, 1));
+const WasmSlateReservationFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmslatereservation_free(ptr, 1));
 const WasmSweepResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmsweepresult_free(ptr, 1));

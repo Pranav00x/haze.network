@@ -339,22 +339,24 @@ impl Wallet {
     }
 
     pub async fn stake(value: u64, blinding: u64, rpc_port: u16) -> std::io::Result<()> {
-        println!("Registering validator stake: value={}, blinding={}...", value, blinding);
+        println!("Registering validator stake: value={}...", value);
 
         let blinding_scalar = Scalar::from(blinding);
         let commitment = Commitment::new(value, blinding_scalar);
+        let msg = crate::core::chain::stake_registration_message(&commitment, value);
+        let proof = crate::crypto::schnorr::Signature::sign(&msg, &blinding_scalar);
 
         #[derive(serde::Serialize)]
         struct StakePayload {
             commitment: Commitment,
             value: u64,
-            blinding: Scalar,
+            proof: crate::crypto::schnorr::Signature,
         }
 
         let payload = StakePayload {
             commitment,
             value,
-            blinding: blinding_scalar,
+            proof,
         };
 
         let client = reqwest::Client::new();

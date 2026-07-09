@@ -465,7 +465,10 @@ struct ApiResponse {
 struct StakeRequest {
     commitment: crate::crypto::pedersen::Commitment,
     value: u64,
-    blinding: curve25519_dalek_ng::scalar::Scalar,
+    /// Proof of ownership - see ChainState::register_validator. NOT the raw
+    /// blinding factor: the client signs this locally and only the
+    /// resulting signature ever travels over the network.
+    proof: crate::crypto::schnorr::Signature,
 }
 
 async fn handle_submit_transaction(
@@ -525,7 +528,7 @@ async fn handle_register_validator(
 ) -> Result<impl warp::Reply, Infallible> {
     let registered = {
         let mut c = chain.lock().unwrap();
-        let ok = c.register_validator(req.commitment, req.value, req.blinding);
+        let ok = c.register_validator(req.commitment, req.value, req.proof.clone());
         if ok {
             if let Err(e) = storage.persist_active_validators(&c.active_validators) {
                 println!("Warning: Failed to persist validator registration: {}", e);
@@ -539,7 +542,7 @@ async fn handle_register_validator(
         let msg = crate::p2p::message::P2pMessage::RegisterValidator {
             commitment: req.commitment,
             value: req.value,
-            blinding: req.blinding,
+            proof: req.proof,
         };
         tokio::spawn(async move {
             pm.broadcast(&msg).await;

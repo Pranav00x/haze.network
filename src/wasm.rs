@@ -518,18 +518,18 @@ pub fn commit_slate_send(store_bytes: Vec<u8>, spent_commitments_hex: Vec<String
 }
 
 // ---------- validator staking ----------
-// Registering as a validator (POST /v1/stake) doesn't spend the output - it
-// just proves ownership by revealing the output's blinding factor to the
-// node, so the wallet's own store needs no update afterward (the staked
-// output stays Confirmed and still spendable). This does mean the blinding
-// travels over the wire to the node, same tradeoff the CLI's `haze stake`
-// already has - not something new introduced here.
+// Registering as a validator (POST /v1/stake) doesn't spend the output - the
+// wallet signs a proof of ownership locally (see
+// core::chain::stake_registration_message/register_validator) rather than
+// sending the output's raw blinding factor to the node, so the secret never
+// travels over the wire at all - unlike a plain reveal, this proof is also
+// safe for the node to re-gossip to its peers.
 
 #[derive(serde::Serialize)]
 struct StakeRequestJson {
     commitment: Commitment,
     value: u64,
-    blinding: Scalar,
+    proof: Signature,
 }
 
 /// Builds a POST /v1/stake request body by staking the wallet's single
@@ -547,7 +547,9 @@ pub fn build_stake_request(keystore_bytes: Vec<u8>, store_bytes: Vec<u8>, min_va
     }
 
     let blinding = planner::blinding_for(&keystore, largest.index);
-    let req = StakeRequestJson { commitment: largest.commitment, value: largest.value, blinding };
+    let msg = crate::core::chain::stake_registration_message(&largest.commitment, largest.value);
+    let proof = Signature::sign(&msg, &blinding);
+    let req = StakeRequestJson { commitment: largest.commitment, value: largest.value, proof };
     serde_json::to_string(&req).map_err(|_| js_err("failed to serialize stake request"))
 }
 
