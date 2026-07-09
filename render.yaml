@@ -18,3 +18,32 @@ services:
         value: 8332
       - key: HAZE_DATA_DIR
         value: /app/haze_data
+
+  # The public testnet node - separate service, separate disk, separate
+  # genesis (see src/core/genesis.rs's regenerated TREASURY_OUTPUT) from
+  # haze-l1-devnet above, which stays untouched. On "starter" (not free) so
+  # the disk is actually persistent - a public testnet resetting on every
+  # deploy defeats the point of announcing one. Downgrade to "free" in the
+  # Render dashboard if you'd rather accept that tradeoff for now.
+  - type: web
+    name: haze-testnet-1
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /v1/status
+    disk:
+      name: haze-testnet-data
+      mountPath: /app/haze_data
+      sizeGB: 1
+    envVars:
+      - key: PORT
+        value: 8332
+      - key: HAZE_DATA_DIR
+        value: /app/haze_data
+      # Set this in the Render dashboard (Environment tab), not here - see
+      # the regenerated secret handed off out-of-band, NOT the one exposed
+      # in this session's shell history (src/core/genesis.rs's
+      # TREASURY_OUTPUT doc comment). Faucet stays disabled until this is
+      # set, same as haze-l1-devnet's current unfunded-faucet state.
+      - key: HAZE_TREASURY_BLINDING
+        sync: false
