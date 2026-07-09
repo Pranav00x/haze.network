@@ -91,7 +91,10 @@ async fn main() -> std::io::Result<()> {
             let rpc_marketplace = Arc::clone(&marketplace_state);
             let rpc_allowlist = Arc::clone(&allowlist_state);
             let port = *rpc_port;
-            println!("Starting HTTP JSON-RPC Server on 127.0.0.1:{}...", port);
+            // Actually binds 0.0.0.0 (see api::server::ApiServer::start) -
+            // logged accurately since this includes write endpoints like
+            // /v1/stake and /v1/inbox/*, not a loopback-only surface.
+            println!("Starting HTTP JSON-RPC Server on 0.0.0.0:{}...", port);
             tokio::spawn(async move {
                 ApiServer::start(rpc_mempool, rpc_chain, rpc_server, rpc_storage, rpc_marketplace, rpc_allowlist, port).await;
             });

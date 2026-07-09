@@ -399,9 +399,14 @@ impl ApiServer {
             .and(inbox_filter)
             .and_then(inbox::handle_post_inbox);
 
-        // GET /v1/inbox/:pubkey_hex - drains and returns pending messages.
+        // GET /v1/inbox/:pubkey_hex?timestamp=..&signature_hex=.. - drains
+        // and returns pending messages. Query-string signature proves the
+        // caller owns pubkey_hex (see api/inbox.rs) - anyone can otherwise
+        // guess/know a pubkey (they're public) and steal/deny another
+        // wallet's queued handshake messages.
         let get_inbox_route = warp::get()
             .and(warp::path!("v1" / "inbox" / String))
+            .and(warp::query::<inbox::InboxPollQuery>())
             .and(inbox_filter_2)
             .and_then(inbox::handle_get_inbox);
 

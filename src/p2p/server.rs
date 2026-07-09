@@ -20,9 +20,13 @@ use super::transport::{self, PeerReader, PeerWriter, MAX_MESSAGE_SIZE};
 /// Maximum number of blocks sent per GetBlocks/BlocksBatch round during chain sync.
 const SYNC_BATCH_SIZE: usize = 256;
 
-/// Maximum number of simultaneous outbound+inbound connections a node will maintain.
-/// Bounds automatic peer-discovery dialing so a node doesn't try to connect to
-/// every address it ever hears about.
+/// Maximum number of simultaneous outbound+inbound connections a node will
+/// maintain - bounds automatic peer-discovery dialing (so a node doesn't try
+/// to connect to every address it ever hears about) AND enforced on every
+/// inbound TCP/WS connection attempt (see start()'s accept loop and
+/// handle_inbound_ws) so an attacker can't flood a node with unlimited raw
+/// connections to exhaust file descriptors/memory - there was previously no
+/// cap on the inbound side at all.
 const MAX_PEERS: usize = 8;
 
 /// Maximum number of addresses returned in a single PeersList response.
@@ -156,6 +160,10 @@ impl P2pServer {
     /// connection, so WS and TCP peers gossip/sync with each other
     /// transparently through the shared PeerManager.
     pub async fn handle_inbound_ws(self: Arc<Self>, ws: warp::ws::WebSocket, peer_label: String) {
+        if self.peer_manager.connection_count() >= MAX_PEERS {
+            println!("P2P: Rejecting inbound WebSocket peer {} - at MAX_PEERS capacity", peer_label);
+            return;
+        }
         println!("P2P: Inbound WebSocket peer connected: {}", peer_label);
         let (ws_write, ws_read) = ws.split();
         let write_handle = self.peer_manager.add_peer(peer_label.clone(), PeerWriter::WsServer(ws_write));
@@ -209,6 +217,12 @@ impl P2pServer {
 
         loop {
             let (stream, peer_addr) = listener.accept().await?;
+
+            if pm.connection_count() >= MAX_PEERS {
+                println!("P2P: Rejecting inbound peer {} - at MAX_PEERS capacity", peer_addr);
+                drop(stream);
+                continue;
+            }
             println!("P2P: Inbound peer connected: {}", peer_addr);
 
             let pm_clone = Arc::clone(&pm);

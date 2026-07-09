@@ -954,6 +954,32 @@ function bytesToHex(byteArray) {
   return byteArray.map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
+// The inbox relay (see src/api/inbox.rs) requires every POST to be signed
+// by the wallet's identity key, binding it to the exact (recipient, kind,
+// payload) - otherwise anyone could inject a message claiming to be from
+// someone else. Mirrors inbox_post_signing_message on the server exactly.
+async function postToInbox(toPubkeyHex, kind, payloadJson) {
+  const fromPubkeyHex = wallet_identity_pubkey_hex(sessionKeystoreBytes);
+  const message = `HazeInboxMessage:${toPubkeyHex}:${kind}:${payloadJson}`;
+  const signatureHex = sign_identity_message(sessionKeystoreBytes, message);
+  return fetch(API_BASE + "/v1/inbox/" + toPubkeyHex, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ from_pubkey_hex: fromPubkeyHex, kind, payload_json: payloadJson, signature_hex: signatureHex }),
+  });
+}
+
+// Draining another wallet's inbox requires proving ownership of the pubkey
+// being polled (see inbox_poll_signing_message) - otherwise anyone who
+// merely knows a pubkey (they're public) could read/steal someone else's
+// queued handshake messages.
+async function getFromInbox(pubkeyHex) {
+  const timestamp = Math.floor(Date.now() / 1000);
+  const message = `HazeInboxPoll:${pubkeyHex}:${timestamp}`;
+  const signatureHex = sign_identity_message(sessionKeystoreBytes, message);
+  return fetch(`${API_BASE}/v1/inbox/${pubkeyHex}?timestamp=${timestamp}&signature_hex=${signatureHex}`);
+}
+
 // Links straight to the broadcast tx's kernel in the node's embedded
 // explorer (served at the node's own root), instead of leaving the user
 // with just a "broadcast successfully" message and no way to see it.
@@ -1205,12 +1231,7 @@ function handleMarketplaceDeepLink() {
         const fee = await getSuggestedFee();
         const sellerSlate = create_send_slate(sessionKeystoreBytes, storeBytes, sellerAmount, fee);
         sessionKeystoreBytes = sellerSlate.updated_keystore_bytes;
-        const myPubkeyHex = wallet_identity_pubkey_hex(sessionKeystoreBytes);
-        await fetch(API_BASE + "/v1/inbox/" + sellerPubkeyHex, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ from_pubkey_hex: myPubkeyHex, kind: "request", payload_json: sellerSlate.slate_json }),
-        });
+        await postToInbox(sellerPubkeyHex, "request", sellerSlate.slate_json);
 
         let royaltySlate = null;
         if (royaltyPubkeyHex && royaltyAmount > 0n) {
@@ -1229,11 +1250,7 @@ function handleMarketplaceDeepLink() {
 
           royaltySlate = create_send_slate(sessionKeystoreBytes, storeBytes2, royaltyAmount, fee);
           sessionKeystoreBytes = royaltySlate.updated_keystore_bytes;
-          await fetch(API_BASE + "/v1/inbox/" + royaltyPubkeyHex, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ from_pubkey_hex: myPubkeyHex, kind: "request", payload_json: royaltySlate.slate_json }),
-          });
+          await postToInbox(royaltyPubkeyHex, "request", royaltySlate.slate_json);
         }
 
         pendingPurchase = {
@@ -1393,11 +1410,7 @@ function handleMarketplaceDeepLink() {
               returnUrl,
             };
 
-            await fetch(API_BASE + "/v1/inbox/" + creatorPubkeyHex, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ from_pubkey_hex: myPubkeyHex, kind: "request", payload_json: slate.slate_json }),
-            });
+            await postToInbox(creatorPubkeyHex, "request", slate.slate_json);
             banner.querySelector("#dl-approve").disabled = true;
             msgEl2.innerHTML = `<div class="message success">Offer sent for "${assetId}" - waiting for the creator to accept. You'll be redirected back to ${origin} once the mint completes.</div>`;
           } catch (e) {
@@ -2205,12 +2218,7 @@ function renderDashboard() {
       const slate = create_send_slate(sessionKeystoreBytes, storeBytes, amount, fee);
       sessionKeystoreBytes = slate.updated_keystore_bytes;
 
-      const myPubkeyHex = wallet_identity_pubkey_hex(sessionKeystoreBytes);
-      const inboxRes = await fetch(API_BASE + "/v1/inbox/" + toPubkeyHex, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ from_pubkey_hex: myPubkeyHex, kind: "request", payload_json: slate.slate_json }),
-      });
+      const inboxRes = await postToInbox(toPubkeyHex, "request", slate.slate_json);
       if (!inboxRes.ok) {
         messageEl.innerHTML = `<div class="message error">Failed to deliver payment request.</div>`;
         return;
@@ -2239,11 +2247,7 @@ function renderDashboard() {
     storeBytes = commit_receive(storeBytes, responded.receiver_output);
     saveWalletStoreBytes(storeBytes);
 
-    await fetch(API_BASE + "/v1/inbox/" + msg.from_pubkey_hex, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ from_pubkey_hex: wallet_identity_pubkey_hex(sessionKeystoreBytes), kind: "response", payload_json: responded.response_slate_json }),
-    });
+    await postToInbox(msg.from_pubkey_hex, "response", responded.response_slate_json);
 
     pushActivity({
       type: "received",
@@ -2268,11 +2272,7 @@ function renderDashboard() {
     const req = JSON.parse(msg.payload_json);
     const opJson = build_transfer_asset_request(sessionKeystoreBytes, req.asset_id, req.buyer_pubkey_hex, req.kernel_excess_hex, req.royalty_kernel_excess_hex || null);
 
-    await fetch(API_BASE + "/v1/inbox/" + req.buyer_pubkey_hex, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ from_pubkey_hex: wallet_identity_pubkey_hex(sessionKeystoreBytes), kind: "signed_transfer", payload_json: JSON.stringify({ op_json: opJson }) }),
-    });
+    await postToInbox(req.buyer_pubkey_hex, "signed_transfer", JSON.stringify({ op_json: opJson }));
   }
 
   // Collection-creator-side auto-response to a minter's "want_collection_mint"
@@ -2295,11 +2295,7 @@ function renderDashboard() {
 
     const signatureHex = sign_collection_mint_approval(sessionKeystoreBytes, req.asset_id, req.collection_id, req.phase_index, req.required_kernel_excess_hex, req.owner_pubkey_hex);
 
-    await fetch(API_BASE + "/v1/inbox/" + req.owner_pubkey_hex, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ from_pubkey_hex: myPubkeyHex, kind: "signed_collection_mint", payload_json: JSON.stringify({ creator_signature_hex: signatureHex }) }),
-    });
+    await postToInbox(req.owner_pubkey_hex, "signed_collection_mint", JSON.stringify({ creator_signature_hex: signatureHex }));
   }
 
   // Sends "want_transfer" to the seller once every payment leg of the
@@ -2313,20 +2309,12 @@ function renderDashboard() {
   async function maybeSendWantTransfer() {
     if (!pendingPurchase || !pendingPurchase.sellerDone || !pendingPurchase.royaltyDone) return;
     const myPubkeyHex = wallet_identity_pubkey_hex(sessionKeystoreBytes);
-    await fetch(API_BASE + "/v1/inbox/" + pendingPurchase.sellerPubkeyHex, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from_pubkey_hex: myPubkeyHex,
-        kind: "want_transfer",
-        payload_json: JSON.stringify({
-          asset_id: pendingPurchase.assetId,
-          buyer_pubkey_hex: myPubkeyHex,
-          kernel_excess_hex: pendingPurchase.kernelExcessHex,
-          royalty_kernel_excess_hex: pendingPurchase.royaltyKernelExcessHex || null,
-        }),
-      }),
-    });
+    await postToInbox(pendingPurchase.sellerPubkeyHex, "want_transfer", JSON.stringify({
+      asset_id: pendingPurchase.assetId,
+      buyer_pubkey_hex: myPubkeyHex,
+      kernel_excess_hex: pendingPurchase.kernelExcessHex,
+      royalty_kernel_excess_hex: pendingPurchase.royaltyKernelExcessHex || null,
+    }));
     const messageEl = document.getElementById("buy-asset-message");
     messageEl.innerHTML = `<div class="message success">Payment${pendingPurchase.hasRoyaltyLeg ? "s" : ""} accepted for "${pendingPurchase.assetId}" - waiting for the seller to sign the transfer&hellip;</div>`;
   }
@@ -2334,7 +2322,7 @@ function renderDashboard() {
   async function pollInbox() {
     try {
       const myPubkeyHex = wallet_identity_pubkey_hex(sessionKeystoreBytes);
-      const res = await fetch(API_BASE + "/v1/inbox/" + myPubkeyHex);
+      const res = await getFromInbox(myPubkeyHex);
       if (!res.ok) return;
       const messages = await res.json();
 
@@ -2556,21 +2544,13 @@ function renderDashboard() {
               change: finalized.change,
               paymentAlreadyCommitted: true,
             };
-            await fetch(API_BASE + "/v1/inbox/" + pendingCollectionMint.creatorPubkeyHex, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                from_pubkey_hex: myPubkeyHex,
-                kind: "want_collection_mint",
-                payload_json: JSON.stringify({
-                  asset_id: pendingCollectionMint.assetId,
-                  collection_id: pendingCollectionMint.collectionId,
-                  phase_index: pendingCollectionMint.phaseIndex,
-                  owner_pubkey_hex: myPubkeyHex,
-                  required_kernel_excess_hex: kernelExcessHex,
-                }),
-              }),
-            });
+            await postToInbox(pendingCollectionMint.creatorPubkeyHex, "want_collection_mint", JSON.stringify({
+              asset_id: pendingCollectionMint.assetId,
+              collection_id: pendingCollectionMint.collectionId,
+              phase_index: pendingCollectionMint.phaseIndex,
+              owner_pubkey_hex: myPubkeyHex,
+              required_kernel_excess_hex: kernelExcessHex,
+            }));
             messageEl.innerHTML = `<div class="message success">Payment accepted for "${pendingCollectionMint.assetId}" - waiting for the creator's approval&hellip;</div>`;
           } catch (e) {
             messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
