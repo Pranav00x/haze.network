@@ -327,6 +327,23 @@ impl ChainState {
     /// Attempts to apply a new block to the chain state.
     /// Triggers a reorganization if the block is on a heavier/taller fork.
     pub fn apply_block(&mut self, block: &Block) -> ApplyResult {
+        // Reject cheap garbage before ever storing it - block.validate() is
+        // a fully self-contained check (balance equation, kernel
+        // signatures, range proofs; reward is derivable from the block's
+        // own claimed height, no chain state needed) that every
+        // legitimately-processed block already has to pass later in
+        // apply_linear_block anyway, so this changes nothing for honest
+        // blocks. Without this, `self.blocks` (an uncapped, never-evicted
+        // HashMap) could be flooded for free by anyone: literally any
+        // NewBlock message was stored unconditionally, with no signature or
+        // proof required, letting an attacker grow a node's memory forever
+        // and, once enough fake orphaned "chain" depth accumulates, force
+        // find_reorg_path's O(n^2) walk while the global chain lock is
+        // held.
+        if !block.validate() {
+            return ApplyResult::Rejected;
+        }
+
         let block_hash = block.header.hash();
 
         // Store block in block database first

@@ -27,6 +27,60 @@ mod tests {
         Signature::sign(&msg, blinding)
     }
 
+    /// Regression test for a free memory-exhaustion vector: apply_block used
+    /// to unconditionally insert EVERY received block into self.blocks
+    /// (an uncapped, never-evicted HashMap) before any validation at all -
+    /// anyone could flood a node's memory forever with trivially-cheap
+    /// garbage blocks (no real signature or range proof required), and,
+    /// combined with find_reorg_path's O(n^2) fork search, force expensive
+    /// work while the global chain lock was held. Fixed by requiring
+    /// block.validate() (self-contained - no chain state needed) to pass
+    /// before ever storing a block.
+    #[test]
+    fn apply_block_never_stores_a_block_that_fails_standalone_validation() {
+        let mut chain_state = ChainState::new();
+        let genesis_block = crate::core::genesis::genesis_block();
+        let genesis_hash = genesis_block.header.hash();
+        assert!(chain_state.apply_block(&genesis_block).is_applied());
+
+        // A garbage block: an output with an absurd value, no kernel at all
+        // to balance it, no real signature - trivially cheap to fabricate
+        // in unlimited quantity.
+        let garbage_header = BlockHeader {
+            height: 1,
+            prev_hash: genesis_hash,
+            total_kernel_offset: Scalar::zero(),
+            nonce: 0,
+            timestamp: 0,
+            validator_commitment: Commitment::new(1_000_000, Scalar::from(42u64)),
+            validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root: empty_registry_root(),
+            chain_id: crate::core::genesis::CHAIN_ID,
+            asset_registry_root: crate::core::assets::compute_asset_registry_root(&std::collections::HashMap::new()),
+            collection_registry_root: crate::core::collections::compute_collection_registry_root(&std::collections::HashMap::new()),
+        };
+        let garbage_body = Transaction {
+            inputs: vec![],
+            outputs: vec![Output {
+                commitment: Commitment::new(999_999_999, Scalar::zero()),
+                proof: RangeProof::prove(999_999_999, &Scalar::zero()),
+                note: vec![],
+            }],
+            kernels: vec![],
+        };
+        let garbage_block = Block {
+            header: garbage_header,
+            body: garbage_body,
+            name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![],
+            launch_collection_ops: vec![], validator_ops: vec![],
+        };
+        let garbage_hash = garbage_block.header.hash();
+
+        assert!(!chain_state.apply_block(&garbage_block).is_applied(), "a garbage block must be rejected");
+        assert!(!chain_state.blocks.contains_key(&garbage_hash), "a block that fails standalone validation must never be stored at all");
+        assert_eq!(chain_state.current_height, 0, "the garbage block must not have advanced the chain");
+    }
+
     #[test]
     fn test_full_transaction_lifecycle() {
         let mut rng = OsRng;
