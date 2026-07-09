@@ -4,6 +4,7 @@ use super::transaction::Transaction;
 use super::registry::{RegisterNameOp, TransferNameOp};
 use super::assets::{MintAssetOp, TransferAssetOp};
 use super::collections::LaunchCollectionOp;
+use super::chain::RegisterValidatorOp;
 use serde::{Serialize, Deserialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -104,6 +105,16 @@ pub struct Block {
     /// separate namespace from individual asset mints.
     #[serde(default)]
     pub launch_collection_ops: Vec<LaunchCollectionOp>,
+    /// Stake registrations included in this block (see
+    /// core::chain::RegisterValidatorOp) - makes the active validator set
+    /// deterministically derivable from block content (like every other
+    /// registry here) instead of a live API/P2P side-channel mutation
+    /// different nodes could observe in different orders. No dedicated
+    /// registry root needed (unlike name/asset/collection) since
+    /// active_validators isn't merkle-committed - membership is checked
+    /// directly against it at block-proposer-signature-verification time.
+    #[serde(default)]
+    pub validator_ops: Vec<RegisterValidatorOp>,
 }
 
 impl Block {

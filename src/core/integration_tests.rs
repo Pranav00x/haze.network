@@ -212,7 +212,7 @@ mod tests {
             transfer_ops: vec![],
             mint_ops: vec![],
             transfer_asset_ops: vec![],
-            launch_collection_ops: vec![],
+            launch_collection_ops: vec![], validator_ops: vec![],
         };
 
         // Apply the block to the chain state
@@ -474,7 +474,7 @@ mod tests {
         };
         let msg = header.hash();
         header.validator_signature = Signature::sign(&msg, &fallback_r);
-        let block = Block { header, body, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![] };
+        let block = Block { header, body, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![], validator_ops: vec![] };
 
         assert!(chain_state.apply_block(&block).is_applied(), "a block signed by a non-primary but genuinely active validator must be accepted");
     }
@@ -549,12 +549,16 @@ mod tests {
         client_stream.write_all(&bytes).await.unwrap();
         client_stream.flush().await.unwrap();
 
-        // 5. Send RegisterValidator
-        let reg_msg = crate::p2p::message::P2pMessage::RegisterValidator {
+        // 5. Send NewValidatorOp - stake registration is now queued into the
+        // mempool (like every other op) rather than mutating chain state
+        // directly, so it only becomes an active validator once mined into
+        // a block; this test verifies the P2P propagation/queueing step.
+        let op = crate::core::chain::RegisterValidatorOp {
             commitment,
             value,
             proof: stake_proof(&commitment, value, &r),
         };
+        let reg_msg = crate::p2p::message::P2pMessage::NewValidatorOp(op);
         let bytes = bincode::serialize(&reg_msg).unwrap();
         let len = bytes.len() as u32;
         client_stream.write_all(&len.to_le_bytes()).await.unwrap();
@@ -564,11 +568,12 @@ mod tests {
         // Sleep to let server handle message
         tokio::time::sleep(Duration::from_millis(200)).await;
 
-        // 6. Verify that the validator was registered in the shared chain state!
-        let c = chain_state.lock().unwrap();
-        assert_eq!(c.active_validators.len(), 1);
-        assert_eq!(c.active_validators[0].commitment, commitment);
-        assert_eq!(c.active_validators[0].value, value);
+        // 6. Verify that the stake registration was queued into the mempool!
+        let mut mp = mempool.lock().unwrap();
+        let queued = mp.take_validator_ops();
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].commitment, commitment);
+        assert_eq!(queued[0].value, value);
     }
 
     #[test]
@@ -613,7 +618,7 @@ mod tests {
             let msg = header.hash();
             header.validator_signature = Signature::sign(&msg, &private_key);
 
-            Block { header, body, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![] }
+            Block { header, body, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![], validator_ops: vec![] }
         }
 
         let mut chain_state = ChainState::new();
@@ -756,7 +761,7 @@ mod tests {
         let msg = header.hash();
         header.validator_signature = Signature::sign(&msg, &private_key);
 
-        let block = Block { header, body, name_ops: vec![op], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![] };
+        let block = Block { header, body, name_ops: vec![op], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![], validator_ops: vec![] };
 
         assert!(chain_state.apply_block(&block).is_applied(), "block with name registration must apply");
         assert!(chain_state.name_registry.contains_key("pranav"));
@@ -768,6 +773,144 @@ mod tests {
         assert!(!chain_state.name_registry.contains_key("pranav"), "rollback must un-register the name");
         assert!(chain_state.utxos.contains(&input_commitment), "rollback must restore the spent input");
         assert!(!chain_state.utxos.contains(&change_output.commitment), "rollback must remove the change output");
+    }
+
+    /// A stake registration only takes effect once mined into a block (see
+    /// core::chain::RegisterValidatorOp) - this is the actual determinism
+    /// fix: every node derives active_validators purely from block content,
+    /// not from whatever order a live RegisterValidator P2P message arrived
+    /// in (the prior design). Also proves rollback correctly un-registers.
+    #[test]
+    fn block_with_validator_op_registers_and_rolls_back() {
+        let mut rng = OsRng;
+        let mut chain_state = ChainState::new();
+        let genesis_block = crate::core::genesis::genesis_block();
+        let genesis_hash = genesis_block.header.hash();
+        assert!(chain_state.apply_block(&genesis_block).is_applied());
+
+        let r_stake = Scalar::random(&mut rng);
+        let stake_value = 100_000u64;
+        let stake_commitment = Commitment::new(stake_value, r_stake);
+        chain_state.utxos.insert(stake_commitment);
+
+        let validator_op = crate::core::chain::RegisterValidatorOp {
+            commitment: stake_commitment,
+            value: stake_value,
+            proof: stake_proof(&stake_commitment, stake_value, &r_stake),
+        };
+
+        let private_key = Scalar::from(42u64);
+        let coinbase_r = Scalar::random(&mut rng);
+        let reward = crate::core::block::block_reward_at(1);
+        let coinbase_output = Output {
+            commitment: Commitment::new(reward, coinbase_r),
+            proof: RangeProof::prove(reward, &coinbase_r),
+            note: vec![],
+        };
+        let coinbase_excess_r = Scalar::zero() - coinbase_r;
+        let body = Transaction {
+            inputs: vec![],
+            outputs: vec![coinbase_output],
+            kernels: vec![TxKernel {
+                excess: Commitment::new(0, coinbase_excess_r),
+                fee: 0,
+                signature: Signature::sign(&0u64.to_le_bytes(), &coinbase_excess_r),
+            }],
+        };
+
+        let mut header = BlockHeader {
+            height: 1,
+            prev_hash: genesis_hash,
+            total_kernel_offset: Scalar::zero(),
+            nonce: 0,
+            timestamp: 0,
+            validator_commitment: Commitment::new(1_000_000, private_key),
+            validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root: empty_registry_root(),
+            chain_id: crate::core::genesis::CHAIN_ID,
+            asset_registry_root: crate::core::assets::compute_asset_registry_root(&std::collections::HashMap::new()),
+            collection_registry_root: crate::core::collections::compute_collection_registry_root(&std::collections::HashMap::new()),
+        };
+        let msg = header.hash();
+        header.validator_signature = Signature::sign(&msg, &private_key);
+
+        let block = Block { header, body, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![], validator_ops: vec![validator_op] };
+
+        assert!(chain_state.apply_block(&block).is_applied(), "block with a valid stake registration must apply");
+        assert_eq!(chain_state.active_validators.len(), 1);
+        assert_eq!(chain_state.active_validators[0].commitment, stake_commitment);
+        assert_eq!(chain_state.active_validators[0].value, stake_value);
+
+        assert!(chain_state.rollback_block().is_some());
+        assert!(chain_state.active_validators.is_empty(), "rollback must un-register the validator");
+    }
+
+    /// The atomicity property that makes this deterministic: a block
+    /// containing an INVALID stake registration (forged value here) must be
+    /// rejected in its entirety, not partially applied - same as every
+    /// other op category (mirrors test_duplicate_name_registration_in_same_
+    /// block_is_rejected's reasoning, applied to validator_ops).
+    #[test]
+    fn block_with_forged_validator_op_is_rejected_entirely() {
+        let mut rng = OsRng;
+        let mut chain_state = ChainState::new();
+        let genesis_block = crate::core::genesis::genesis_block();
+        let genesis_hash = genesis_block.header.hash();
+        assert!(chain_state.apply_block(&genesis_block).is_applied());
+
+        let r_stake = Scalar::random(&mut rng);
+        let stake_value = 100_000u64;
+        let stake_commitment = Commitment::new(stake_value, r_stake);
+        chain_state.utxos.insert(stake_commitment);
+
+        // Proof genuinely signed for stake_value, but the op claims a wildly
+        // different (forged) value - signature won't verify against it.
+        let forged_op = crate::core::chain::RegisterValidatorOp {
+            commitment: stake_commitment,
+            value: 999_999_999,
+            proof: stake_proof(&stake_commitment, stake_value, &r_stake),
+        };
+
+        let private_key = Scalar::from(42u64);
+        let coinbase_r = Scalar::random(&mut rng);
+        let reward = crate::core::block::block_reward_at(1);
+        let coinbase_output = Output {
+            commitment: Commitment::new(reward, coinbase_r),
+            proof: RangeProof::prove(reward, &coinbase_r),
+            note: vec![],
+        };
+        let coinbase_excess_r = Scalar::zero() - coinbase_r;
+        let body = Transaction {
+            inputs: vec![],
+            outputs: vec![coinbase_output],
+            kernels: vec![TxKernel {
+                excess: Commitment::new(0, coinbase_excess_r),
+                fee: 0,
+                signature: Signature::sign(&0u64.to_le_bytes(), &coinbase_excess_r),
+            }],
+        };
+
+        let mut header = BlockHeader {
+            height: 1,
+            prev_hash: genesis_hash,
+            total_kernel_offset: Scalar::zero(),
+            nonce: 0,
+            timestamp: 0,
+            validator_commitment: Commitment::new(1_000_000, private_key),
+            validator_signature: Signature { s: Scalar::zero(), e: Scalar::zero() },
+            name_registry_root: empty_registry_root(),
+            chain_id: crate::core::genesis::CHAIN_ID,
+            asset_registry_root: crate::core::assets::compute_asset_registry_root(&std::collections::HashMap::new()),
+            collection_registry_root: crate::core::collections::compute_collection_registry_root(&std::collections::HashMap::new()),
+        };
+        let msg = header.hash();
+        header.validator_signature = Signature::sign(&msg, &private_key);
+
+        let block = Block { header, body, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![], validator_ops: vec![forged_op] };
+
+        assert!(!chain_state.apply_block(&block).is_applied(), "a block with a forged stake registration must be rejected entirely");
+        assert_eq!(chain_state.current_height, 0, "rejected block must not advance the chain at all");
+        assert!(chain_state.active_validators.is_empty());
     }
 
     #[test]
@@ -852,7 +995,7 @@ mod tests {
         let msg = header.hash();
         header.validator_signature = Signature::sign(&msg, &private_key);
 
-        let block = Block { header, body, name_ops: vec![op1, op2], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![] };
+        let block = Block { header, body, name_ops: vec![op1, op2], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![], validator_ops: vec![] };
 
         assert!(!chain_state.apply_block(&block).is_applied(), "block registering the same name twice must be rejected");
     }
@@ -938,7 +1081,7 @@ mod tests {
             collection_registry_root: crate::core::collections::compute_collection_registry_root(&std::collections::HashMap::new()),
         };
         header1.validator_signature = Signature::sign(&header1.hash(), &private_key);
-        let block1 = Block { header: header1, body: body1, name_ops: vec![register_op], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![] };
+        let block1 = Block { header: header1, body: body1, name_ops: vec![register_op], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![], validator_ops: vec![] };
         assert!(chain_state.apply_block(&block1).is_applied());
         let block1_hash = chain_state.last_block_hash;
 
@@ -976,7 +1119,7 @@ mod tests {
             collection_registry_root: crate::core::collections::compute_collection_registry_root(&std::collections::HashMap::new()),
         };
         header2.validator_signature = Signature::sign(&header2.hash(), &private_key);
-        let block2 = Block { header: header2, body: body2, name_ops: vec![], transfer_ops: vec![transfer_op], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![] };
+        let block2 = Block { header: header2, body: body2, name_ops: vec![], transfer_ops: vec![transfer_op], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![], validator_ops: vec![] };
 
         assert!(chain_state.apply_block(&block2).is_applied(), "valid transfer must apply");
         assert_eq!(chain_state.name_registry["pranav"].owner_pubkey, new_pubkey);
@@ -1043,7 +1186,7 @@ mod tests {
             collection_registry_root: crate::core::collections::compute_collection_registry_root(&std::collections::HashMap::new()),
         };
         header1.validator_signature = Signature::sign(&header1.hash(), &private_key);
-        let block1 = Block { header: header1, body: body1, name_ops: vec![register_op], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![] };
+        let block1 = Block { header: header1, body: body1, name_ops: vec![register_op], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![], validator_ops: vec![] };
         assert!(chain_state.apply_block(&block1).is_applied());
         let block1_hash = chain_state.last_block_hash;
 
@@ -1080,7 +1223,7 @@ mod tests {
             collection_registry_root: crate::core::collections::compute_collection_registry_root(&std::collections::HashMap::new()),
         };
         header2.validator_signature = Signature::sign(&header2.hash(), &private_key);
-        let block2 = Block { header: header2, body: body2, name_ops: vec![], transfer_ops: vec![transfer_op], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![] };
+        let block2 = Block { header: header2, body: body2, name_ops: vec![], transfer_ops: vec![transfer_op], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![], validator_ops: vec![] };
 
         assert!(!chain_state.apply_block(&block2).is_applied(), "transfer signed by a non-owner must be rejected");
         assert_eq!(chain_state.name_registry["pranav"].owner_pubkey, original_pubkey, "ownership must be unchanged");
@@ -1269,7 +1412,7 @@ mod tests {
         };
         let msg = header.hash();
         header.validator_signature = Signature::sign(&msg, &private_key);
-        let block = Block { header, body, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![] };
+        let block = Block { header, body, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![], validator_ops: vec![] };
 
         assert!(!chain_state.apply_block(&block).is_applied(), "a block containing a wraparound-inflated output must be rejected at apply time");
         assert_eq!(chain_state.current_height, 0, "chain must not have advanced past genesis");
@@ -1355,7 +1498,7 @@ mod tests {
         };
         let msg = header.hash();
         header.validator_signature = Signature::sign(&msg, &private_key);
-        let block = Block { header, body, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![] };
+        let block = Block { header, body, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![], validator_ops: vec![] };
 
         assert!(!chain_state.apply_block(&block).is_applied(), "a block with a mismatched chain_id must be rejected");
         assert_eq!(chain_state.current_height, 0, "chain must not have advanced past genesis");
@@ -1482,7 +1625,7 @@ mod tests {
         let msg = header.hash();
         header.validator_signature = Signature::sign(&msg, &private_key);
 
-        let block = Block { header, body, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![op], transfer_asset_ops: vec![], launch_collection_ops: vec![] };
+        let block = Block { header, body, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![op], transfer_asset_ops: vec![], launch_collection_ops: vec![], validator_ops: vec![] };
 
         assert!(chain_state.apply_block(&block).is_applied(), "block with an asset mint must apply");
         assert!(chain_state.asset_registry.contains_key("cryptopunk"));
@@ -1588,7 +1731,7 @@ mod tests {
         let msg = header.hash();
         header.validator_signature = Signature::sign(&msg, &private_key);
 
-        let block = Block { header, body, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![op1, op2], transfer_asset_ops: vec![], launch_collection_ops: vec![] };
+        let block = Block { header, body, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![op1, op2], transfer_asset_ops: vec![], launch_collection_ops: vec![], validator_ops: vec![] };
 
         assert!(!chain_state.apply_block(&block).is_applied(), "block minting the same asset_id twice must be rejected");
     }
@@ -1695,7 +1838,7 @@ mod tests {
             collection_registry_root: crate::core::collections::compute_collection_registry_root(&std::collections::HashMap::new()),
         };
         header1.validator_signature = Signature::sign(&header1.hash(), &private_key);
-        let block1 = Block { header: header1, body: body1, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![mint_op], transfer_asset_ops: vec![], launch_collection_ops: vec![] };
+        let block1 = Block { header: header1, body: body1, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![mint_op], transfer_asset_ops: vec![], launch_collection_ops: vec![], validator_ops: vec![] };
         assert!(chain_state.apply_block(&block1).is_applied(), "setup mint must apply");
         let block1_hash = chain_state.last_block_hash;
 
@@ -1747,7 +1890,7 @@ mod tests {
             collection_registry_root: crate::core::collections::compute_collection_registry_root(&std::collections::HashMap::new()),
         };
         header2.validator_signature = Signature::sign(&header2.hash(), &private_key);
-        let block2 = Block { header: header2, body: body2, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![transfer_op], launch_collection_ops: vec![] };
+        let block2 = Block { header: header2, body: body2, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![transfer_op], launch_collection_ops: vec![], validator_ops: vec![] };
 
         assert!(!chain_state.apply_block(&block2).is_applied(), "a conditional transfer whose required kernel never landed must be rejected");
         assert_eq!(chain_state.asset_registry["marketswap-punk"].owner_pubkey, owner_pubkey, "ownership must not change");
@@ -1782,7 +1925,7 @@ mod tests {
             collection_registry_root: crate::core::collections::compute_collection_registry_root(&std::collections::HashMap::new()),
         };
         header2.validator_signature = Signature::sign(&header2.hash(), &private_key);
-        let block2 = Block { header: header2, body: body2, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![] };
+        let block2 = Block { header: header2, body: body2, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![], validator_ops: vec![] };
         assert!(chain_state.apply_block(&block2).is_applied(), "payment-only block must apply");
         assert!(chain_state.kernel_excesses.contains(&payment_excess), "the payment kernel must now be indexed");
         let block2_hash = chain_state.last_block_hash;
@@ -1818,7 +1961,7 @@ mod tests {
             collection_registry_root: crate::core::collections::compute_collection_registry_root(&std::collections::HashMap::new()),
         };
         header3.validator_signature = Signature::sign(&header3.hash(), &private_key);
-        let block3 = Block { header: header3, body: body3, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![transfer_op], launch_collection_ops: vec![] };
+        let block3 = Block { header: header3, body: body3, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![transfer_op], launch_collection_ops: vec![], validator_ops: vec![] };
 
         assert!(chain_state.apply_block(&block3).is_applied(), "a conditional transfer referencing an already-historical kernel must apply");
         assert_eq!(chain_state.asset_registry["marketswap-punk"].owner_pubkey, buyer_pubkey);
@@ -1869,7 +2012,7 @@ mod tests {
             collection_registry_root: crate::core::collections::compute_collection_registry_root(&std::collections::HashMap::new()),
         };
         header2.validator_signature = Signature::sign(&header2.hash(), &private_key);
-        let block2 = Block { header: header2, body: body2, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![transfer_op], launch_collection_ops: vec![] };
+        let block2 = Block { header: header2, body: body2, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![transfer_op], launch_collection_ops: vec![], validator_ops: vec![] };
 
         assert!(chain_state.apply_block(&block2).is_applied(), "a payment and its conditional transfer must be acceptable in the same block");
         assert_eq!(chain_state.asset_registry["marketswap-punk"].owner_pubkey, buyer_pubkey);
@@ -1903,7 +2046,7 @@ mod tests {
             collection_registry_root: crate::core::collections::compute_collection_registry_root(&std::collections::HashMap::new()),
         };
         header2.validator_signature = Signature::sign(&header2.hash(), &private_key);
-        let block2 = Block { header: header2, body: body2, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![] };
+        let block2 = Block { header: header2, body: body2, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![], validator_ops: vec![] };
         assert!(chain_state.apply_block(&block2).is_applied());
         assert!(chain_state.kernel_excesses.contains(&payment_excess));
 
@@ -2035,7 +2178,7 @@ mod tests {
                 name_ops: vec![], transfer_ops: vec![],
                 mint_ops: mint_op.into_iter().collect(),
                 transfer_asset_ops: vec![],
-                launch_collection_ops: launch_ops,
+                launch_collection_ops: launch_ops, validator_ops: vec![],
             };
             chain_state.apply_block(&block).is_applied()
         };
@@ -2175,7 +2318,7 @@ mod tests {
             collection_registry_root: compute_collection_registry_root(&collections_after_launch),
         };
         header1.validator_signature = Signature::sign(&header1.hash(), &private_key);
-        let block1 = Block { header: header1, body: body1, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![launch_op] };
+        let block1 = Block { header: header1, body: body1, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![launch_op], validator_ops: vec![] };
         assert!(chain_state.apply_block(&block1).is_applied(), "launching the royalty-charging collection must apply");
         let block1_hash = chain_state.last_block_hash;
 
@@ -2221,7 +2364,7 @@ mod tests {
             collection_registry_root: compute_collection_registry_root(&collections_after_launch),
         };
         header2.validator_signature = Signature::sign(&header2.hash(), &private_key);
-        let block2 = Block { header: header2, body: body2, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![mint_op], transfer_asset_ops: vec![], launch_collection_ops: vec![] };
+        let block2 = Block { header: header2, body: body2, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![mint_op], transfer_asset_ops: vec![], launch_collection_ops: vec![], validator_ops: vec![] };
         assert!(chain_state.apply_block(&block2).is_applied(), "the royalty-collection mint must apply");
         let block2_hash = chain_state.last_block_hash;
         assert_eq!(chain_state.asset_registry["royalty-punk"].collection_id, Some(collection_id.clone()));
@@ -2250,7 +2393,7 @@ mod tests {
             collection_registry_root: compute_collection_registry_root(&collections_after_launch),
         };
         header3_missing.validator_signature = Signature::sign(&header3_missing.hash(), &private_key);
-        let block3_missing = Block { header: header3_missing, body: body3_missing, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![transfer_missing_royalty], launch_collection_ops: vec![] };
+        let block3_missing = Block { header: header3_missing, body: body3_missing, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![transfer_missing_royalty], launch_collection_ops: vec![], validator_ops: vec![] };
         assert!(!chain_state.apply_block(&block3_missing).is_applied(), "a resale of a royalty-bearing asset without a royalty condition must be rejected, even though the seller's own payment landed");
         assert_eq!(chain_state.asset_registry["royalty-punk"].owner_pubkey, owner_pubkey, "ownership must not have changed");
 
@@ -2287,7 +2430,7 @@ mod tests {
             collection_registry_root: compute_collection_registry_root(&collections_after_launch),
         };
         header3.validator_signature = Signature::sign(&header3.hash(), &private_key);
-        let block3 = Block { header: header3, body: body3_with_royalty, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![transfer_op], launch_collection_ops: vec![] };
+        let block3 = Block { header: header3, body: body3_with_royalty, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![transfer_op], launch_collection_ops: vec![], validator_ops: vec![] };
         assert!(chain_state.apply_block(&block3).is_applied(), "a resale with BOTH the seller's payment and the creator's royalty payment present must apply");
         assert_eq!(chain_state.asset_registry["royalty-punk"].owner_pubkey, buyer_pubkey, "ownership must transfer once both conditions are satisfied");
     }
@@ -2343,7 +2486,7 @@ mod tests {
             collection_registry_root: compute_collection_registry_root(&collections_after_launch),
         };
         header1.validator_signature = Signature::sign(&header1.hash(), &private_key);
-        let block1 = Block { header: header1, body: body1, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![launch_op] };
+        let block1 = Block { header: header1, body: body1, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![], launch_collection_ops: vec![launch_op], validator_ops: vec![] };
         assert!(chain_state.apply_block(&block1).is_applied());
         let block1_hash = chain_state.last_block_hash;
 
@@ -2382,7 +2525,7 @@ mod tests {
             collection_registry_root: compute_collection_registry_root(&collections_after_launch),
         };
         header2.validator_signature = Signature::sign(&header2.hash(), &private_key);
-        let block2 = Block { header: header2, body: body2, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![mint_op], transfer_asset_ops: vec![], launch_collection_ops: vec![] };
+        let block2 = Block { header: header2, body: body2, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![mint_op], transfer_asset_ops: vec![], launch_collection_ops: vec![], validator_ops: vec![] };
         assert!(chain_state.apply_block(&block2).is_applied());
         let block2_hash = chain_state.last_block_hash;
 
@@ -2409,7 +2552,7 @@ mod tests {
             collection_registry_root: compute_collection_registry_root(&collections_after_launch),
         };
         header3.validator_signature = Signature::sign(&header3.hash(), &private_key);
-        let block3 = Block { header: header3, body: body3, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![gift_transfer], launch_collection_ops: vec![] };
+        let block3 = Block { header: header3, body: body3, name_ops: vec![], transfer_ops: vec![], mint_ops: vec![], transfer_asset_ops: vec![gift_transfer], launch_collection_ops: vec![], validator_ops: vec![] };
         assert!(chain_state.apply_block(&block3).is_applied(), "an unconditional gift transfer of a royalty-bearing asset must apply with no royalty payment at all");
         assert_eq!(chain_state.asset_registry["gift-punk"].owner_pubkey, friend_pubkey);
     }

@@ -311,6 +311,7 @@ mod tests {
             mint_ops: vec![],
             transfer_asset_ops: vec![],
             launch_collection_ops: vec![],
+            validator_ops: vec![],
         };
 
         (block, r_out, out_commitment)

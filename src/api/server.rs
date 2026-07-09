@@ -40,7 +40,12 @@ impl ApiServer {
         let mempool_filter = warp::any().map(move || Arc::clone(&mempool));
         let chain_filter = warp::any().map(move || Arc::clone(&chain));
         let p2p_filter = warp::any().map(move || Arc::clone(&p2p_server));
-        let storage_filter = warp::any().map(move || Arc::clone(&storage));
+        // storage is no longer touched directly by this module - stake
+        // registration now flows through the mempool/block pipeline like
+        // every other op, so there's nothing left here to persist outside
+        // of normal block application (see core::storage::Storage::
+        // persist_applied, already called from the proposer/p2p paths).
+        let _ = &storage;
         let mempool_filter_2 = mempool_filter.clone();
 
         let faucet_filter = warp::any().map(move || Arc::clone(&faucet_state));
@@ -77,6 +82,7 @@ impl ApiServer {
         let mempool_filter_10 = mempool_filter.clone();
         let p2p_filter_11 = p2p_filter.clone();
         let p2p_filter_12 = p2p_filter.clone();
+        let mempool_filter_11 = mempool_filter.clone();
 
         // Caps request body size for the two write endpoints - now that this
         // API is meant to be internet-facing, an unbounded body from an
@@ -103,9 +109,8 @@ impl ApiServer {
             .and(warp::path!("v1" / "stake"))
             .and(warp::body::content_length_limit(MAX_BODY_SIZE))
             .and(warp::body::json())
-            .and(chain_filter.clone())
+            .and(mempool_filter_11)
             .and(p2p_filter)
-            .and(storage_filter)
             .and_then(handle_register_validator);
 
         // GET /v1/utxos
@@ -520,43 +525,44 @@ async fn handle_list_utxos(
     Ok(warp::reply::json(&utxos))
 }
 
+/// Queues a stake registration into the mempool (see core::chain::
+/// RegisterValidatorOp) rather than mutating active_validators directly -
+/// it only actually takes effect once a proposer includes it in a block,
+/// same as every other op type here. This is what makes the resulting
+/// validator set deterministic: every node derives it purely from block
+/// content/order, never from whichever order registrations happened to
+/// arrive over the network.
 async fn handle_register_validator(
     req: StakeRequest,
-    chain: Arc<Mutex<ChainState>>,
+    mempool: Arc<Mutex<Mempool>>,
     p2p_server: Arc<P2pServer>,
-    storage: Arc<Storage>,
 ) -> Result<impl warp::Reply, Infallible> {
-    let registered = {
-        let mut c = chain.lock().unwrap();
-        let ok = c.register_validator(req.commitment, req.value, req.proof.clone());
-        if ok {
-            if let Err(e) = storage.persist_active_validators(&c.active_validators) {
-                println!("Warning: Failed to persist validator registration: {}", e);
-            }
-        }
-        ok
+    let op = crate::core::chain::RegisterValidatorOp {
+        commitment: req.commitment,
+        value: req.value,
+        proof: req.proof,
+    };
+    let queued = {
+        let mut mp = mempool.lock().unwrap();
+        mp.add_validator_op(op.clone())
     };
 
-    if registered {
+    if queued {
         let pm = Arc::clone(&p2p_server.peer_manager);
-        let msg = crate::p2p::message::P2pMessage::RegisterValidator {
-            commitment: req.commitment,
-            value: req.value,
-            proof: req.proof,
-        };
+        let msg = crate::p2p::message::P2pMessage::NewValidatorOp(op);
         tokio::spawn(async move {
             pm.broadcast(&msg).await;
         });
 
         let response = ApiResponse {
             status: "success".to_string(),
-            message: "Validator registered and propagated successfully".to_string(),
+            message: "Stake registration queued and propagated - takes effect once mined into a block".to_string(),
         };
         Ok(warp::reply::with_status(warp::reply::json(&response), warp::http::StatusCode::OK))
     } else {
         let response = ApiResponse {
             status: "error".to_string(),
-            message: "Validator registration failed (invalid parameters, UTXO spent, or already registered)".to_string(),
+            message: "Stake registration rejected (invalid proof, below minimum stake, or already pending)".to_string(),
         };
         Ok(warp::reply::with_status(warp::reply::json(&response), warp::http::StatusCode::BAD_REQUEST))
     }

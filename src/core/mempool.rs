@@ -3,6 +3,8 @@ use super::cut_through::aggregate_and_cut_through;
 use super::registry::{RegisterNameOp, TransferNameOp, NAME_REGISTRATION_FEE};
 use super::assets::{MintAssetOp, TransferAssetOp, ASSET_MINT_FEE};
 use super::collections::LaunchCollectionOp;
+use super::chain::RegisterValidatorOp;
+use crate::crypto::pedersen::Commitment;
 
 /// Caps how many name registrations/transfers can land in a single block,
 /// bounding block size the same way SYNC_BATCH_SIZE bounds a sync batch
@@ -16,6 +18,9 @@ pub const MAX_TRANSFER_ASSET_OPS_PER_BLOCK: usize = 10;
 /// launches once, then potentially thousands mint against it) - a small cap
 /// is plenty and keeps block assembly cheap.
 pub const MAX_LAUNCH_OPS_PER_BLOCK: usize = 5;
+/// Stake registrations are rare relative to payments - same reasoning as
+/// MAX_LAUNCH_OPS_PER_BLOCK.
+pub const MAX_VALIDATOR_OPS_PER_BLOCK: usize = 20;
 
 /// Caps how many ordinary payment transactions land in a single block. Before
 /// this existed, aggregate() pulled in the ENTIRE mempool unconditionally -
@@ -43,6 +48,7 @@ pub const MAX_PENDING_TRANSFER_OPS: usize = MAX_TRANSFER_OPS_PER_BLOCK * 100;
 pub const MAX_PENDING_MINT_OPS: usize = MAX_MINT_OPS_PER_BLOCK * 100;
 pub const MAX_PENDING_TRANSFER_ASSET_OPS: usize = MAX_TRANSFER_ASSET_OPS_PER_BLOCK * 100;
 pub const MAX_PENDING_LAUNCH_COLLECTION_OPS: usize = MAX_LAUNCH_OPS_PER_BLOCK * 100;
+pub const MAX_PENDING_VALIDATOR_OPS: usize = MAX_VALIDATOR_OPS_PER_BLOCK * 100;
 
 /// Policy-level floor enforced at mempool acceptance (add_transaction) - NOT
 /// a hard consensus rule checked at block-apply time, same tier as Bitcoin's
@@ -108,6 +114,7 @@ pub struct Mempool {
     pending_mint_ops: Vec<MintAssetOp>,
     pending_transfer_asset_ops: Vec<TransferAssetOp>,
     pending_launch_collection_ops: Vec<LaunchCollectionOp>,
+    pending_validator_ops: Vec<RegisterValidatorOp>,
 }
 
 impl Mempool {
@@ -119,6 +126,7 @@ impl Mempool {
             pending_mint_ops: Vec::new(),
             pending_transfer_asset_ops: Vec::new(),
             pending_launch_collection_ops: Vec::new(),
+            pending_validator_ops: Vec::new(),
         }
     }
 
@@ -370,6 +378,40 @@ impl Mempool {
         use std::collections::HashSet;
         let touched: HashSet<&String> = touched_collections.iter().collect();
         self.pending_launch_collection_ops.retain(|op| !touched.contains(&op.collection_id));
+    }
+
+    /// Validates a stake registration standalone (proof + minimum stake -
+    /// see RegisterValidatorOp::validate_standalone). UTXO membership and
+    /// the active-validator cap are chain-state-dependent and checked again
+    /// at block-apply time, same split as add_mint_op/add_name_op.
+    pub fn add_validator_op(&mut self, op: RegisterValidatorOp) -> bool {
+        if self.pending_validator_ops.len() >= MAX_PENDING_VALIDATOR_OPS {
+            return false;
+        }
+        if op.validate_standalone().is_err() {
+            return false;
+        }
+        if self.pending_validator_ops.iter().any(|o| o.commitment == op.commitment) {
+            return false;
+        }
+        self.pending_validator_ops.push(op);
+        true
+    }
+
+    /// Drains up to MAX_VALIDATOR_OPS_PER_BLOCK pending stake registrations.
+    /// No fee-based priority needed - same FIFO reasoning as
+    /// take_launch_collection_ops.
+    pub fn take_validator_ops(&mut self) -> Vec<RegisterValidatorOp> {
+        let n = self.pending_validator_ops.len().min(MAX_VALIDATOR_OPS_PER_BLOCK);
+        self.pending_validator_ops.drain(0..n).collect()
+    }
+
+    /// Drops any still-pending registration for a commitment a just-applied
+    /// block already touched - same pattern as clear_stale_launch_collection_ops.
+    pub fn clear_stale_validator_ops(&mut self, touched_commitments: &[Commitment]) {
+        use std::collections::HashSet;
+        let touched: HashSet<&Commitment> = touched_commitments.iter().collect();
+        self.pending_validator_ops.retain(|op| !touched.contains(&op.commitment));
     }
 }
 

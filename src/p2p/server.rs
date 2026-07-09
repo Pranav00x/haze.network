@@ -534,6 +534,8 @@ async fn handle_peer_connection(
                                     mp.clear_stale_transfer_asset_ops(&touched_assets);
                                     let launched_collections: Vec<String> = block.launch_collection_ops.iter().map(|op| op.collection_id.clone()).collect();
                                     mp.clear_stale_launch_collection_ops(&launched_collections);
+                                    let registered_validators: Vec<Commitment> = block.validator_ops.iter().map(|op| op.commitment).collect();
+                                    mp.clear_stale_validator_ops(&registered_validators);
                                     let asset_registry_snapshot = chain.lock().unwrap().asset_registry.clone();
                                     marketplace.clear_stale(&touched_assets, &asset_registry_snapshot);
                                 }
@@ -541,21 +543,15 @@ async fn handle_peer_connection(
                                 pm.broadcast(&P2pMessage::NewBlock(block)).await;
                             }
                         }
-                        P2pMessage::RegisterValidator { commitment, value, proof } => {
-                            println!("P2P: Received RegisterValidator for commitment {:?}", commitment);
-                            let registered = {
-                                let mut c = chain.lock().unwrap();
-                                let ok = c.register_validator(commitment, value, proof.clone());
-                                if ok {
-                                    if let Err(e) = storage.persist_active_validators(&c.active_validators) {
-                                        println!("Warning: Failed to persist validator registration: {}", e);
-                                    }
-                                }
-                                ok
+                        P2pMessage::NewValidatorOp(op) => {
+                            let commitment = op.commitment;
+                            let added = {
+                                let mut mp = mempool.lock().unwrap();
+                                mp.add_validator_op(op.clone())
                             };
-                            if registered {
-                                println!("P2P: Validator registered and propagated to peers.");
-                                pm.broadcast(&P2pMessage::RegisterValidator { commitment, value, proof }).await;
+                            if added {
+                                println!("P2P: Queued stake registration for commitment {:?} from {}, propagating.", commitment, peer_addr);
+                                pm.broadcast(&P2pMessage::NewValidatorOp(op)).await;
                             }
                         }
                         P2pMessage::NewNameOp(op) => {
@@ -651,12 +647,11 @@ async fn handle_peer_connection(
                             let mut w = write_half.lock().await;
                             if height > our_height {
                                 let _ = transport::write_message(&mut *w, &P2pMessage::GetBlocks { from_height: our_height + 1 }).await;
-                            } else {
-                                // Already caught up on blocks - still need to catch up on
-                                // active_validators, which isn't part of block history (see
-                                // the BlocksBatch handler's sync-completion path below).
-                                let _ = transport::write_message(&mut *w, &P2pMessage::GetValidators).await;
                             }
+                            // Already caught up on blocks - active_validators is
+                            // derived entirely from block replay now (see
+                            // core::chain::RegisterValidatorOp), so no separate
+                            // validator-set sync round-trip is needed.
                         }
                         P2pMessage::GetBlocks { from_height } => {
                             // Always serve whatever we have - headers and kernels
@@ -730,6 +725,8 @@ async fn handle_peer_connection(
                                     mp.clear_stale_transfer_asset_ops(&touched_assets);
                                     let launched_collections: Vec<String> = block.launch_collection_ops.iter().map(|op| op.collection_id.clone()).collect();
                                     mp.clear_stale_launch_collection_ops(&launched_collections);
+                                    let registered_validators: Vec<Commitment> = block.validator_ops.iter().map(|op| op.commitment).collect();
+                                    mp.clear_stale_validator_ops(&registered_validators);
                                     let asset_registry_snapshot = chain.lock().unwrap().asset_registry.clone();
                                     marketplace.clear_stale(&touched_assets, &asset_registry_snapshot);
                                 } else {
@@ -772,13 +769,10 @@ async fn handle_peer_connection(
                                 // check instead.
                                 let mut w = write_half.lock().await;
                                 let _ = transport::write_message(&mut *w, &P2pMessage::GetUtxoSnapshot).await;
-                            } else if applied_count == batch_len {
-                                // Block sync just finished - active_validators isn't part of
-                                // block history, so catch up on it now that we have the UTXOs
-                                // needed to verify each entry's proof (see ChainState::register_validator).
-                                let mut w = write_half.lock().await;
-                                let _ = transport::write_message(&mut *w, &P2pMessage::GetValidators).await;
                             }
+                            // Block sync just finished - active_validators is
+                            // derived entirely from block replay now, no separate
+                            // sync round-trip needed (see the ChainInfo handler).
                         }
                         P2pMessage::GetUtxoSnapshot => {
                             let (utxos, height, tip_hash) = {
@@ -807,24 +801,6 @@ async fn handle_peer_connection(
                                 aggregate_kernels.clear();
                                 aggregate_registry_fees = 0;
                                 aggregate_prev_hash = None;
-                            }
-                        }
-                        P2pMessage::GetValidators => {
-                            let validators = { chain.lock().unwrap().active_validators.clone() };
-                            let mut w = write_half.lock().await;
-                            let _ = transport::write_message(&mut *w, &P2pMessage::ValidatorsList(validators)).await;
-                        }
-                        P2pMessage::ValidatorsList(validators) => {
-                            let adopted = {
-                                let mut c = chain.lock().unwrap();
-                                validators.iter().any(|v| c.register_validator(v.commitment, v.value, v.proof.clone()))
-                            };
-                            if adopted {
-                                println!("P2P: Adopted validator set from {} ({} entries)", peer_addr, validators.len());
-                                let snapshot = { chain.lock().unwrap().active_validators.clone() };
-                                if let Err(e) = storage.persist_active_validators(&snapshot) {
-                                    println!("Warning: Failed to persist adopted validators: {}", e);
-                                }
                             }
                         }
                         P2pMessage::GetPeers => {

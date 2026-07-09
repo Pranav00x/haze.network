@@ -390,5 +390,6 @@ pub fn genesis_block() -> Block {
         mint_ops: vec![],
         transfer_asset_ops: vec![],
         launch_collection_ops: vec![],
+        validator_ops: vec![],
     }
 }

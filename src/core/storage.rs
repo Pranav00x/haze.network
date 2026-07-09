@@ -11,7 +11,6 @@ const DEFAULT_DATA_DIR: &str = "haze_data";
 
 const META_HEIGHT_KEY: &[u8] = b"height";
 const META_TIP_KEY: &[u8] = b"tip";
-const META_VALIDATORS_KEY: &[u8] = b"active_validators";
 
 pub struct Storage {
     blocks: Tree,
@@ -130,12 +129,6 @@ impl Storage {
             }
         }
 
-        if let Ok(Some(validators_bytes)) = self.meta.get(META_VALIDATORS_KEY) {
-            if let Ok(validators) = bincode::deserialize::<Vec<Validator>>(&validators_bytes) {
-                state.active_validators = validators;
-            }
-        }
-
         // Rebuild the name registry by replaying name_ops/transfer_ops from
         // blocks on the ACTIVE chain only - no separate sled tree needed,
         // since full blocks are already persisted above. Two passes:
@@ -228,6 +221,35 @@ impl Storage {
                     *state.collection_mint_counts.entry(count_key).or_insert(0) += 1;
                 }
             }
+
+            // active_validators (see core::chain::RegisterValidatorOp)
+            // rebuilt the same way - registrations apply first, then
+            // spends remove a validator whose backing UTXO got spent this
+            // block, matching ChainState::apply_linear_block's own
+            // ordering exactly (a register+spend of the same commitment
+            // within one block must net out to deregistered). Uses the
+            // already-fully-rebuilt `state.utxos` (the FINAL, present-day
+            // unspent set) rather than reconstructing it incrementally
+            // per-height - correct for the converged final active_validators
+            // (a commitment eventually spent anywhere in the replayed range
+            // ends up excluded either way, whether via this membership
+            // check or the later retain() at its actual spend height). The
+            // one edge case this simplification doesn't reproduce exactly:
+            // a validator that was live-but-since-spent could have
+            // transiently occupied a MAX_ACTIVE_VALIDATORS cap slot during
+            // real-time processing, affecting which of two competing
+            // registrations won a near-simultaneous cap boundary - narrow
+            // enough (only matters exactly at the 1,000-validator cap) to
+            // accept rather than duplicate apply_linear_block's full
+            // per-height UTXO bookkeeping here.
+            for op in &block.validator_ops {
+                super::chain::try_register_validator(&mut state.active_validators, &state.utxos, op.commitment, op.value, op.proof.clone());
+            }
+            if block.header.height > 0 {
+                for input in &block.body.inputs {
+                    state.active_validators.retain(|val| val.commitment != input.commitment);
+                }
+            }
         }
 
         state
@@ -258,7 +280,6 @@ impl Storage {
 
         self.meta.insert(META_HEIGHT_KEY, &delta.height.to_be_bytes())?;
         self.meta.insert(META_TIP_KEY, &delta.tip_hash[..])?;
-        self.meta.insert(META_VALIDATORS_KEY, bincode::serialize(&delta.active_validators_after).unwrap())?;
 
         Ok(())
     }
@@ -287,16 +308,7 @@ impl Storage {
 
         self.meta.insert(META_HEIGHT_KEY, &delta.new_height.to_be_bytes())?;
         self.meta.insert(META_TIP_KEY, &delta.new_tip[..])?;
-        self.meta.insert(META_VALIDATORS_KEY, bincode::serialize(&delta.active_validators_after).unwrap())?;
 
-        Ok(())
-    }
-
-    /// Persists the current active validator set directly. Used for the
-    /// register_validator path, which mutates active_validators outside of block
-    /// application (small, rewritten wholesale - cheap compared to the collections above).
-    pub fn persist_active_validators(&self, validators: &[Validator]) -> sled::Result<()> {
-        self.meta.insert(META_VALIDATORS_KEY, bincode::serialize(validators).unwrap())?;
         Ok(())
     }
 

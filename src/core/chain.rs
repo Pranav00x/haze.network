@@ -34,6 +34,74 @@ pub fn stake_registration_message(commitment: &Commitment, value: u64) -> Vec<u8
     msg
 }
 
+/// Op-form of a stake registration, included in blocks (see
+/// Block::validator_ops) so validator-set changes are derived
+/// deterministically from block content that every node applies in the same
+/// order - not a live API/P2P side-channel mutation different nodes could
+/// observe in different orders (or not at all, e.g. after a restart).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegisterValidatorOp {
+    pub commitment: Commitment,
+    pub value: u64,
+    pub proof: Signature,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidatorOpError {
+    BelowMinStake,
+    InvalidProof,
+}
+
+impl RegisterValidatorOp {
+    /// Checks everything that doesn't need chain state (proof validity,
+    /// minimum stake) - mirrors every other op's validate_standalone
+    /// convention (see e.g. MintAssetOp). UTXO membership and the
+    /// active-validator-count cap are chain-state-dependent and checked
+    /// only in ChainState::apply_linear_block, same split as every other
+    /// op type in this codebase.
+    pub fn validate_standalone(&self) -> Result<(), ValidatorOpError> {
+        if self.value < MIN_VALIDATOR_STAKE {
+            return Err(ValidatorOpError::BelowMinStake);
+        }
+        let gens = PedersenGens::default();
+        let pubkey = Commitment(self.commitment.as_point() - Scalar::from(self.value) * gens.B);
+        let msg = stake_registration_message(&self.commitment, self.value);
+        if !self.proof.verify(&msg, &pubkey) {
+            return Err(ValidatorOpError::InvalidProof);
+        }
+        Ok(())
+    }
+}
+
+/// Applies a stake registration into a given validator set in place,
+/// enforcing everything register_validator/RegisterValidatorOp together
+/// require: standalone proof+min-stake validity, a real backing UTXO, and
+/// the active-validator-count cap. Shared by ChainState::register_validator
+/// (direct - used by tests/tooling) and apply_linear_block's
+/// candidate-then-commit validation of block.validator_ops, so both paths
+/// enforce identical rules.
+pub(crate) fn try_register_validator(validators: &mut Vec<Validator>, utxos: &HashSet<Commitment>, commitment: Commitment, value: u64, proof: Signature) -> bool {
+    if (RegisterValidatorOp { commitment, value, proof: proof.clone() }).validate_standalone().is_err() {
+        return false;
+    }
+    if !utxos.contains(&commitment) {
+        return false;
+    }
+    let is_new = !validators.iter().any(|v| v.commitment == commitment);
+    if is_new && validators.len() >= MAX_ACTIVE_VALIDATORS {
+        return false;
+    }
+    if let Some(pos) = validators.iter().position(|v| v.commitment == commitment) {
+        if validators[pos].value == value {
+            return false;
+        }
+        validators[pos] = Validator { commitment, value, proof };
+    } else {
+        validators.push(Validator { commitment, value, proof });
+    }
+    true
+}
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ChainState {
     /// The Unspent Transaction Output (UTXO) set.
@@ -157,6 +225,22 @@ impl ApplyResult {
     }
 }
 
+/// A value=0 validator degenerates proposer_priority_order's weighted
+/// selection to a fixed, grindable index-0 pick whenever it's the only
+/// entry contributing to total_stake==0 (see that function) - reject it
+/// outright rather than letting a free/dust UTXO register as a validator at
+/// all.
+pub const MIN_VALIDATOR_STAKE: u64 = 1;
+
+/// Bounds proposer_priority_order's O(n^2) selection cost and
+/// validator_snapshots' per-block storage growth (see apply_linear_block) -
+/// registration only requires a real, currently-unspent UTXO (not free to
+/// fabricate), but a real UTXO can be split into arbitrarily many small
+/// outputs cheaply, so an unbounded active-validator count is still a real
+/// cost-amplification vector worth capping. Generous headroom over any
+/// realistic validator set size for this chain's expected scale.
+pub const MAX_ACTIVE_VALIDATORS: usize = 1_000;
+
 impl ChainState {
     pub fn new() -> Self {
         Self::default()
@@ -173,24 +257,7 @@ impl ChainState {
     /// secret nor requires that peer to blindly trust an unauthenticated
     /// value claim.
     pub fn register_validator(&mut self, commitment: Commitment, value: u64, proof: Signature) -> bool {
-        let gens = PedersenGens::default();
-        let pubkey = Commitment(commitment.as_point() - Scalar::from(value) * gens.B);
-        let msg = stake_registration_message(&commitment, value);
-        if !proof.verify(&msg, &pubkey) {
-            return false;
-        }
-        if !self.utxos.contains(&commitment) {
-            return false;
-        }
-        if let Some(pos) = self.active_validators.iter().position(|v| v.commitment == commitment) {
-            if self.active_validators[pos].value == value {
-                return false;
-            }
-            self.active_validators[pos] = Validator { commitment, value, proof };
-        } else {
-            self.active_validators.push(Validator { commitment, value, proof });
-        }
-        true
+        try_register_validator(&mut self.active_validators, &self.utxos, commitment, value, proof)
     }
 
     /// Deterministically selects the block proposer for a given height and previous hash.
@@ -658,9 +725,27 @@ impl ChainState {
             return None;
         }
 
+        // 4e. Validate stake registrations (see core::chain::RegisterValidatorOp).
+        // Dry-run against a clone of the current validator set so a failure
+        // here (bad proof, no backing UTXO, or the active-validator cap) can
+        // still reject the whole block atomically, exactly like every other
+        // op category above - self.active_validators isn't touched until
+        // this candidate is committed in step 5b below.
+        let mut candidate_validators = self.active_validators.clone();
+        for op in &block.validator_ops {
+            if !try_register_validator(&mut candidate_validators, &self.utxos, op.commitment, op.value, op.proof.clone()) {
+                return None;
+            }
+        }
+
         // 5. Save the snapshot of active validators BEFORE applying state transitions
         let validator_snapshot = (block.header.height, self.active_validators.clone());
         self.validator_snapshots.insert(validator_snapshot.0, validator_snapshot.1.clone());
+
+        // 5b. Commit this block's stake registrations - applied before the
+        // spend-based removal below, so a validator registered AND spent
+        // within the same block correctly nets out to deregistered.
+        self.active_validators = candidate_validators;
 
         // 6. Remove spent inputs from the UTXO set and validators
         let mut spent_commitments = Vec::new();

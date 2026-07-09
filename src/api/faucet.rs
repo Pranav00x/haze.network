@@ -553,6 +553,7 @@ mod tests {
             mint_ops: vec![],
             transfer_asset_ops: vec![],
             launch_collection_ops: vec![],
+            validator_ops: vec![],
         };
         assert!(chain.apply_block(&block).is_applied(), "test block must apply cleanly");
 

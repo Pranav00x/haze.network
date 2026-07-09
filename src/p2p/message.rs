@@ -15,15 +15,6 @@ pub enum P2pMessage {
     StemTx(Transaction),
     FluffTx(Transaction),
     NewBlock(Block),
-    RegisterValidator {
-        commitment: crate::crypto::pedersen::Commitment,
-        value: u64,
-        /// Proof of ownership, NOT the raw blinding factor - see
-        /// ChainState::register_validator/stake_registration_message. Safe
-        /// to gossip: it proves the sender controls this UTXO's spending
-        /// key without ever revealing it.
-        proof: crate::crypto::schnorr::Signature,
-    },
     ChainInfo { height: u64, tip_hash: [u8; 32] },
     GetBlocks { from_height: u64 },
     BlocksBatch { blocks: Vec<Block>, has_more: bool },
@@ -45,13 +36,14 @@ pub enum P2pMessage {
     UtxoSnapshot { utxos: Vec<crate::crypto::pedersen::Commitment>, height: u64, tip_hash: [u8; 32] },
     GetPeers,
     PeersList(Vec<String>),
-    /// Requests the peer's current active validator set - sent once block
-    /// sync completes, since active_validators isn't part of block history
-    /// (it's only ever mutated live via RegisterValidator) and a node that
-    /// joins/reconnects after a registration was broadcast would otherwise
-    /// never learn about it.
-    GetValidators,
-    ValidatorsList(Vec<crate::core::chain::Validator>),
+    /// A pending stake registration (see core::chain::RegisterValidatorOp) -
+    /// gossiped the same way as NewMintOp/NewLaunchCollectionOp. Only takes
+    /// effect once included in a block (see Block::validator_ops) - unlike
+    /// the old RegisterValidator message this replaced, receiving this does
+    /// NOT mutate active_validators directly, so every node derives the
+    /// same validator set purely from block content/order, not from
+    /// whatever order registrations happened to arrive over the network.
+    NewValidatorOp(crate::core::chain::RegisterValidatorOp),
     /// A pending name registration, gossiped directly (not via Dandelion
     /// stem/fluff - unlike payment transactions, name ownership is
     /// intentionally public, so there's no privacy benefit to routing it

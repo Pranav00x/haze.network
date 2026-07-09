@@ -34,6 +34,19 @@ use super::planner::{blinding_for, select_spendable, PlanError};
 /// Same reasoning as planner::plan_send's MAX_FEE_FIT_ATTEMPTS.
 const MAX_FEE_FIT_ATTEMPTS: u32 = 16;
 
+/// NOTE: this can't be widened beyond `fee` alone (e.g. to also bind the
+/// sender's inputs/change) without also changing
+/// core::transaction::Transaction::validate_with_reward's kernel-signature
+/// message, which is hardcoded to exactly `fee.to_le_bytes()` and checked
+/// by every node on every kernel (coinbase, genesis, fee payments, and
+/// this two-party flow alike) - that's a consensus-wide, hard-fork-scale
+/// change, not something to do for this flow alone. A prior attempt at
+/// this hardening broke `tx.validate()` for exactly this reason (see git
+/// history) and was reverted.
+fn slate_challenge_message(fee: u64) -> Vec<u8> {
+    fee.to_le_bytes().to_vec()
+}
+
 /// The file two parties exchange. Only ever carries public data (commitments,
 /// range proofs, public nonce/excess points) - secret blinding factors and
 /// nonces never leave the side that generated them.
@@ -251,7 +264,7 @@ pub fn respond_to_slate(keystore: &mut Keystore, slate: &Slate) -> (Slate, Owned
     let agg_excess_point = slate.sender_excess_point.as_point() + receiver_excess_point.as_point();
     let agg_nonce_point = slate.sender_nonce_point.as_point() + receiver_nonce_point.as_point();
 
-    let e = schnorr::compute_challenge(&slate.fee.to_le_bytes(), agg_excess_point, agg_nonce_point);
+    let e = schnorr::compute_challenge(&slate_challenge_message(slate.fee), agg_excess_point, agg_nonce_point);
     let partial_sig = schnorr::partial_sign(&nonce, &k_r, &e);
 
     let mut response = slate.clone();
@@ -279,7 +292,7 @@ pub fn finalize_slate(pending: &PendingSlate, response: &Slate) -> Result<Transa
     let agg_excess_point = sender_excess_point + receiver_excess_point.as_point();
     let agg_nonce_point = pending.nonce_point.as_point() + receiver_nonce_point.as_point();
 
-    let e = schnorr::compute_challenge(&pending.fee.to_le_bytes(), agg_excess_point, agg_nonce_point);
+    let e = schnorr::compute_challenge(&slate_challenge_message(pending.fee), agg_excess_point, agg_nonce_point);
     let sender_partial_sig = schnorr::partial_sign(&pending.nonce, &pending.excess_blinding, &e);
     let signature = schnorr::aggregate(&[sender_partial_sig, receiver_partial_sig], e);
 

@@ -443,6 +443,27 @@ impl Proposer {
 
                     let asset_registry_root = crate::core::assets::compute_asset_registry_root(&asset_registry_snapshot);
 
+                    // Pull pending stake registrations - same soft-filtering
+                    // pattern as launch_collection_ops above, using the
+                    // exact same check ChainState::apply_linear_block will
+                    // run for real (try_register_validator) against a
+                    // candidate clone, so a bad/duplicate/over-cap op here
+                    // can only produce a wasted block, never an invalid one.
+                    let candidate_validator_ops = {
+                        let mut mp = self.mempool.lock().unwrap();
+                        mp.take_validator_ops()
+                    };
+                    let mut validator_ops = Vec::new();
+                    let (mut candidate_validators, utxos_for_validator_ops) = {
+                        let c = self.chain.lock().unwrap();
+                        (c.active_validators.clone(), c.utxos.clone())
+                    };
+                    for op in candidate_validator_ops {
+                        if crate::core::chain::try_register_validator(&mut candidate_validators, &utxos_for_validator_ops, op.commitment, op.value, op.proof.clone()) {
+                            validator_ops.push(op);
+                        }
+                    }
+
                     println!("We are chosen proposer for block #{}! Proposing block with {} user transactions, {} name registrations, {} name transfers, {} asset mints, {} asset transfers...", next_height, tx.kernels.len(), name_ops.len(), transfer_ops.len(), mint_ops.len(), transfer_asset_ops.len());
                     
                     // 1. Calculate total fees and coinbase value
@@ -513,6 +534,7 @@ impl Proposer {
                         mint_ops,
                         transfer_asset_ops,
                         launch_collection_ops,
+                        validator_ops,
                     };
 
                     // Apply locally
