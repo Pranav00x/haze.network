@@ -1,0 +1,37 @@
+# Reverse proxy to the node's HTTP API (and its built-in explorer at GET /) -
+# the node itself binds 127.0.0.1:8332 only (see haze-node.service's --network
+# host + the node's default bind), nginx is what's actually internet-facing.
+# Run `certbot --nginx -d {{NODE_DOMAIN}}` after this is in place - it
+# rewrites this file in-place to add the HTTPS server block and redirect,
+# so don't hand-edit that part back in later.
+server {
+    listen 80;
+    server_name {{NODE_DOMAIN}};
+
+    # Same reasoning as MAX_MESSAGE_SIZE on the P2P side and
+    # content_length_limit on the API's own write routes - nginx's own cap
+    # here is separate defense-in-depth in front of that.
+    client_max_body_size 2M;
+
+    location / {
+        proxy_pass http://127.0.0.1:8332;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # The P2P WebSocket path (see p2p::server::handle_inbound_ws / GET
+    # /v1/p2p/ws) needs the Upgrade/Connection headers nginx doesn't send by
+    # default - without this, WS peers dialing in via wss:// can't connect
+    # even though the plain HTTP API routes work fine.
+    location /v1/p2p/ws {
+        proxy_pass http://127.0.0.1:8332;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_read_timeout 3600s;
+    }
+}

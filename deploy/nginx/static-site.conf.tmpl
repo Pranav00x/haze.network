@@ -1,0 +1,22 @@
+# Reusable template for a static single-page frontend (wallet or
+# marketplace) - both are plain HTML/JS/wasm, no build step, just files
+# served directly. Instantiated twice by setup.sh with different
+# {{DOMAIN}}/{{WEBROOT}} substitutions. Same certbot note as node.conf.tmpl:
+# run `certbot --nginx -d {{DOMAIN}}` after this is in place.
+server {
+    listen 80;
+    server_name {{DOMAIN}};
+    root {{WEBROOT}};
+    index index.html;
+
+    # wasm needs the right MIME type or some browsers refuse to
+    # instantiate it as a module - nginx's default mime.types usually
+    # covers this already, but it's cheap insurance to be explicit.
+    location ~ \.wasm$ {
+        add_header Content-Type application/wasm;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

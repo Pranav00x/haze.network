@@ -1,0 +1,33 @@
+[Unit]
+Description=Haze testnet node (Docker)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+# EnvironmentFile holds the real secrets (HAZE_TREASURY_BLINDING,
+# HAZE_GENESIS_VALIDATOR_BLINDING) - created directly on the server, never
+# committed, never typed into a shell command that gets logged. See
+# deploy/README.md for how to create it (chmod 600, root-owned).
+EnvironmentFile=/etc/haze/node.env
+
+# Named container so restart/stop/logs are easy to target by name; --rm
+# is intentionally omitted so a crash leaves the container inspectable
+# via `docker logs haze-node` before systemd restarts it.
+ExecStartPre=-/usr/bin/docker stop haze-node
+ExecStartPre=-/usr/bin/docker rm haze-node
+ExecStart=/usr/bin/docker run --name haze-node \
+    --network host \
+    -v /var/lib/haze-data:/app/haze_data \
+    -e PORT=8332 \
+    -e HAZE_DATA_DIR=/app/haze_data \
+    -e HAZE_TREASURY_BLINDING \
+    -e HAZE_GENESIS_VALIDATOR_BLINDING \
+    haze-node:latest
+ExecStop=/usr/bin/docker stop haze-node
+
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
