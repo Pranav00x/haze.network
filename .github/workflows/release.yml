@@ -106,8 +106,80 @@ jobs:
             dist/${{ matrix.asset_name }}.${{ matrix.archive_ext }}
             dist/${{ matrix.asset_name }}.${{ matrix.archive_ext }}.sha256
 
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-android
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Android NDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;27.0.12077973" > /dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973" >> "$GITHUB_ENV"
+
+      - name: Cross-compile the Rust core for every Android ABI
+        run: |
+          cargo ndk -t arm64-v8a -t armeabi-v7a -t x86 -t x86_64 build --release --lib --no-default-features --features native
+          mkdir -p android/app/src/main/jniLibs/{arm64-v8a,armeabi-v7a,x86,x86_64}
+          cp target/aarch64-linux-android/release/libhaze_core.so android/app/src/main/jniLibs/arm64-v8a/
+          cp target/armv7-linux-androideabi/release/libhaze_core.so android/app/src/main/jniLibs/armeabi-v7a/
+          cp target/i686-linux-android/release/libhaze_core.so android/app/src/main/jniLibs/x86/
+          cp target/x86_64-linux-android/release/libhaze_core.so android/app/src/main/jniLibs/x86_64/
+
+      - name: Generate Kotlin bindings from the compiled library
+        run: |
+          mkdir -p android/app/src/main/java
+          cargo run --release --bin uniffi-bindgen -- generate \
+            --library target/aarch64-linux-android/release/libhaze_core.so \
+            --language kotlin \
+            --out-dir android/app/src/main/java
+
+      # No release-signing keystore is configured yet, so this ships as a
+      # debug-signed APK - same tradeoff CI already accepts for its own
+      # (never-published) debug build. Fine for testnet: installable via
+      # "unknown sources" on any Android device, just not distributable
+      # through the Play Store. Set up a real signing key (and store it as
+      # a GitHub Actions secret, never in this repo) before a real launch.
+      - name: Build Android app (debug APK)
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Stage and checksum the APK
+        run: |
+          mkdir -p dist
+          cp android/app/build/outputs/apk/debug/app-debug.apk dist/haze-testnet-android.apk
+          cd dist && shasum -a 256 haze-testnet-android.apk > haze-testnet-android.apk.sha256
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: haze-testnet-android
+          path: |
+            dist/haze-testnet-android.apk
+            dist/haze-testnet-android.apk.sha256
+
   publish-release:
-    needs: build
+    needs: [build, build-android]
     runs-on: ubuntu-latest
     steps:
       - name: Download all build artifacts
@@ -121,11 +193,13 @@ jobs:
         with:
           name: "Haze testnet ${{ github.ref_name }}"
           body: |
-            Public testnet build of the Haze node binary for Windows, macOS (Intel + Apple Silicon), and Linux.
+            Public testnet build of the Haze node binary for Windows, macOS (Intel + Apple Silicon), and Linux, plus an Android wallet APK.
 
-            **This is testnet software.** See the included README.txt before running - HAZE has no value, and the chain may still be reset if a serious bug is found.
+            **This is testnet software.** See the included README.txt (desktop archives) before running - HAZE has no value, and the chain may still be reset if a serious bug is found.
 
-            Each archive includes a `.sha256` checksum file - verify your download before running it.
+            The Android APK is debug-signed (no release keystore set up yet) - install it via "unknown sources," it isn't on the Play Store.
+
+            Each archive/APK includes a `.sha256` checksum file - verify your download before running it.
           files: artifacts/**
           fail_on_unmatched_files: true
           draft: false
