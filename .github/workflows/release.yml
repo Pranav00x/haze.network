@@ -1,6 +1,6 @@
 name: Release
 
-# Only runs on a pushed tag (e.g. v0.3.0-devnet) - this is a deliberate
+# Only runs on a pushed tag (e.g. v0.1.0-testnet) - this is a deliberate
 # publish action, not something that should fire on every commit to main
 # the way the CI workflow does.
 on:
@@ -20,19 +20,19 @@ jobs:
         include:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            asset_name: haze-devnet-windows-x86_64
+            asset_name: haze-testnet-windows-x86_64
             archive_ext: zip
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            asset_name: haze-devnet-linux-x86_64
+            asset_name: haze-testnet-linux-x86_64
             archive_ext: tar.gz
           - target: x86_64-apple-darwin
             os: macos-13 # Intel runner - native build, no cross toolchain needed
-            asset_name: haze-devnet-macos-x86_64
+            asset_name: haze-testnet-macos-x86_64
             archive_ext: tar.gz
           - target: aarch64-apple-darwin
             os: macos-14 # Apple Silicon runner - native build, no cross toolchain needed
-            asset_name: haze-devnet-macos-aarch64
+            asset_name: haze-testnet-macos-aarch64
             archive_ext: tar.gz
 
     runs-on: ${{ matrix.os }}
@@ -119,11 +119,11 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "Haze devnet ${{ github.ref_name }}"
+          name: "Haze testnet ${{ github.ref_name }}"
           body: |
-            Public devnet build of the Haze node binary for Windows, macOS (Intel + Apple Silicon), and Linux.
+            Public testnet build of the Haze node binary for Windows, macOS (Intel + Apple Silicon), and Linux.
 
-            **This is devnet software.** See the included README.txt before running - HAZE has no value, and the chain may be reset without notice.
+            **This is testnet software.** See the included README.txt before running - HAZE has no value, and the chain may still be reset if a serious bug is found.
 
             Each archive includes a `.sha256` checksum file - verify your download before running it.
           files: artifacts/**

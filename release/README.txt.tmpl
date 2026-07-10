@@ -1,23 +1,23 @@
-Haze Node - Public Devnet Build ({{TAG}})
-==========================================
+Haze Node - Public Testnet Build ({{TAG}})
+===========================================
 
-THIS IS DEVNET. NOT MAINNET. HAZE HAS NO VALUE.
-The chain may be reset (wiped back to block 0) at any time, without notice.
-Nothing you do here - balances, stakes, names, minted assets - is guaranteed
-to survive. Do not treat any HAZE balance as real or valuable.
+THIS IS TESTNET. NOT MAINNET. HAZE HAS NO VALUE.
+The chain may still be reset (wiped back to block 0) if a serious bug is
+found. Nothing you do here - balances, stakes, names, minted assets - is
+guaranteed to survive. Do not treat any HAZE balance as real or valuable.
 
 
 RUNNING THE NODE
 -----------------
 From a terminal, in the folder you extracted this archive into:
 
-    Windows:        haze.exe node
-    macOS / Linux:  ./haze node
+    Windows:        haze.exe node --peers <seed-node-address>
+    macOS / Linux:  ./haze node --peers <seed-node-address>
 
 This starts a node listening for peer connections on 127.0.0.1:8333 and
-serving a local HTTP API on 127.0.0.1:8332. By default it starts a fresh
-chain from genesis and runs standalone (no known public peer to connect to
-right now - see "CONNECTING TO OTHER PEERS" below).
+serving a local HTTP API on 127.0.0.1:8332. See "CONNECTING TO OTHER PEERS"
+below for the current seed node address - without --peers, your node starts
+its own standalone chain from genesis instead of joining the public testnet.
 
 Useful flags:
     --rpc-port <port>     change the local HTTP API port (default 8332)
@@ -43,38 +43,36 @@ While the node is running, in another terminal:
     curl http://127.0.0.1:8332/v1/status
 
 This returns your node's current chain height, tip hash, number of active
-validators, and mempool size. There's currently no public seed node to sync
-against (see below), so on a freshly started node this height will just
-reflect blocks your own node has produced, if any.
+validators, and mempool size. If you connected to the public testnet via
+--peers, this height should climb toward the network's current tip as your
+node syncs.
 
 
 CONNECTING TO OTHER PEERS
 ---------------------------
-A public seed node for this devnet isn't reachable yet - the hosted devnet
-node's peer-to-peer port isn't currently exposed to the internet. Until
-that's available, this binary is useful for running a fully standalone
-local devnet (e.g. to test the wallet or explore the API) or for connecting
-to another node's address directly via --peers, if someone gives you one.
-Check https://github.com/Pranav00x/haze for updates on public peer
-availability.
+Public testnet seed node: see https://github.com/Pranav00x/haze for the
+current address to pass via --peers. Without a seed peer, this binary runs
+a fully standalone local chain instead (still useful for testing the
+wallet or exploring the API on your own).
 
 
 ABOUT VALIDATOR STAKING
 --------------------------
 Registering a UTXO as a validator stake (via the `stake` wallet command)
-does not mean your node will propose blocks. It just publishes that
-output's commitment on-chain, proving ownership by revealing its blinding
-factor. To actually propose blocks with it, you separately need to run a
-node with `--stake-key <that output's private key>` - registering and
-proposing are two different steps.
+does not mean your node will propose blocks. It submits a signed proof of
+ownership - never your output's raw private key - which only takes effect
+once a proposer mines it into a block; your node isn't an active validator
+until then. To actually propose blocks with a staked output, you separately
+need to run a node with `--stake-key <that output's private key>` -
+registering and proposing are two different steps.
 
 
 VERIFYING YOUR DOWNLOAD
 --------------------------
 Each release archive ships with a matching .sha256 file. To verify:
 
-    macOS / Linux:  shasum -a 256 -c haze-devnet-*.tar.gz.sha256
-    Windows:        certutil -hashfile haze-devnet-*.zip SHA256
+    macOS / Linux:  shasum -a 256 -c haze-testnet-*.tar.gz.sha256
+    Windows:        certutil -hashfile haze-testnet-*.zip SHA256
                     (compare the output against the .sha256 file by hand)
 
 
