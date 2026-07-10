@@ -86,25 +86,42 @@
 
   .wrap { max-width: 1180px; margin: 0 auto; padding: 0 clamp(20px, 5vw, 64px); }
 
-  /* ---------- Glass primitive - used deliberately, not everywhere: the
-     hero status pill and the "get started" trio are the only fully-glass
+  /* ---------- Liquid glass primitive - used deliberately, not everywhere:
+     the hero status pill and the "get started" trio are the only fully-glass
      surfaces, since those are the moments meant to feel like looking
-     through haze at something solid underneath. ---------- */
+     through haze at something solid underneath.
+
+     "Liquid" over flat glassmorphism means two things layered together (a
+     third - a color-separated gradient rim via mask-composite - was cut:
+     stacked with backdrop-filter across several panels it made the
+     compositor pathologically slow in testing, not worth it for a subtle
+     edge effect):
+     1) a cursor-tracked specular highlight (--mx/--my set by JS below) -
+        real glass catches light differently as you move, flat blur doesn't.
+     2) a convex light response: inset highlight along the top edge + inset
+        shadow along the bottom, like light hitting a lens rather than a
+        flat pane. */
   .glass {
+    --mx: 50%;
+    --my: 20%;
     position: relative;
-    background: linear-gradient(160deg, var(--glass-fill-strong), var(--glass-fill));
-    backdrop-filter: blur(20px) saturate(140%);
-    -webkit-backdrop-filter: blur(20px) saturate(140%);
+    background:
+      radial-gradient(480px circle at var(--mx) var(--my), var(--glass-sheen), transparent 55%),
+      linear-gradient(160deg, var(--glass-fill-strong), var(--glass-fill));
+    backdrop-filter: blur(20px) saturate(150%);
+    -webkit-backdrop-filter: blur(20px) saturate(150%);
     border: 1px solid var(--glass-border);
-    border-radius: 14px;
+    border-radius: 22px;
+    box-shadow:
+      inset 0 1px 0 oklch(0.98 0.01 90 / 0.5),
+      inset 0 -14px 24px -18px oklch(0.1 0.02 292 / 0.5),
+      0 18px 40px -16px oklch(0.1 0.02 292 / 0.45);
+    transition: box-shadow 0.4s ease;
   }
-  .glass::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    background: linear-gradient(115deg, var(--glass-sheen) 0%, transparent 30%);
-    pointer-events: none;
+  .glass:hover { box-shadow:
+      inset 0 1px 0 oklch(0.98 0.01 90 / 0.6),
+      inset 0 -14px 24px -18px oklch(0.1 0.02 292 / 0.5),
+      0 22px 48px -16px oklch(0.1 0.02 292 / 0.55);
   }
 
   /* ---------- Topbar ---------- */
@@ -211,8 +228,8 @@
     font-size: 14px;
     font-weight: 600;
     text-decoration: none;
-    padding: 13px 22px;
-    border-radius: 8px;
+    padding: 13px 24px;
+    border-radius: 999px;
     display: inline-flex;
     align-items: center;
     gap: 8px;
@@ -662,6 +679,21 @@ async function refreshStatus() {
 renderNodeLabel(false);
 refreshStatus();
 setInterval(refreshStatus, 8000);
+
+// Liquid-glass specular highlight - tracks the pointer per-card via
+// --mx/--my (read by the .glass radial-gradient), so the "light" moves
+// across each panel independently instead of one global position. Falls
+// back to a fixed soft highlight (the CSS defaults) on touch devices,
+// which never fire pointermove the same way.
+if (window.matchMedia("(pointer: fine)").matches) {
+  document.querySelectorAll(".glass").forEach((el) => {
+    el.addEventListener("pointermove", (e) => {
+      const r = el.getBoundingClientRect();
+      el.style.setProperty("--mx", ((e.clientX - r.left) / r.width * 100) + "%");
+      el.style.setProperty("--my", ((e.clientY - r.top) / r.height * 100) + "%");
+    });
+  });
+}
 </script>
 </body>
 </html>
