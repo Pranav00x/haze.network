@@ -47,3 +47,12 @@ services:
       # set, same as haze-l1-devnet's current unfunded-faucet state.
       - key: HAZE_TREASURY_BLINDING
         sync: false
+      # Also set in the dashboard - see core::genesis::genesis_validator_blinding.
+      # Without this, the node falls back to the public devnet default
+      # (blinding=42), which anyone can run their own node with and act as
+      # the sole validator until a real one registers - exactly the gap
+      # closed earlier this session, but only if a real deployment actually
+      # sets this. The Dockerfile's --stake-key now reads this same env var,
+      # so setting it here also makes this node operate as that identity.
+      - key: HAZE_GENESIS_VALIDATOR_BLINDING
+        sync: false

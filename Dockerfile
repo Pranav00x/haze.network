@@ -36,4 +36,15 @@ EXPOSE 8332
 # platforms like Render assign their own port via a PORT env var rather than
 # letting you pick one; this falls back to 8332 when PORT isn't set (e.g.
 # running locally with `docker run`, or on Fly.io).
-ENTRYPOINT ["/bin/sh", "-c", "exec /app/haze node --bind 0.0.0.0:8333 --rpc-port ${PORT:-8332} --stake-key 42"]
+#
+# --stake-key follows HAZE_GENESIS_VALIDATOR_BLINDING (see
+# core::genesis::genesis_validator_blinding), NOT hardcoded to the public
+# devnet default 42 - this node has to operate AS whatever secret consensus
+# considers the legitimate bootstrap validator, and those two values must
+# match. Falls back to 42 when the env var is unset, so the existing devnet
+# service (which never sets it) is unaffected; any deployment that DOES set
+# HAZE_GENESIS_VALIDATOR_BLINDING (a real testnet/mainnet genesis) now
+# actually runs as that real secret instead of silently reverting to the
+# public one - hardcoding 42 here would have completely undone that fix for
+# every real deployment built from this Dockerfile.
+ENTRYPOINT ["/bin/sh", "-c", "exec /app/haze node --bind 0.0.0.0:8333 --rpc-port ${PORT:-8332} --stake-key ${HAZE_GENESIS_VALIDATOR_BLINDING:-42}"]
