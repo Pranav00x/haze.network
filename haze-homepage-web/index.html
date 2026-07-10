@@ -32,7 +32,6 @@
     --violet: oklch(0.68 0.18 320);
     --ok: oklch(0.78 0.16 155);
     --danger: oklch(0.7 0.18 25);
-    --grad: linear-gradient(95deg, var(--amber), var(--violet));
     --font-display: "Space Grotesk", sans-serif;
     --font-body: "Public Sans", sans-serif;
     --font-mono: "IBM Plex Mono", monospace;
@@ -68,12 +67,7 @@
   a { color: inherit; }
   ::selection { background: color-mix(in oklch, var(--amber) 30%, transparent); }
   .wrap { max-width: 1180px; margin: 0 auto; padding: 0 clamp(20px, 5vw, 64px); }
-  .grad-text {
-    background: var(--grad);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-  }
+  .grad-text { color: var(--amber); }
 
   /* ---------- Topbar ---------- */
   .topbar {
@@ -129,7 +123,7 @@
     font-weight: 600;
     font-size: 13.5px;
     color: var(--fog-0);
-    background: var(--grad);
+    background: var(--amber);
     text-decoration: none;
     padding: 9px 18px;
     border-radius: 8px;
@@ -148,9 +142,7 @@
     transform: translateX(-50%);
     width: 900px;
     height: 500px;
-    background:
-      radial-gradient(ellipse at 30% 30%, color-mix(in oklch, var(--amber) 22%, transparent), transparent 60%),
-      radial-gradient(ellipse at 70% 60%, color-mix(in oklch, var(--violet) 22%, transparent), transparent 60%);
+    background: radial-gradient(ellipse at 50% 40%, color-mix(in oklch, var(--amber) 20%, transparent), transparent 65%);
     filter: blur(40px);
     pointer-events: none;
     z-index: -1;
@@ -213,7 +205,7 @@
     transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), filter 0.2s ease, border-color 0.2s ease;
   }
   .btn:hover { transform: translateY(-2px); }
-  .btn-primary { background: var(--grad); color: var(--fog-0); }
+  .btn-primary { background: var(--amber); color: var(--fog-0); }
   .btn-primary:hover { filter: brightness(1.08); }
   .btn-ghost { background: var(--fog-1); border: 1px solid var(--fog-3); color: var(--ink); }
   .btn-ghost:hover { border-color: var(--violet); }
@@ -356,11 +348,11 @@
     color: var(--ink);
     transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.25s ease;
   }
-  .gs-card:hover { transform: translateY(-3px); border-color: var(--violet); }
+  .gs-card:hover { transform: translateY(-3px); border-color: var(--amber); }
   .gs-card .gs-glyph {
     width: 38px; height: 38px;
     border-radius: 10px;
-    background: var(--grad);
+    background: var(--amber);
     display: flex; align-items: center; justify-content: center;
     font-family: var(--font-display); font-weight: 700; font-size: 16px; color: var(--fog-0);
   }
