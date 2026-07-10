@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Haze — a privacy L1, built on Mimblewimble</title>
-<meta name="description" content="Haze is a Mimblewimble layer-1: confidential by default, no accounts, no smart contracts, no on-chain history of who paid whom — with NFTs, drops, and a trustless marketplace running natively on top.">
+<meta name="description" content="Haze is a from-scratch Mimblewimble layer-1: Pedersen-committed UTXOs, Bulletproofs range proofs, cut-through and horizon compaction, deterministic weighted-PoS consensus. No accounts, no smart contracts, no transaction graph.">
 <script>
   (function () {
     var saved = localStorage.getItem("hazeTheme");
@@ -347,13 +347,14 @@
   .tech-cell { background: var(--fog-1); padding: 22px 24px; }
   .tech-cell .tc-label { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--amber); margin-bottom: 10px; }
   .tech-cell .tc-body { font-size: 13.5px; line-height: 1.65; color: var(--ink-dim); }
-  .tech-cell code {
+  .tech-cell code, .editorial-body code, .feature-row code, .gs-card code {
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: 0.92em;
     background: var(--fog-2);
     color: var(--violet);
     padding: 1px 5px;
     border-radius: 3px;
+    white-space: nowrap;
   }
   .target-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
   .target-pill { font-family: var(--font-mono); font-size: 11px; color: var(--ink-dim); background: var(--fog-2); border-radius: 4px; padding: 3px 8px; }
@@ -363,8 +364,8 @@
   .get-started h2 { font-family: var(--font-display); font-weight: 460; font-size: clamp(24px, 3vw, 32px); margin: 0 0 8px; }
   .get-started .gs-sub { color: var(--ink-faint); font-size: 14px; margin: 0 0 32px; }
 
-  .gs-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
-  @media (max-width: 900px) { .gs-grid { grid-template-columns: 1fr; } }
+  .gs-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
+  @media (max-width: 700px) { .gs-grid { grid-template-columns: 1fr; } }
   .gs-card {
     padding: 26px 24px;
     display: flex;
@@ -432,7 +433,7 @@
       <div>
         <div class="eyebrow"><span class="pulse-dot"></span> Public testnet — live network</div>
         <h1 class="hero-headline">A ledger that doesn&rsquo;t <em>remember</em> who paid whom.</h1>
-        <p class="hero-sub">Haze is a layer-1 built on Mimblewimble: no accounts, no addresses, no on-chain history of transaction graphs — just confidential, cut-through UTXOs. NFTs, scheduled drops, and a trustless marketplace already run natively on top, with zero smart contracts anywhere in the stack.</p>
+        <p class="hero-sub">A from-scratch Mimblewimble implementation: Pedersen-committed, Bulletproofs-range-proved UTXOs with no account model and no address book, settled by a proof-of-stake validator set with deterministic weighted proposer selection. No smart contract layer — consensus rules are compiled into the protocol, not deployed on top of it.</p>
         <div class="hero-ctas">
           <a class="btn btn-primary" href="#get-started">Open the wallet →</a>
           <a class="btn btn-ghost" href="#what-is-haze">What is Mimblewimble?</a>
@@ -466,71 +467,72 @@
     </section>
 
     <section class="editorial" id="what-is-haze">
-      <h2>Privacy isn&rsquo;t a feature you bolt on. It has to be the default.</h2>
+      <h2>State model</h2>
       <div class="editorial-body">
-        <p><strong>Mimblewimble</strong> is a transaction protocol, not a coin — Haze is a from-scratch layer-1 implementation of it. Every value is hidden in a <strong>Pedersen commitment</strong>, proven non-negative with a Bulletproofs range proof, and every transaction balances via simple additive homomorphism instead of a global ledger of who-owns-what. There's no address book to leak, because there are no addresses — just unspent, confidential outputs.</p>
-        <p>Spent inputs and their matching outputs can be <strong>cut through</strong> — cancelled out of history entirely, per block and across the whole mempool — so old, fully-spent transaction chains don't have to be kept around forever just to prove the chain is valid. A node can compact its own history past a rolling horizon and still answer "is this UTXO set correct" for any recent tip.</p>
+        <p>An <strong>output</strong> is the triple <code>(C, π, ξ)</code>: a Pedersen commitment <code>C = v·H + r·G</code> on Ristretto255 hiding value <code>v</code> under blinding factor <code>r</code>; a Bulletproofs range proof <code>π</code> certifying <code>v ∈ [0, 2⁶⁴)</code> with no trusted setup; and an optional ChaCha20-Poly1305-sealed note <code>ξ</code> the owner can later decrypt to recover <code>v</code> and <code>r</code>. A <strong>kernel</strong> is <code>(excess, fee, σ)</code>: <code>excess = Σr_in − Σr_out</code> committed to value 0, signed with <code>σ = Schnorr(excess_sk, fee_LE)</code> over a <code>merlin</code> Fiat–Shamir transcript.</p>
+        <p>Block validity is one identity, checked in <code>core::transaction::validate_with_reward</code>: <code>ΣC_in − ΣC_out − fee·H + reward·H ≟ Σexcess_i</code>, plus every output's range proof and every kernel's signature. There is no account balance to update and no address to route a payment to — just unspent, confidential outputs and the arithmetic that proves a spend is real without revealing how much moved or between which two outputs.</p>
+        <p>Spent inputs and their matching outputs <strong>cut through</strong> — cancel out of history entirely, per block and across the whole mempool, before they ever land. A node compacts spent pairs below a rolling horizon (default 1,000 blocks) and still answers any tip-relative UTXO-set query correctly; it just can't replay full history past that point for a peer that asks (<code>PrunedRange</code>, handled via an aggregate-validation fallback instead).</p>
         <div class="not-list">
           <span class="not-chip">no accounts</span>
           <span class="not-chip">no balances</span>
-          <span class="not-chip">no smart contracts</span>
+          <span class="not-chip">no address book</span>
           <span class="not-chip">no tx graph</span>
-          <span class="not-chip">no gas token games</span>
+          <span class="not-chip">no smart contracts</span>
         </div>
       </div>
     </section>
 
     <section class="features" id="features">
       <div class="features-head">
-        <h2>What runs on it today</h2>
+        <h2>Protocol mechanics</h2>
         <span class="features-count">06 shipped</span>
       </div>
 
       <div class="feature-row">
         <div class="f-index">01 <span class="f-tag">CORE</span></div>
         <div>
-          <h3>Confidential payments, Dandelion-routed</h3>
-          <p>Every payment gossips through a stem phase before it ever fluffs to the wider network, so the node that originates a transaction isn't trivially the first one to broadcast it — the same privacy the base protocol gives values, extended to propagation itself.</p>
+          <h3>Dandelion++ payment propagation</h3>
+          <p>Every transaction routes through a stem phase (single random peer-to-peer hop) before fluffing to full broadcast — 20% fluff probability per hop, 15s fallback-fluff timer if the stem stalls. The originating node isn't trivially identifiable as the broadcaster, extending the base protocol's value-privacy to the network layer itself.</p>
         </div>
       </div>
 
       <div class="feature-row">
         <div class="f-index">02 <span class="f-tag">CORE</span></div>
         <div>
-          <h3>Proof-of-stake, deterministic proposer selection</h3>
-          <p>Validators are just currently-unspent UTXOs with a signed proof of ownership — no separate stake-lock token, no slashing complexity. Weighted, deterministic selection per block height means liveness doesn't depend on one designated proposer; an inactive validator's turn falls through to the next automatically.</p>
+          <h3>Weighted, deterministic proposer selection</h3>
+          <p><code>proposer(h) = active_validators[H(h ‖ prev_hash) mod |active_validators|]</code>. A validator is any currently-unspent UTXO with a signed proof of ownership — no separate stake-lock token, no slashing. Any active validator (not just the computed primary) may sign a given height, so one offline majority-stake validator can't stall the chain; liveness falls through to the next rank on a timeout instead.</p>
         </div>
       </div>
 
       <div class="feature-row">
-        <div class="f-index">03 <span class="f-tag">NFT</span></div>
+        <div class="f-index">03 <span class="f-tag">CORE</span></div>
         <div>
-          <h3>Native NFTs — no contracts required</h3>
-          <p>Assets are a first-class registry entry, not a token standard implemented in application code. Minting, transferring, and ownership all live in consensus itself.</p>
+          <h3>Deterministic validator-set derivation</h3>
+          <p>Stake registration is a signed proof-of-ownership op included in blocks (<code>RegisterValidatorOp</code>), not a live side-channel mutation — every node derives the exact same active-validator set purely by replaying block content, including after a restart, rather than trusting whatever order registrations happened to arrive over the network.</p>
         </div>
       </div>
 
       <div class="feature-row">
-        <div class="f-index">04 <span class="f-tag">NFT</span></div>
+        <div class="f-index">04 <span class="f-tag">CORE</span></div>
         <div>
-          <h3>Scheduled drops with allowlists</h3>
-          <p>Multi-phase collection launches — GTD, FCFS, and public rounds — with Merkle-proven allowlist membership checked directly by consensus, not trusted to an off-chain minting server.</p>
+          <h3>Reorg-safe state transitions</h3>
+          <p><code>apply_linear_block</code> / <code>rollback_block</code> are exactly symmetric across the UTXO set, the kernel-excess set, and every registry — a fork with more accumulated stake-weight triggers a clean rollback-then-replay to the heavier chain, not a partial or ad-hoc state patch.</p>
         </div>
       </div>
 
       <div class="feature-row">
-        <div class="f-index">05 <span class="f-tag">MARKET</span></div>
+        <div class="f-index">05 <span class="f-tag">CORE</span></div>
         <div>
-          <h3>Trustless secondary sales</h3>
-          <p>Buying and selling settle through an interactive two-party slate: a seller can co-sign a transfer that's cryptographically inert until the buyer's payment kernel actually lands on-chain — no escrow contract, no custodian, no marketplace fee wallet holding funds in between.</p>
+          <h3>Flat, size-based fees</h3>
+          <p>Mempool acceptance floor is <code>FEE_PER_KB · size_bytes / 1000</code>, clamped to a fixed minimum — no congestion multiplier that inflates the default with mempool backlog. A payer can still voluntarily overpay to jump fee-ordered priority queuing; the advisory suggested fee just never auto-escalates on its own.</p>
         </div>
       </div>
 
       <div class="feature-row">
-        <div class="f-index">06 <span class="f-tag">MARKET</span></div>
+        <div class="f-index">06 <span class="f-tag">CORE</span></div>
         <div>
-          <h3>Creator royalties, enforced by consensus</h3>
-          <p>A collection's royalty rate is baked into every resale as a second payment condition alongside the seller's proceeds — the transfer simply can't apply until both land, so there's no royalty-skipping marketplace to route around.</p>
+          <h3>Transport-agnostic P2P</h3>
+          <p>Raw length-prefixed-bincode TCP and inbound/outbound WebSocket peers interoperate transparently through the same <code>PeerReader</code>/<code>PeerWriter</code> abstraction — a node behind a single exposed HTTP(S) port can still fully participate. Sync batches blocks 256 at a time, falling back to aggregate-kernel validation for any peer serving from past its own compaction horizon.</p>
         </div>
       </div>
     </section>
@@ -542,11 +544,11 @@
       <div class="tech-grid">
         <div class="tech-cell">
           <div class="tc-label">Crypto stack</div>
-          <div class="tc-body">Ristretto255 (<code>curve25519-dalek</code>), Bulletproofs range proofs, <code>merlin</code> Fiat–Shamir transcripts, ChaCha20-Poly1305 for recoverable output notes. Zero pairing-based cryptography anywhere in the tree.</div>
+          <div class="tc-body">Ristretto255 (<code>curve25519-dalek</code>), Bulletproofs range proofs, <code>merlin</code> Fiat–Shamir transcripts, ChaCha20-Poly1305 for recoverable output notes, <code>bip39</code> for seed phrases. Zero pairing-based cryptography anywhere in the tree.</div>
         </div>
         <div class="tech-cell">
-          <div class="tc-label">Network</div>
-          <div class="tc-body">Transport-agnostic P2P — raw TCP or WebSocket peers interoperate transparently, so a node behind a single-port host can still fully participate. Sync via batched block requests with an aggregate-validation fallback for peers past their compaction horizon.</div>
+          <div class="tc-label">Supply &amp; emission</div>
+          <div class="tc-body">21,000,000,000 HAZE target: 65% emitted via block rewards, halving every 12,600,000 blocks (~4 years at a 10s block time); 35% minted at genesis (13% team, 13% investors — each vesting over a 6-month cliff plus 7 quarterly tranches — 6% airdrop, 3% treasury). Every locked-output secret is a real out-of-band scalar, never committed to this repo.</div>
         </div>
         <div class="tech-cell">
           <div class="tc-label">Build surface</div>
@@ -566,13 +568,13 @@
 
     <section class="get-started" id="get-started">
       <h2>Get started</h2>
-      <p class="gs-sub">All three apps talk to any Haze node over a plain HTTP/WS API — point them at your own node, or a public one, at any time.</p>
+      <p class="gs-sub">Both talk to any Haze node over a plain HTTP/WS API — point them at your own node, or a public one, at any time.</p>
 
       <div class="gs-grid">
         <a class="glass gs-card" href="../haze-wallet-web/index.html">
           <span class="gs-glyph">◆</span>
           <h3>Wallet</h3>
-          <p>Send and receive confidential payments, register a <code>.haze</code> name, stake as a validator, mint and manage NFTs — all from one non-custodial wallet.</p>
+          <p>Send and receive confidential payments, register a <code>.haze</code> name, register as a validator. Non-custodial — all key material and signing stay client-side.</p>
           <span class="gs-cta">Open the wallet →</span>
         </a>
         <a class="glass gs-card" href="../haze-explorer-web/index.html">
@@ -580,12 +582,6 @@
           <h3>Explorer</h3>
           <p>Live chain height, block detail, search by height, hash, or commitment, and the current validator set — reads directly from a node's public API.</p>
           <span class="gs-cta">Explore the chain →</span>
-        </a>
-        <a class="glass gs-card" href="../nft-marketplace/index.html">
-          <span class="gs-glyph">✦</span>
-          <h3>Marketplace</h3>
-          <p>Browse listings and live collection drops, buy and sell with trustless on-chain settlement — no custody, no escrow, ever.</p>
-          <span class="gs-cta">Browse the marketplace →</span>
         </a>
       </div>
 
