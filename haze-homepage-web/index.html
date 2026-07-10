@@ -8,7 +8,9 @@
 <script>
   (function () {
     var saved = localStorage.getItem("hazeTheme");
-    var theme = saved || (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+    // Light is the default for a first-time visitor regardless of OS
+    // preference - only a previously-saved explicit choice overrides it.
+    var theme = saved || "light";
     document.documentElement.setAttribute("data-theme", theme);
   })();
 </script>
@@ -153,22 +155,34 @@
     transition: color 0.2s ease, background 0.2s ease;
   }
   .topnav a:hover { color: var(--ink); background: var(--fog-1); }
+  /* Circular glass button - same liquid-glass language as the big panels
+     (translucent fill, blur, convex inset-shadow lens edge) at button
+     scale, minus the cursor-tracked highlight (not worth a pointermove
+     listener on something this small - a fixed highlight reads fine). */
   .topnav .theme-toggle {
     font-family: var(--font-mono);
-    color: var(--ink-faint);
-    background: var(--fog-1);
-    border: 1px solid var(--fog-3);
-    border-radius: 6px;
-    width: 32px;
-    height: 32px;
+    color: var(--ink-dim);
+    background:
+      radial-gradient(circle at 30% 25%, var(--glass-sheen), transparent 60%),
+      linear-gradient(160deg, var(--glass-fill-strong), var(--glass-fill));
+    backdrop-filter: blur(14px) saturate(150%);
+    -webkit-backdrop-filter: blur(14px) saturate(150%);
+    border: 1px solid var(--glass-border);
+    border-radius: 50%;
+    width: 36px;
+    height: 36px;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
     margin-left: 4px;
-    transition: border-color 0.2s ease, color 0.2s ease;
+    box-shadow:
+      inset 0 1px 0 oklch(0.98 0.01 90 / 0.5),
+      inset 0 -6px 10px -8px oklch(0.1 0.02 292 / 0.5),
+      0 6px 14px -8px oklch(0.1 0.02 292 / 0.4);
+    transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), color 0.2s ease;
   }
-  .topnav .theme-toggle:hover { border-color: var(--mist); color: var(--ink-dim); }
+  .topnav .theme-toggle:hover { color: var(--ink); transform: translateY(-1px) scale(1.04); }
   .topnav .theme-toggle svg { width: 15px; height: 15px; }
   .topnav .theme-toggle .icon-moon { display: none; }
   :root[data-theme="light"] .topnav .theme-toggle .icon-sun { display: none; }
