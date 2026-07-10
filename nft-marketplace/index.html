@@ -75,6 +75,10 @@
     background: var(--fog-1); border: 1px solid var(--fog-3); border-radius: 3px;
     padding: 7px 12px; cursor: pointer; display: flex; align-items: center; gap: 7px;
   }
+  /* A real node/wallet URL is much longer than the placeholder em-dash
+     these pills were sized around - capped so neither pill can dominate
+     the topbar width even after it wraps onto its own row on mobile. */
+  #node-label, #wallet-label { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .theme-toggle {
     font-family: var(--font-mono); color: var(--ink-faint); background: var(--fog-1);
     border: 1px solid var(--fog-3); border-radius: 3px; width: 30px; height: 30px;

@@ -88,7 +88,7 @@
   .brand-mark { font-size: 20px; color: var(--amber); }
   .brand-name { font-family: var(--font-display); font-weight: 700; font-size: 18px; letter-spacing: -0.01em; }
 
-  .topnav { display: flex; align-items: center; gap: clamp(2px, 1.5vw, 6px); flex-wrap: wrap; }
+  .topnav { display: flex; align-items: center; gap: clamp(2px, 1.5vw, 6px); }
   .topnav a.navlink {
     font-size: 13.5px;
     font-weight: 500;
@@ -111,6 +111,7 @@
     justify-content: center;
     cursor: pointer;
     margin-left: 6px;
+    flex-shrink: 0;
     transition: border-color 0.2s ease, color 0.2s ease;
   }
   .topnav .theme-toggle:hover { border-color: var(--violet); color: var(--ink); }
@@ -128,12 +129,60 @@
     padding: 9px 18px;
     border-radius: 8px;
     margin-left: 10px;
+    white-space: nowrap;
     transition: filter 0.2s ease;
   }
   .btn-nav:hover { filter: brightness(1.08); }
 
+  /* ---------- Mobile nav: below 760px the inline nav links + persistent
+     CTA don't have room (they used to just flex-wrap onto an ugly second
+     row in the sticky header) - collapsed into a hamburger-triggered
+     dropdown instead, matching the touch-target sizing (44px min) mobile
+     needs. ---------- */
+  .nav-toggle {
+    display: none;
+    color: var(--ink);
+    background: var(--fog-1);
+    border: 1px solid var(--fog-3);
+    border-radius: 8px;
+    width: 40px;
+    height: 40px;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .nav-toggle svg { width: 18px; height: 18px; }
+  .nav-toggle .icon-close { display: none; }
+  .topbar.nav-open .nav-toggle .icon-menu { display: none; }
+  .topbar.nav-open .nav-toggle .icon-close { display: block; }
+
+  @media (max-width: 760px) {
+    .topnav {
+      position: fixed;
+      top: 66px;
+      left: 0;
+      right: 0;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 2px;
+      padding: 10px clamp(20px, 5vw, 64px) 20px;
+      background: var(--fog-0);
+      border-bottom: 1px solid var(--fog-2);
+      max-height: 0;
+      overflow: hidden;
+      opacity: 0;
+      transition: max-height 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease;
+    }
+    .topbar.nav-open .topnav { max-height: 400px; opacity: 1; }
+    .topnav a.navlink { padding: 13px 10px; font-size: 15px; border-radius: 8px; }
+    .topnav .theme-toggle { order: -1; align-self: flex-end; margin: 4px 0 8px; }
+    .btn-nav { margin: 8px 0 0; text-align: center; padding: 13px 18px; }
+    .nav-toggle { display: flex; }
+  }
+
   /* ---------- Hero ---------- */
-  .hero { padding: clamp(48px, 8vw, 88px) 0 clamp(28px, 4vw, 40px); position: relative; }
+  .hero { padding: clamp(48px, 8vw, 88px) 0 clamp(28px, 4vw, 40px); position: relative; overflow: hidden; }
   .hero::before {
     content: "";
     position: absolute;
@@ -404,6 +453,10 @@
       </button>
       <a class="btn-nav" href="#get-started">Launch wallet</a>
     </nav>
+    <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu" aria-expanded="false">
+      <svg class="icon-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M3 12h18M3 18h18"></path></svg>
+      <svg class="icon-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+    </button>
   </header>
 
   <div class="wrap" id="top">
@@ -590,6 +643,22 @@ document.getElementById("theme-toggle").addEventListener("click", () => {
   const next = current === "light" ? "dark" : "light";
   document.documentElement.setAttribute("data-theme", next);
   localStorage.setItem("hazeTheme", next);
+});
+
+const topbar = document.querySelector(".topbar");
+const navToggle = document.getElementById("nav-toggle");
+navToggle.addEventListener("click", () => {
+  const open = topbar.classList.toggle("nav-open");
+  navToggle.setAttribute("aria-expanded", open ? "true" : "false");
+});
+// Closing on link click matters here specifically because the mobile nav
+// is mostly in-page anchors (#mechanics etc.) - without this the menu
+// would stay open covering the section the user just jumped to.
+document.querySelectorAll(".topnav a").forEach((a) => {
+  a.addEventListener("click", () => {
+    topbar.classList.remove("nav-open");
+    navToggle.setAttribute("aria-expanded", "false");
+  });
 });
 
 const DEFAULT_API_BASE = "http://localhost:8332";
