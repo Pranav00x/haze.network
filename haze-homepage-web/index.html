@@ -360,7 +360,7 @@
     color: var(--violet);
     padding: 2px 7px;
     border-radius: 6px;
-    white-space: nowrap;
+    overflow-wrap: break-word;
   }
   .not-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
   .not-chip {
@@ -377,7 +377,7 @@
   .mech-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
   @media (max-width: 900px) { .mech-grid { grid-template-columns: repeat(2, 1fr); } }
   @media (max-width: 600px) { .mech-grid { grid-template-columns: 1fr; } }
-  .mech-card { padding: 26px 24px; border-radius: 24px; display: flex; flex-direction: column; gap: 12px; transition: transform 0.3s cubic-bezier(0.16,1,0.3,1); }
+  .mech-card { padding: 26px 24px; border-radius: 24px; display: flex; flex-direction: column; gap: 12px; min-width: 0; transition: transform 0.3s cubic-bezier(0.16,1,0.3,1); }
   .mech-card:hover { transform: translateY(-4px); }
   .mech-card .mc-num {
     width: 30px; height: 30px;
@@ -393,7 +393,7 @@
   /* ---------- Under the hood ---------- */
   .tech-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
   @media (max-width: 780px) { .tech-grid { grid-template-columns: 1fr; } }
-  .tech-cell { padding: 26px 24px; border-radius: 24px; }
+  .tech-cell { padding: 26px 24px; border-radius: 24px; min-width: 0; }
   .tech-cell .tc-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: var(--amber); margin-bottom: 12px; }
   .tech-cell .tc-body { font-size: 13.5px; line-height: 1.65; color: var(--ink-dim); }
   .target-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
@@ -408,6 +408,7 @@
     display: flex;
     flex-direction: column;
     gap: 14px;
+    min-width: 0;
     text-decoration: none;
     color: var(--ink);
     transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
