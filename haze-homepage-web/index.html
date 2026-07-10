@@ -16,7 +16,7 @@
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,340..600&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,380..680&family=Newsreader:ital,opsz,wght@1,6..72,380..680&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root {
     color-scheme: dark;
@@ -39,7 +39,7 @@
     --glass-fill-strong: oklch(0.5 0.03 292 / 0.32);
     --glass-border: oklch(0.9 0.02 90 / 0.12);
     --glass-sheen: oklch(0.95 0.01 90 / 0.08);
-    --font-display: "Fraunces", serif;
+    --font-display: "Newsreader", serif;
     --font-body: "Public Sans", sans-serif;
     --font-mono: "IBM Plex Mono", monospace;
   }
@@ -190,7 +190,7 @@
 
   /* ---------- Hero ---------- */
   .hero {
-    padding: clamp(56px, 10vw, 108px) 0 clamp(48px, 8vw, 84px);
+    padding: clamp(28px, 4vw, 52px) 0 clamp(28px, 4vw, 44px);
     display: grid;
     grid-template-columns: 1.3fr 0.7fr;
     gap: clamp(32px, 5vw, 64px);
@@ -207,7 +207,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 20px;
+    margin-bottom: 14px;
   }
   .eyebrow .pulse-dot {
     width: 6px; height: 6px; border-radius: 50%;
@@ -220,20 +220,20 @@
   h1.hero-headline {
     font-family: var(--font-display);
     font-optical-sizing: auto;
-    font-weight: 440;
-    font-size: clamp(40px, 6.4vw, 76px);
-    line-height: 1.02;
-    letter-spacing: -0.015em;
-    margin: 0 0 22px;
+    font-weight: 480;
+    font-size: clamp(32px, 3.4vw, 46px);
+    line-height: 1.08;
+    letter-spacing: -0.01em;
+    margin: 0 0 16px;
   }
-  h1.hero-headline em { font-style: italic; color: var(--amber); font-weight: 480; }
+  h1.hero-headline em { font-style: italic; color: var(--amber); font-weight: 500; }
 
   .hero-sub {
-    font-size: clamp(15.5px, 1.6vw, 18px);
-    line-height: 1.65;
+    font-size: clamp(14.5px, 1.1vw, 16px);
+    line-height: 1.55;
     color: var(--ink-dim);
-    max-width: 46ch;
-    margin: 0 0 34px;
+    max-width: 50ch;
+    margin: 0 0 24px;
   }
 
   .hero-ctas { display: flex; gap: 12px; flex-wrap: wrap; }
