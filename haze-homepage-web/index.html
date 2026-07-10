@@ -538,13 +538,13 @@
       </div>
 
       <div class="gs-grid">
-        <a class="gs-card" href="../haze-wallet-web/index.html">
+        <a class="gs-card" href="https://wallet.hazeprotocol.xyz">
           <span class="gs-glyph">W</span>
           <h3>Wallet</h3>
           <p>Send and receive confidential payments, register a <code>.haze</code> name, register as a validator. Non-custodial — key material never leaves the client.</p>
           <span class="gs-cta">Open the wallet →</span>
         </a>
-        <a class="gs-card" href="../haze-explorer-web/index.html">
+        <a class="gs-card" href="https://hazescan.xyz">
           <span class="gs-glyph">E</span>
           <h3>Explorer</h3>
           <p>Live chain height, block detail, search by height, hash, or commitment, and the current validator set — reads directly from a node's public API.</p>
@@ -635,7 +635,7 @@ async function refreshStatus() {
     document.getElementById("stat-validators").textContent = s.active_validators === 0 ? "1" : s.active_validators;
     document.getElementById("stat-mempool").textContent = s.mempool_size;
     document.getElementById("stat-tip").textContent = shortHash(s.tip_hash, 16);
-    foot.innerHTML = `Tip hash: ${s.tip_hash} · <a href="../haze-explorer-web/index.html">view full explorer →</a>`;
+    foot.innerHTML = `Tip hash: ${s.tip_hash} · <a href="https://hazescan.xyz">view full explorer →</a>`;
     renderNodeLabel(true);
   } catch (e) {
     document.getElementById("stat-height").textContent = "—";
