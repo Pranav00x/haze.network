@@ -26,15 +26,10 @@
     --violet: oklch(0.66 0.16 310);
     --ok: oklch(0.78 0.14 155);
     --danger: oklch(0.7 0.17 25);
-    --glass-bg: oklch(0.97 0.004 90 / 0.045);
-    --glass-bg-strong: oklch(0.97 0.004 90 / 0.09);
-    --glass-border: oklch(0.97 0.004 90 / 0.18);
-    --glass-shadow:
-      0 30px 70px -26px oklch(0.05 0.01 260 / 0.6),
-      inset 0 1.5px 0 oklch(1 0 0 / 0.4),
-      inset 0 -1px 0 oklch(1 0 0 / 0.03),
-      inset 1px 0 0 oklch(1 0 0 / 0.16),
-      inset -1px 0 0 oklch(0.05 0.01 260 / 0.22);
+    --glass-bg: oklch(0.97 0.004 90 / 0.06);
+    --glass-bg-strong: oklch(0.97 0.004 90 / 0.1);
+    --glass-border: oklch(0.97 0.004 90 / 0.14);
+    --glass-shadow: 0 20px 50px -20px oklch(0.05 0.01 260 / 0.55), inset 0 1px 0 oklch(1 0 0 / 0.08);
     --font-display: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
     --font-body: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
     --font-mono: "IBM Plex Mono", monospace;
@@ -50,15 +45,10 @@
     --violet: oklch(0.5 0.17 315);
     --ok: oklch(0.5 0.14 155);
     --danger: oklch(0.55 0.18 25);
-    --glass-bg: oklch(1 0 0 / 0.38);
-    --glass-bg-strong: oklch(1 0 0 / 0.58);
-    --glass-border: oklch(1 0 0 / 0.75);
-    --glass-shadow:
-      0 30px 70px -26px oklch(0.3 0.02 280 / 0.3),
-      inset 0 1.5px 0 oklch(1 0 0 / 0.85),
-      inset 0 -1px 0 oklch(1 0 0 / 0.15),
-      inset 1px 0 0 oklch(1 0 0 / 0.5),
-      inset -1px 0 0 oklch(0.3 0.02 280 / 0.1);
+    --glass-bg: oklch(1 0 0 / 0.5);
+    --glass-bg-strong: oklch(1 0 0 / 0.68);
+    --glass-border: oklch(1 0 0 / 0.7);
+    --glass-shadow: 0 20px 50px -22px oklch(0.3 0.02 280 / 0.28), inset 0 1px 0 oklch(1 0 0 / 0.6);
   }
 
   * { box-sizing: border-box; }
@@ -78,30 +68,14 @@
   .bg-blob {
     position: fixed;
     border-radius: 50%;
-    filter: blur(110px);
+    filter: blur(90px);
     pointer-events: none;
     z-index: 0;
   }
-  .bg-blob.b1 { width: 680px; height: 680px; top: -240px; right: -180px; background: color-mix(in oklch, var(--amber) 40%, transparent); }
-  .bg-blob.b2 { width: 580px; height: 580px; bottom: -220px; left: -180px; background: color-mix(in oklch, var(--violet) 34%, transparent); }
-  .bg-blob.b3 { width: 460px; height: 460px; top: 38vh; left: 50%; background: color-mix(in oklch, var(--amber) 22%, transparent); }
-  .bg-blob.b4 { width: 420px; height: 420px; top: 80vh; right: 10%; background: color-mix(in oklch, var(--violet) 26%, transparent); }
-  :root[data-theme="light"] .bg-blob.b1 { background: color-mix(in oklch, var(--amber) 30%, transparent); }
-  :root[data-theme="light"] .bg-blob.b2 { background: color-mix(in oklch, var(--violet) 24%, transparent); }
-  :root[data-theme="light"] .bg-blob.b3 { background: color-mix(in oklch, var(--amber) 16%, transparent); }
-  :root[data-theme="light"] .bg-blob.b4 { background: color-mix(in oklch, var(--violet) 18%, transparent); }
-
-  /* .bg-blob is `position: fixed`, so b1/b2/b3/b4 stay anchored to the
-     viewport rather than the page - this section-local pair scrolls with
-     the content instead, so glass panels further down the page (mechanics,
-     get-started) still frost over real color instead of flat background. */
-  .section-blob {
-    position: absolute;
-    border-radius: 50%;
-    filter: blur(100px);
-    pointer-events: none;
-    z-index: 0;
-  }
+  .bg-blob.b1 { width: 620px; height: 620px; top: -220px; right: -160px; background: color-mix(in oklch, var(--amber) 32%, transparent); }
+  .bg-blob.b2 { width: 520px; height: 520px; bottom: -200px; left: -160px; background: color-mix(in oklch, var(--violet) 26%, transparent); }
+  :root[data-theme="light"] .bg-blob.b1 { background: color-mix(in oklch, var(--amber) 22%, transparent); }
+  :root[data-theme="light"] .bg-blob.b2 { background: color-mix(in oklch, var(--violet) 16%, transparent); }
 
   a { color: inherit; }
   ::selection { background: color-mix(in oklch, var(--amber) 30%, transparent); }
@@ -109,37 +83,26 @@
   .amber-text { color: var(--amber); }
 
   /* ---------- Glass primitive ---------- */
-  @property --mx { syntax: '<percentage>'; inherits: false; initial-value: 30%; }
-  @property --my { syntax: '<percentage>'; inherits: false; initial-value: 10%; }
-
   .glass {
     background: var(--glass-bg);
-    -webkit-backdrop-filter: blur(38px) saturate(200%);
-    backdrop-filter: blur(38px) saturate(200%);
+    -webkit-backdrop-filter: blur(28px) saturate(160%);
+    backdrop-filter: blur(28px) saturate(160%);
     border: 1px solid var(--glass-border);
     box-shadow: var(--glass-shadow);
-    border-radius: 28px;
+    border-radius: 26px;
     position: relative;
-    animation: glassDrift 14s ease-in-out infinite;
-  }
-  @keyframes glassDrift {
-    0%   { --mx: 15%; --my: 5%; }
-    50%  { --mx: 85%; --my: 70%; }
-    100% { --mx: 15%; --my: 5%; }
   }
   .glass::before {
     content: "";
     position: absolute;
     inset: 0;
     border-radius: inherit;
-    background: radial-gradient(480px circle at var(--mx) var(--my), oklch(1 0 0 / 0.5), transparent 55%);
+    background: radial-gradient(420px circle at var(--mx, 50%) var(--my, 0%), oklch(1 0 0 / 0.14), transparent 55%);
     pointer-events: none;
-    opacity: 0.4;
-    mix-blend-mode: overlay;
+    opacity: 0;
     transition: opacity 0.35s ease;
   }
-  .glass:hover::before { opacity: 0.85; }
-  :root[data-theme="light"] .glass::before { mix-blend-mode: soft-light; }
+  .glass:hover::before { opacity: 1; }
 
   /* ---------- Floating pill topbar ---------- */
   .topbar-wrap { position: sticky; top: 0; z-index: 30; padding: 14px clamp(14px, 4vw, 40px) 0; }
@@ -367,7 +330,7 @@
   .stats-foot a { color: var(--amber); text-decoration: none; }
   .stats-foot a:hover { text-decoration: underline; }
 
-  section { padding: clamp(52px, 7vw, 96px) 0; position: relative; }
+  section { padding: clamp(52px, 7vw, 96px) 0; }
   .section-head { margin-bottom: clamp(32px, 4vw, 48px); text-align: center; }
   .section-eyebrow {
     font-size: 12.5px;
@@ -569,7 +532,6 @@
     </section>
 
     <section id="mechanics">
-      <div class="section-blob" style="top: 10%; left: -8%; background: color-mix(in oklch, var(--violet) 30%, transparent);"></div>
       <div class="section-head">
         <div class="section-eyebrow">Shipped, not roadmap</div>
         <h2>Protocol mechanics</h2>
@@ -643,7 +605,6 @@
     </section>
 
     <section id="get-started">
-      <div class="section-blob" style="top: 5%; right: -6%; width: 380px; height: 380px; background: color-mix(in oklch, var(--amber) 30%, transparent);"></div>
       <div class="section-head">
         <div class="section-eyebrow">Get started</div>
         <h2>Run something real</h2>
@@ -718,27 +679,14 @@ document.querySelectorAll(".topnav a").forEach((a) => {
   });
 });
 
-// Every .glass surface idly drifts its specular highlight via the
-// glassDrift keyframe animation (registered custom properties, so it's
-// cheap - just a repaint of the small ::before gradient, not the blurred
-// backdrop itself). On hover we pause that drift and let the highlight
-// track the real cursor instead, then hand control back to the animation
-// on pointerleave - CSS animations otherwise always win over an inline
-// style for the property they're driving, so pausing first is required
-// for pointermove's inline --mx/--my to actually show.
+// Cursor-tracked specular highlight on glass surfaces - lightweight (CSS
+// custom properties only, no layout thrash), matches iOS "Liquid Glass"'s
+// dynamic light response instead of a static glassmorphism blur.
 document.querySelectorAll(".glass").forEach((el) => {
-  el.addEventListener("pointerenter", () => {
-    el.style.animationPlayState = "paused";
-  });
   el.addEventListener("pointermove", (e) => {
     const rect = el.getBoundingClientRect();
     el.style.setProperty("--mx", ((e.clientX - rect.left) / rect.width * 100) + "%");
     el.style.setProperty("--my", ((e.clientY - rect.top) / rect.height * 100) + "%");
-  });
-  el.addEventListener("pointerleave", () => {
-    el.style.animationPlayState = "";
-    el.style.removeProperty("--mx");
-    el.style.removeProperty("--my");
   });
 });
 
