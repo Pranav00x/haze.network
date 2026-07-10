@@ -119,10 +119,8 @@
   .brand { display: flex; align-items: center; gap: 9px; text-decoration: none; }
   .brand-mark {
     width: 26px; height: 26px;
-    border-radius: 9px;
-    background: linear-gradient(160deg, var(--amber), color-mix(in oklch, var(--amber) 60%, var(--violet)));
-    display: flex; align-items: center; justify-content: center;
-    font-family: var(--font-display); font-weight: 800; font-size: 13px; color: var(--bg-0);
+    border-radius: 7px;
+    display: block;
     flex-shrink: 0;
   }
   .brand-name { font-family: var(--font-display); font-weight: 700; font-size: 17px; letter-spacing: -0.02em; }
@@ -443,7 +441,7 @@
   footer { padding: clamp(28px, 4vw, 40px) 0 clamp(40px, 6vw, 60px); }
   .footer-row { padding: 20px clamp(20px, 3vw, 28px); border-radius: 24px; display: flex; justify-content: space-between; align-items: center; gap: 20px; flex-wrap: wrap; }
   .footer-row .fr-brand { display: flex; align-items: center; gap: 8px; }
-  .footer-row .fr-brand .brand-mark { width: 20px; height: 20px; font-size: 11px; }
+  .footer-row .fr-brand .brand-mark { width: 20px; height: 20px; border-radius: 6px; }
   .footer-row .fr-brand .brand-name { font-size: 15px; }
   .footer-links { display: flex; gap: 20px; flex-wrap: wrap; }
   .footer-links a { font-size: 13px; color: var(--ink-faint); text-decoration: none; }
@@ -459,7 +457,7 @@
   <div class="topbar-wrap" id="topbar-wrap">
     <header class="topbar glass">
       <a class="brand" href="#top">
-        <span class="brand-mark">H</span>
+        <img class="brand-mark" src="assets/logo-icon.svg" alt="Haze">
         <span class="brand-name">Haze</span>
       </a>
       <nav class="topnav">
@@ -646,7 +644,7 @@
   <footer class="wrap">
     <div class="footer-row glass">
       <div class="fr-brand">
-        <span class="brand-mark">H</span>
+        <img class="brand-mark" src="assets/logo-icon.svg" alt="Haze">
         <span class="brand-name">Haze</span>
       </div>
       <div class="footer-links">
