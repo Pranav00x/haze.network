@@ -5,33 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Haze manifesto</title>
 <meta name="description" content="Why Haze exists: a Mimblewimble layer-1 built on the belief that financial privacy is a default, not a feature.">
-<script>
-  (function () {
-    var saved = localStorage.getItem("hazeTheme");
-    var theme = saved || "light";
-    document.documentElement.setAttribute("data-theme", theme);
-  })();
-</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    color-scheme: light;
-    --bg: #ffffff;
-    --ink: #111111;
-    --ink-dim: #666666;
-    --ink-faint: #999999;
-    --line: #d9d9d9;
-    --font: "IBM Plex Mono", ui-monospace, monospace;
-  }
-  :root[data-theme="dark"] {
     color-scheme: dark;
     --bg: #0b0b0b;
     --ink: #f0f0f0;
     --ink-dim: #999999;
     --ink-faint: #666666;
     --line: #2a2a2a;
+    --font: "JetBrains Mono", ui-monospace, monospace;
   }
 
   * { box-sizing: border-box; }
@@ -64,17 +49,6 @@
 
   nav.topnav { display: flex; align-items: center; gap: 20px; }
   nav.topnav a { font-size: 13px; }
-  .theme-toggle {
-    background: none;
-    border: none;
-    color: inherit;
-    font-family: var(--font);
-    font-size: 13px;
-    text-decoration: underline;
-    text-underline-offset: 3px;
-    cursor: pointer;
-    padding: 0;
-  }
 
   /* ---------- Manifesto ---------- */
   main { padding: clamp(40px, 8vw, 88px) 0 clamp(64px, 10vw, 120px); }
@@ -112,23 +86,18 @@
     <nav class="topnav">
       <a href="https://wallet.hazeprotocol.xyz">wallet</a>
       <a href="https://github.com/Pranav00x/haze" target="_blank" rel="noopener">github</a>
-      <button class="theme-toggle" id="theme-toggle">light/dark</button>
     </nav>
   </header>
 
   <main class="wrap" id="top">
-    <p class="eyebrow">public testnet — live network</p>
+    <p class="eyebrow">testnet</p>
     <h1>Haze manifesto</h1>
 
-    <p>Money has always left a trail somewhere — a ledger, a bank, a neighbour who remembers. Public blockchains just made that trail permanent and searchable, and pinned it to your name the moment you connect a wallet to an exchange, a shop, or a friend. Every balance, every payment, every counterparty, sitting in the open forever. That isn't decentralization. That's surveillance with extra steps.</p>
+    <p>Money has always left a trail somewhere — a ledger, a bank, a neighbour who remembers. Public blockchains made that trail permanent, searchable, and pinned to your name the moment you connect a wallet to anything. That isn't decentralization. That's surveillance with extra steps.</p>
 
-    <p>We don't think privacy is something you bolt onto money afterward with a mixer nobody uses or a shielded pool with three deposits in it. We think it has to be how the ledger works from the first block. Haze doesn't store accounts, balances, or a transaction graph — there is nothing to leak later, because there was never anything sitting there to find. What's provable is that the math balances. Not who owned what, not how much, not who they paid.</p>
+    <p>We don't think privacy belongs bolted onto money afterward with a mixer nobody uses. It has to be how the ledger works from the first block. Haze doesn't store accounts, balances, or a transaction graph — there's nothing to leak later, because there was never anything sitting there to find. What's provable is that the math balances. Not who owned what.</p>
 
-    <p>This isn't a whitepaper promise. The testnet is live, blocks are being produced right now, validators are staking real UTXOs, and every line that checks any of it is public. We'd rather ship something a hundred people can try to break than publish a deck a hundred thousand people can't verify.</p>
-
-    <p>We know "privacy coin" reads as a red flag to people who've never needed one. Ask anyone who's had a stalker, an abusive ex, a landlord going through their bank statements, or a competitor pricing them out — they know exactly why a stranger shouldn't be able to pull up your net worth from a wallet address. Financial privacy isn't a favor to criminals. It's the default every cash transaction has always had, and the one thing crypto quietly took away in the name of transparency.</p>
-
-    <p>We're not pretending this is finished. Consensus bugs get found, code gets rewritten, chains get reset — that's what a testnet is for. What we won't do is water the design down so it's easier to pitch, or add a backdoor because someone asked nicely. Come read the code. Run a node. Try to break it. Tell us what's wrong. We're listening, and we're not stopping.</p>
+    <p>This isn't a whitepaper promise — the testnet is live, blocks are real, and every line that checks them is public. It isn't finished, and won't be for a while. But we're not watering the design down to make it easier to pitch, and we're not stopping. Come read the code.</p>
 
     <p>back to the code.</p>
 
@@ -150,13 +119,5 @@
     </div>
   </footer>
 
-<script>
-document.getElementById("theme-toggle").addEventListener("click", () => {
-  const current = document.documentElement.getAttribute("data-theme");
-  const next = current === "light" ? "dark" : "light";
-  document.documentElement.setAttribute("data-theme", next);
-  localStorage.setItem("hazeTheme", next);
-});
-</script>
 </body>
 </html>
