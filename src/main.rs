@@ -71,7 +71,7 @@ async fn main() -> std::io::Result<()> {
             let proposer = Arc::new(Proposer::new(Arc::clone(&mempool), Arc::clone(&chain), Arc::clone(&storage), key));
 
             // Link proposer to P2P server for block broadcasting
-            proposer.set_p2p_server(Arc::clone(&server));
+            proposer.set_p2p_server(server.clone());
 
             println!("Starting Background Proposer...");
             let proposer_clone = Arc::clone(&proposer);

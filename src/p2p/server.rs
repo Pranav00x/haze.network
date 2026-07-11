@@ -146,7 +146,17 @@ impl P2pServer {
         println!("P2P: Broadcasting newly proposed Block #{} to the network...", block.header.height);
         self.peer_manager.broadcast(&P2pMessage::NewBlock(block)).await;
     }
+}
 
+impl crate::core::proposer::BlockBroadcaster for P2pServer {
+    fn broadcast_block(self: Arc<Self>, block: Block) {
+        tokio::spawn(async move {
+            P2pServer::broadcast_block(&self, block).await;
+        });
+    }
+}
+
+impl P2pServer {
     /// Entry point for a transaction that just originated on this node (via
     /// POST /v1/transactions) into Dandelion++ routing - see
     /// dispatch_dandelion_tx for why this can't just be a flat broadcast.

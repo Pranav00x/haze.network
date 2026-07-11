@@ -10,8 +10,18 @@ use super::block::{Block, BlockHeader};
 use super::storage::Storage;
 use crate::crypto::pedersen::Commitment;
 use crate::crypto::schnorr::Signature;
-use crate::p2p::server::P2pServer;
 use crate::core::transaction::Transaction;
+
+/// Lets `core` hand a freshly-proposed block off for network broadcast
+/// without depending on `p2p` directly - `p2p::server::P2pServer` implements
+/// this. Keeps the crate dependency graph one-directional (p2p depends on
+/// core, never the reverse), which a Cargo workspace split requires anyway.
+pub trait BlockBroadcaster: Send + Sync {
+    /// Takes ownership of an `Arc` to itself so implementations can spawn an
+    /// async broadcast task without the caller (the proposer) needing to
+    /// know anything about tokio or the transport layer.
+    fn broadcast_block(self: Arc<Self>, block: Block);
+}
 
 /// How long a client waits before trying a fallback proposer slot: if the
 /// chain is still stuck at the same pending height after `rank * this`, the
@@ -27,7 +37,7 @@ pub struct Proposer {
     chain: Arc<Mutex<ChainState>>,
     storage: Arc<Storage>,
     stake_key: Option<Scalar>,
-    p2p_server: Mutex<Option<Arc<P2pServer>>>,
+    p2p_server: Mutex<Option<Arc<dyn BlockBroadcaster>>>,
     /// The pending height we're currently waiting on, and when we first
     /// started waiting on it - reset every time the chain tip advances.
     /// Used to time fallback-round eligibility.
@@ -51,8 +61,8 @@ impl Proposer {
         }
     }
 
-    /// Sets the P2P server instance to broadcast new blocks.
-    pub fn set_p2p_server(&self, p2p_server: Arc<P2pServer>) {
+    /// Sets the broadcaster used to announce newly proposed blocks.
+    pub fn set_p2p_server(&self, p2p_server: Arc<dyn BlockBroadcaster>) {
         let mut server = self.p2p_server.lock().unwrap();
         *server = Some(p2p_server);
     }
@@ -558,11 +568,7 @@ impl Proposer {
                                 s.clone()
                             };
                             if let Some(p2p) = server_opt {
-                                let p2p_clone = Arc::clone(&p2p);
-                                let block_clone = block.clone();
-                                tokio::spawn(async move {
-                                    p2p_clone.broadcast_block(block_clone).await;
-                                });
+                                p2p.broadcast_block(block.clone());
                             }
                         }
                         _ => {
