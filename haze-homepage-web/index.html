@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Haze — a privacy L1, built on Mimblewimble</title>
-<meta name="description" content="Haze is a from-scratch Mimblewimble layer-1: Pedersen-committed UTXOs, Bulletproofs range proofs, cut-through and horizon compaction, deterministic weighted-PoS consensus. No accounts, no smart contracts, no transaction graph.">
+<title>Haze manifesto</title>
+<meta name="description" content="Why Haze exists: a Mimblewimble layer-1 built on the belief that financial privacy is a default, not a feature.">
 <script>
   (function () {
     var saved = localStorage.getItem("hazeTheme");
@@ -35,7 +35,6 @@
   }
 
   * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
   body {
     background: var(--bg);
     color: var(--ink);
@@ -47,13 +46,7 @@
   a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
   a:hover { color: var(--ink-dim); }
   ::selection { background: var(--ink); color: var(--bg); }
-  .wrap { max-width: 880px; margin: 0 auto; padding: 0 24px; }
-  code {
-    font-family: var(--font);
-    font-size: 0.95em;
-    border-bottom: 1px dotted var(--line);
-    overflow-wrap: break-word;
-  }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 0 24px; }
 
   /* ---------- Header ---------- */
   header {
@@ -62,7 +55,7 @@
     justify-content: space-between;
     gap: 16px;
     padding: 28px 24px;
-    max-width: 880px;
+    max-width: 720px;
     margin: 0 auto;
   }
   .brand { display: flex; align-items: center; gap: 8px; text-decoration: none; }
@@ -83,301 +76,78 @@
     padding: 0;
   }
 
-  .nav-toggle {
-    display: none;
-    background: none;
-    border: 1px solid var(--line);
-    color: var(--ink);
-    width: 36px;
-    height: 36px;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    flex-shrink: 0;
-  }
-  .nav-toggle svg { width: 16px; height: 16px; }
-  .nav-toggle .icon-close { display: none; }
-  header.nav-open .nav-toggle .icon-menu { display: none; }
-  header.nav-open .nav-toggle .icon-close { display: block; }
-
-  @media (max-width: 600px) {
-    nav.topnav {
-      position: fixed;
-      top: 0;
-      right: 0;
-      bottom: 0;
-      width: min(78vw, 300px);
-      background: var(--bg);
-      border-left: 1px solid var(--line);
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 4px;
-      padding: 80px 24px 24px;
-      transform: translateX(100%);
-      transition: transform 0.3s ease;
-      z-index: 40;
-    }
-    header.nav-open nav.topnav { transform: translateX(0); }
-    nav.topnav a, nav.topnav .theme-toggle { padding: 12px 0; width: 100%; }
-    .nav-toggle { display: flex; }
-  }
-
-  /* ---------- Hero ---------- */
-  .hero { padding: clamp(40px, 8vw, 96px) 0 40px; }
+  /* ---------- Manifesto ---------- */
+  main { padding: clamp(40px, 8vw, 88px) 0 clamp(64px, 10vw, 120px); }
   .eyebrow { font-size: 13px; color: var(--ink-dim); margin: 0 0 20px; }
   h1 {
     font-weight: 600;
-    font-size: clamp(26px, 4vw, 42px);
-    line-height: 1.25;
+    font-size: clamp(22px, 3vw, 30px);
     letter-spacing: -0.01em;
-    margin: 0 0 24px;
-    max-width: 18ch;
+    margin: 0 0 32px;
   }
-  .hero-sub { font-size: 15px; color: var(--ink-dim); max-width: 68ch; margin: 0 0 32px; }
-  .hero-ctas { display: flex; gap: 24px; flex-wrap: wrap; font-size: 14px; margin-bottom: 8px; }
-
-  /* ---------- Manifesto ---------- */
-  .manifesto h1 { font-size: clamp(22px, 3vw, 30px); max-width: none; margin-bottom: 32px; }
-  .manifesto p { font-size: 15px; line-height: 1.85; color: var(--ink-dim); max-width: 70ch; margin: 0 0 22px; }
-  .manifesto p:last-of-type { margin-bottom: 0; }
-  .manifesto-sig { margin-top: 36px; font-size: 14px; }
-  .manifesto-sig .sig-name { color: var(--ink); font-weight: 600; }
-  .manifesto-sig .sig-line { color: var(--ink-dim); }
-
-  hr { border: none; border-top: 1px solid var(--line); margin: 40px 0; }
-
-  /* ---------- Live stats: plain mono key/value lines ---------- */
-  .stats-block { font-size: 13.5px; }
-  .stats-block .stat-line {
-    display: flex;
-    gap: 16px;
-    padding: 7px 0;
-    border-top: 1px solid var(--line);
-  }
-  .stats-block .stat-line:last-of-type { border-bottom: 1px solid var(--line); }
-  .stats-block .st-key { color: var(--ink-dim); width: 130px; flex-shrink: 0; }
-  .stats-block .st-val { font-variant-numeric: tabular-nums; word-break: break-all; }
-  .node-indicator { cursor: pointer; }
-  .node-indicator:hover .st-key { color: var(--ink); }
-  #node-label { }
-  .stats-foot { font-size: 12.5px; color: var(--ink-faint); margin-top: 12px; }
-
-  /* ---------- Sections ---------- */
-  section { padding: 40px 0; }
-  .section-eyebrow { font-size: 12px; color: var(--ink-faint); margin: 0 0 8px; }
-  h2 { font-weight: 600; font-size: clamp(19px, 2.2vw, 24px); letter-spacing: -0.005em; margin: 0 0 14px; }
-  .section-intro { font-size: 14px; color: var(--ink-dim); max-width: 68ch; margin: 0 0 28px; }
-
-  .prose p { font-size: 14.5px; line-height: 1.8; color: var(--ink-dim); margin: 0 0 18px; }
-  .prose p:last-of-type { margin-bottom: 0; }
-  .prose strong { color: var(--ink); font-weight: 600; }
-  .not-list { margin-top: 22px; font-size: 13px; color: var(--ink-dim); }
-  .not-list span:not(:last-child)::after { content: " · "; color: var(--ink-faint); }
-
-  /* ---------- Numbered lists (mechanics, get-started) ---------- */
-  .num-list .num-row {
-    padding: 20px 0;
-    border-top: 1px solid var(--line);
-  }
-  .num-list .num-row:last-child { border-bottom: 1px solid var(--line); }
-  .num-row .nr-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; }
-  .num-row .nr-num { color: var(--ink-faint); font-size: 13px; }
-  .num-row h3 { font-weight: 600; font-size: 15.5px; margin: 0; }
-  .num-row p { font-size: 13.5px; line-height: 1.7; color: var(--ink-dim); margin: 0; max-width: 68ch; }
-  .num-row a { font-size: 13.5px; }
-
-  /* ---------- Under the hood: definition-list style ---------- */
-  dl.tech-list { margin: 0; }
-  dl.tech-list > div { padding: 18px 0; border-top: 1px solid var(--line); }
-  dl.tech-list > div:last-child { border-bottom: 1px solid var(--line); }
-  dl.tech-list dt { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-faint); margin: 0 0 8px; }
-  dl.tech-list dd { font-size: 13.5px; line-height: 1.7; color: var(--ink-dim); margin: 0; }
-  .target-list { margin-top: 10px; font-size: 12.5px; color: var(--ink-dim); }
-  .target-list span:not(:last-child)::after { content: ", "; }
+  main p { font-size: 15px; line-height: 1.85; color: var(--ink-dim); margin: 0 0 22px; }
+  main p:last-of-type { margin-bottom: 0; }
+  .sig { margin-top: 36px; font-size: 14px; }
+  .sig .sig-name { color: var(--ink); font-weight: 600; }
+  .sig .sig-line { color: var(--ink-dim); }
 
   /* ---------- Footer ---------- */
-  footer { border-top: 1px solid var(--line); padding: 32px 0 48px; }
-  .footer-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; font-size: 13px; }
+  footer { border-top: 1px solid var(--line); padding: 24px 0 40px; }
+  .footer-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-faint); }
   .footer-links { display: flex; gap: 18px; flex-wrap: wrap; }
-  .footer-note { font-size: 12px; color: var(--ink-faint); margin-top: 18px; max-width: 70ch; }
+
+  @media (max-width: 480px) {
+    header { flex-wrap: wrap; gap: 12px 20px; }
+    nav.topnav { gap: 16px; flex-wrap: wrap; }
+  }
 </style>
 </head>
 <body>
 
-  <header id="site-header">
+  <header>
     <a class="brand" href="#top">
       <img class="brand-mark" src="assets/logo-icon.svg" alt="Haze">
       <span class="brand-name">haze</span>
     </a>
     <nav class="topnav">
-      <a href="#what-is-haze">protocol</a>
-      <a href="#mechanics">mechanics</a>
-      <a href="#tech">under the hood</a>
+      <a href="https://wallet.hazeprotocol.xyz">wallet</a>
       <a href="https://github.com/Pranav00x/haze" target="_blank" rel="noopener">github</a>
-      <a href="#get-started">wallet</a>
       <button class="theme-toggle" id="theme-toggle">light/dark</button>
     </nav>
-    <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu" aria-expanded="false">
-      <svg class="icon-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M3 12h18M3 18h18"></path></svg>
-      <svg class="icon-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"></path></svg>
-    </button>
   </header>
 
-  <div class="wrap" id="top">
+  <main class="wrap" id="top">
+    <p class="eyebrow">public testnet — live network</p>
+    <h1>Haze manifesto</h1>
 
-    <section class="hero manifesto">
-      <p class="eyebrow">public testnet — live network</p>
-      <h1>Haze manifesto</h1>
+    <p>Money has always left a trail somewhere — a ledger, a bank, a neighbour who remembers. Public blockchains just made that trail permanent and searchable, and pinned it to your name the moment you connect a wallet to an exchange, a shop, or a friend. Every balance, every payment, every counterparty, sitting in the open forever. That isn't decentralization. That's surveillance with extra steps.</p>
 
-      <p>Money has always left a trail somewhere — a ledger, a bank, a neighbour who remembers. Public blockchains just made that trail permanent and searchable, and pinned it to your name the moment you connect a wallet to an exchange, a shop, or a friend. Every balance, every payment, every counterparty, sitting in the open forever. That isn't decentralization. That's surveillance with extra steps.</p>
+    <p>We don't think privacy is something you bolt onto money afterward with a mixer nobody uses or a shielded pool with three deposits in it. We think it has to be how the ledger works from the first block. Haze doesn't store accounts, balances, or a transaction graph — there is nothing to leak later, because there was never anything sitting there to find. What's provable is that the math balances. Not who owned what, not how much, not who they paid.</p>
 
-      <p>We don't think privacy is something you bolt onto money afterward with a mixer nobody uses or a shielded pool with three deposits in it. We think it has to be how the ledger works from the first block. Haze doesn't store accounts, balances, or a transaction graph — there is nothing to leak later, because there was never anything sitting there to find. What's provable is that the math balances. Not who owned what, not how much, not who they paid.</p>
+    <p>This isn't a whitepaper promise. The testnet is live, blocks are being produced right now, validators are staking real UTXOs, and every line that checks any of it is public. We'd rather ship something a hundred people can try to break than publish a deck a hundred thousand people can't verify.</p>
 
-      <p>This isn't a whitepaper promise. The testnet is live, blocks are being produced right now, validators are staking real UTXOs, and every line that checks any of it is public. We'd rather ship something a hundred people can try to break than publish a deck a hundred thousand people can't verify.</p>
+    <p>We know "privacy coin" reads as a red flag to people who've never needed one. Ask anyone who's had a stalker, an abusive ex, a landlord going through their bank statements, or a competitor pricing them out — they know exactly why a stranger shouldn't be able to pull up your net worth from a wallet address. Financial privacy isn't a favor to criminals. It's the default every cash transaction has always had, and the one thing crypto quietly took away in the name of transparency.</p>
 
-      <p>We know "privacy coin" reads as a red flag to people who've never needed one. Ask anyone who's had a stalker, an abusive ex, a landlord going through their bank statements, or a competitor pricing them out — they know exactly why a stranger shouldn't be able to pull up your net worth from a wallet address. Financial privacy isn't a favor to criminals. It's the default every cash transaction has always had, and the one thing crypto quietly took away in the name of transparency.</p>
+    <p>We're not pretending this is finished. Consensus bugs get found, code gets rewritten, chains get reset — that's what a testnet is for. What we won't do is water the design down so it's easier to pitch, or add a backdoor because someone asked nicely. Come read the code. Run a node. Try to break it. Tell us what's wrong. We're listening, and we're not stopping.</p>
 
-      <p>We're not pretending this is finished. Consensus bugs get found, code gets rewritten, chains get reset — that's what a testnet is for. What we won't do is water the design down so it's easier to pitch, or add a backdoor because someone asked nicely. Come read the code. Run a node. Try to break it. Tell us what's wrong. We're listening, and we're not stopping.</p>
+    <p>back to the code.</p>
 
-      <p>back to the code.</p>
-
-      <div class="manifesto-sig">
-        <div class="sig-name">Pranav</div>
-        <div class="sig-line"><a href="mailto:pranav@hazeprotocol.xyz">pranav@hazeprotocol.xyz</a></div>
-        <div class="sig-line">11th Jul 2026</div>
-      </div>
-
-    </section>
-
-    <section id="what-is-haze">
-      <p class="section-eyebrow">state model</p>
-      <h2>No accounts. No balances. No transaction graph.</h2>
-      <div class="prose">
-        <p>An <strong>output</strong> is the triple <code>(C, π, ξ)</code>: a Pedersen commitment <code>C = v·H + r·G</code> on Ristretto255 hiding value <code>v</code> under blinding factor <code>r</code>; a Bulletproofs range proof <code>π</code> certifying <code>v ∈ [0, 2⁶⁴)</code> with no trusted setup; and an optional ChaCha20-Poly1305-sealed note <code>ξ</code> the owner can later decrypt to recover <code>v</code> and <code>r</code>. A <strong>kernel</strong> is <code>(excess, fee, σ)</code>: <code>excess = Σr_in − Σr_out</code> committed to value 0, signed with <code>σ = Schnorr(excess_sk, fee_LE)</code> over a <code>merlin</code> Fiat–Shamir transcript.</p>
-        <p>Block validity is one identity, checked in <code>core::transaction::validate_with_reward</code>: <code>ΣC_in − ΣC_out − fee·H + reward·H ≟ Σexcess_i</code>, plus every output's range proof and every kernel's signature. There is no account balance to update and no address to route a payment to — just unspent, confidential outputs and the arithmetic that proves a spend is real without revealing how much moved or between which two outputs.</p>
-        <p>Spent inputs and their matching outputs <strong>cut through</strong> — cancel out of history entirely, per block and across the whole mempool, before they ever land. A node compacts spent pairs below a rolling horizon (default 1,000 blocks) and still answers any tip-relative UTXO-set query correctly; it just can't replay full history past that point for a peer that asks (<code>PrunedRange</code>, handled via an aggregate-validation fallback instead).</p>
-        <p class="not-list"><span>no accounts</span><span>no balances</span><span>no address book</span><span>no tx graph</span><span>no smart contracts</span></p>
-      </div>
-    </section>
-
-    <section id="mechanics">
-      <p class="section-eyebrow">shipped, not roadmap</p>
-      <h2>Protocol mechanics</h2>
-      <p class="section-intro">What's actually running on the live testnet right now.</p>
-
-      <div class="num-list">
-        <div class="num-row">
-          <div class="nr-head"><span class="nr-num">01</span><h3>Dandelion++ propagation</h3></div>
-          <p>20% fluff probability per hop, 15s fallback-fluff timer. The originating node isn't trivially identifiable as the broadcaster — value-privacy extended to the network layer.</p>
-        </div>
-        <div class="num-row">
-          <div class="nr-head"><span class="nr-num">02</span><h3>Weighted proposer selection</h3></div>
-          <p><code>proposer(h) = active_validators[H(h ‖ prev_hash) mod |active_validators|]</code>. Any active validator may sign a given height — liveness falls through on a timeout instead of stalling.</p>
-        </div>
-        <div class="num-row">
-          <div class="nr-head"><span class="nr-num">03</span><h3>Deterministic validator set</h3></div>
-          <p>Stake registration is a signed proof-of-ownership op included in blocks (<code>RegisterValidatorOp</code>) — every node derives the same active-validator set by replaying block content.</p>
-        </div>
-        <div class="num-row">
-          <div class="nr-head"><span class="nr-num">04</span><h3>Reorg-safe state</h3></div>
-          <p><code>apply_linear_block</code> / <code>rollback_block</code> are exactly symmetric across the UTXO set, kernel-excess set, and every registry — a heavier fork triggers a clean rollback-then-replay.</p>
-        </div>
-        <div class="num-row">
-          <div class="nr-head"><span class="nr-num">05</span><h3>Flat, size-based fees</h3></div>
-          <p>Mempool floor is <code>FEE_PER_KB · size_bytes / 1000</code> — no congestion multiplier inflating the default with mempool backlog.</p>
-        </div>
-        <div class="num-row">
-          <div class="nr-head"><span class="nr-num">06</span><h3>Transport-agnostic P2P</h3></div>
-          <p>TCP and WebSocket peers interoperate transparently. Sync batches 256 blocks at a time, with an aggregate-validation fallback past a peer's compaction horizon.</p>
-        </div>
-      </div>
-    </section>
-
-    <section id="tech">
-      <p class="section-eyebrow">under the hood</p>
-      <h2>One codebase, every target</h2>
-      <p class="section-intro">The consensus/crypto core has zero native dependencies and compiles unmodified to WebAssembly and every mobile ABI.</p>
-
-      <dl class="tech-list">
-        <div>
-          <dt>Crypto stack</dt>
-          <dd>Ristretto255 (<code>curve25519-dalek</code>), Bulletproofs range proofs, <code>merlin</code> Fiat–Shamir transcripts, ChaCha20-Poly1305 for recoverable output notes, <code>bip39</code> for seed phrases. Zero pairing-based cryptography anywhere in the tree.</dd>
-        </div>
-        <div>
-          <dt>Supply &amp; emission</dt>
-          <dd>21,000,000,000 HAZE target: 65% emitted via block rewards, halving every 12,600,000 blocks (~4 years at a 10s block time); 35% minted at genesis (13% team, 13% investors — each vesting over a 6-month cliff plus 7 quarterly tranches — 6% airdrop, 3% treasury).</dd>
-        </div>
-        <div>
-          <dt>Build surface</dt>
-          <dd>
-            One Rust codebase, every target from CI:
-            <div class="target-list">
-              <span>linux-x86_64</span><span>windows-msvc</span><span>macos-x86_64</span><span>macos-aarch64</span><span>android (4 ABIs)</span><span>wasm32</span>
-            </div>
-          </dd>
-        </div>
-      </dl>
-    </section>
-
-    <section id="get-started">
-      <p class="section-eyebrow">get started</p>
-      <h2>Run something real</h2>
-      <p class="section-intro">All talk to any Haze node over a plain HTTP/WS API — point them at your own node, or a public one, at any time.</p>
-
-      <div class="stats-block">
-        <div class="stat-line node-indicator" id="node-indicator" title="Click to point this page at a different node">
-          <span class="st-key">node</span>
-          <span class="st-val"><span id="node-dot">[…]</span> <span id="node-label">node</span></span>
-        </div>
-        <div class="stat-line">
-          <span class="st-key">block height</span>
-          <span class="st-val" id="stat-height">—</span>
-        </div>
-        <div class="stat-line">
-          <span class="st-key">active validators</span>
-          <span class="st-val" id="stat-validators">—</span>
-        </div>
-        <div class="stat-line">
-          <span class="st-key">mempool</span>
-          <span class="st-val" id="stat-mempool">—</span>
-        </div>
-        <div class="stat-line">
-          <span class="st-key">tip hash</span>
-          <span class="st-val" id="stat-tip">—</span>
-        </div>
-      </div>
-      <p class="stats-foot" id="stats-foot" style="margin-bottom:28px;">connecting…</p>
-
-      <div class="num-list">
-        <div class="num-row">
-          <div class="nr-head"><span class="nr-num">w</span><h3>Wallet</h3></div>
-          <p>Send and receive confidential payments, register a <code>.haze</code> name, register as a validator. Non-custodial — key material never leaves the client. <a href="https://wallet.hazeprotocol.xyz">open the wallet →</a></p>
-        </div>
-        <div class="num-row">
-          <div class="nr-head"><span class="nr-num">e</span><h3>Explorer</h3></div>
-          <p>Live chain height, block detail, search by height, hash, or commitment, and the current validator set — reads directly from a node's public API. <a href="https://hazescan.xyz">explore the chain →</a></p>
-        </div>
-        <div class="num-row">
-          <div class="nr-head"><span class="nr-num">v</span><h3>Run a validator</h3></div>
-          <p>Any currently-unspent UTXO can register as a validator with a signed proof of ownership. No stake-lock token, no slashing, no minimum beyond owning a real output. <a href="https://github.com/Pranav00x/haze/releases" target="_blank" rel="noopener">download the node →</a></p>
-        </div>
-      </div>
-
-      <p class="section-intro" style="margin-top:24px;">Prebuilt binaries — Windows, macOS (Intel + Apple Silicon), Linux, and an Android wallet APK — every testnet release. <a href="https://github.com/Pranav00x/haze/releases" target="_blank" rel="noopener">download →</a></p>
-    </section>
-
-  </div>
+    <div class="sig">
+      <div class="sig-name">Pranav</div>
+      <div class="sig-line"><a href="mailto:pranav@hazeprotocol.xyz">pranav@hazeprotocol.xyz</a></div>
+      <div class="sig-line">11th Jul 2026</div>
+    </div>
+  </main>
 
   <footer>
     <div class="wrap footer-row">
-      <span>haze — public testnet</span>
+      <span>haze — public testnet software, no monetary value</span>
       <div class="footer-links">
         <a href="https://github.com/Pranav00x/haze" target="_blank" rel="noopener">github</a>
-        <a href="https://github.com/Pranav00x/haze/releases" target="_blank" rel="noopener">releases</a>
-        <a href="https://github.com/Pranav00x/haze/issues" target="_blank" rel="noopener">issues</a>
+        <a href="https://wallet.hazeprotocol.xyz">wallet</a>
+        <a href="https://hazescan.xyz">explorer</a>
       </div>
     </div>
-    <p class="wrap footer-note">This is public testnet software. HAZE has no monetary value, and the chain may still be reset if a serious bug is found — don't treat any balance here as real.</p>
   </footer>
 
 <script>
@@ -387,78 +157,6 @@ document.getElementById("theme-toggle").addEventListener("click", () => {
   document.documentElement.setAttribute("data-theme", next);
   localStorage.setItem("hazeTheme", next);
 });
-
-const header = document.getElementById("site-header");
-const navToggle = document.getElementById("nav-toggle");
-navToggle.addEventListener("click", () => {
-  const open = header.classList.toggle("nav-open");
-  navToggle.setAttribute("aria-expanded", open ? "true" : "false");
-});
-document.querySelectorAll(".topnav a").forEach((a) => {
-  a.addEventListener("click", () => {
-    header.classList.remove("nav-open");
-    navToggle.setAttribute("aria-expanded", "false");
-  });
-});
-
-const DEFAULT_API_BASE = "http://localhost:8332";
-const STORAGE_KEY = "hazeApiBase";
-
-function resolveApiBase() {
-  const params = new URLSearchParams(window.location.search);
-  const fromQuery = params.get("api");
-  if (fromQuery) {
-    localStorage.setItem(STORAGE_KEY, fromQuery);
-    return fromQuery.replace(/\/+$/, "");
-  }
-  const saved = localStorage.getItem(STORAGE_KEY);
-  if (saved) return saved.replace(/\/+$/, "");
-  return DEFAULT_API_BASE;
-}
-
-let API_BASE = resolveApiBase();
-
-function renderNodeLabel(reachable) {
-  document.getElementById("node-label").textContent = API_BASE.replace(/^https?:\/\//, "");
-  document.getElementById("node-dot").textContent = reachable ? "[online]" : "[offline]";
-}
-
-document.getElementById("node-indicator").addEventListener("click", () => {
-  const next = window.prompt("Haze node API URL (e.g. https://node.yourdomain.xyz):", API_BASE);
-  if (next && next.trim()) {
-    API_BASE = next.trim().replace(/\/+$/, "");
-    localStorage.setItem(STORAGE_KEY, API_BASE);
-    refreshStatus();
-  }
-});
-
-const shortHash = (h, n) => (h || "").slice(0, n || 16) + "…";
-
-async function refreshStatus() {
-  const foot = document.getElementById("stats-foot");
-  try {
-    const res = await fetch(API_BASE + "/v1/status");
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const s = await res.json();
-    document.getElementById("stat-height").textContent = s.height;
-    document.getElementById("stat-validators").textContent = s.active_validators === 0 ? "1" : s.active_validators;
-    document.getElementById("stat-mempool").textContent = s.mempool_size;
-    document.getElementById("stat-tip").textContent = shortHash(s.tip_hash, 24);
-    foot.innerHTML = `tip hash in full: ${s.tip_hash} — <a href="https://hazescan.xyz">view full explorer →</a>`;
-    renderNodeLabel(true);
-  } catch (e) {
-    document.getElementById("stat-height").textContent = "—";
-    document.getElementById("stat-validators").textContent = "—";
-    document.getElementById("stat-mempool").textContent = "—";
-    document.getElementById("stat-tip").textContent = "—";
-    foot.innerHTML = `can't reach a node at <strong>${API_BASE}</strong> — click "node" above to point at one.`;
-    renderNodeLabel(false);
-  }
-}
-
-renderNodeLabel(false);
-refreshStatus();
-setInterval(refreshStatus, 8000);
 </script>
 </body>
 </html>
