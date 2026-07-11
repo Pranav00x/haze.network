@@ -11,19 +11,19 @@ use std::collections::HashSet;
 use wasm_bindgen::prelude::*;
 use curve25519_dalek_ng::scalar::Scalar;
 
-use crate::crypto::pedersen::Commitment;
-use crate::crypto::range_proof::RangeProof;
-use crate::crypto::schnorr::Signature;
-use crate::core::transaction::{Transaction, Input, Output, TxKernel};
-use crate::core::registry::{RegisterNameOp, TransferNameOp, NAME_REGISTRATION_FEE, validate_name};
-use crate::core::assets::{MintAssetOp, TransferAssetOp, ASSET_MINT_FEE, validate_asset_id};
-use crate::core::marketplace::{Listing, cancel_signing_message};
-use crate::core::collections::{LaunchCollectionOp, MintPhase, allowlist_leaf};
-use crate::core::merkle::{merkle_root, build_merkle_proof};
-use crate::wallet::keystore::Keystore;
-use crate::wallet::store::{WalletStore, OutputStatus, GENESIS_INDEX};
-use crate::wallet::planner::{self, PlanError};
-use crate::wallet::slate::{self, PendingSlate, Slate};
+use haze_crypto::pedersen::Commitment;
+use haze_crypto::range_proof::RangeProof;
+use haze_crypto::schnorr::Signature;
+use haze_chain::transaction::{Transaction, Input, Output, TxKernel};
+use haze_chain::registry::{RegisterNameOp, TransferNameOp, NAME_REGISTRATION_FEE, validate_name};
+use haze_chain::assets::{MintAssetOp, TransferAssetOp, ASSET_MINT_FEE, validate_asset_id};
+use haze_chain::marketplace::{Listing, cancel_signing_message};
+use haze_chain::collections::{LaunchCollectionOp, MintPhase, allowlist_leaf};
+use haze_chain::merkle::{merkle_root, build_merkle_proof};
+use haze_wallet::keystore::Keystore;
+use haze_wallet::store::{WalletStore, OutputStatus, GENESIS_INDEX};
+use haze_wallet::planner::{self, PlanError};
+use haze_wallet::slate::{self, PendingSlate, Slate};
 
 #[wasm_bindgen(getter_with_clone)]
 #[derive(Clone)]
@@ -122,10 +122,10 @@ pub fn recover_wallet_from_chain(
     let entries: Vec<ScanEntry> = serde_json::from_str(&scan_entries_json).map_err(|_| js_err("invalid scan entries JSON"))?;
     let utxo_set: HashSet<String> = chain_utxo_commitments_hex.into_iter().collect();
 
-    let entries: Vec<crate::wallet::recovery::ScanEntry> = entries.into_iter()
-        .map(|e| crate::wallet::recovery::ScanEntry { commitment_hex: e.commitment_hex, note_hex: e.note_hex })
+    let entries: Vec<haze_wallet::recovery::ScanEntry> = entries.into_iter()
+        .map(|e| haze_wallet::recovery::ScanEntry { commitment_hex: e.commitment_hex, note_hex: e.note_hex })
         .collect();
-    let result = crate::wallet::recovery::recover_from_chain(&mut keystore, &entries, &utxo_set);
+    let result = haze_wallet::recovery::recover_from_chain(&mut keystore, &entries, &utxo_set);
 
     Ok(WasmRecoveryResult {
         keystore_bytes: keystore.to_bytes(),
@@ -180,7 +180,7 @@ pub fn sweep_validator_rewards(
     let mut keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
     let entries: Vec<ScanEntry> = serde_json::from_str(&scan_entries_json).map_err(|_| js_err("invalid scan entries JSON"))?;
     let utxo_set: HashSet<String> = chain_utxo_commitments_hex.into_iter().collect();
-    let note_key = crate::wallet::note::coinbase_note_key(&stake_key);
+    let note_key = haze_crypto::note::coinbase_note_key(&stake_key);
 
     let mut inputs: Vec<Input> = Vec::new();
     let mut input_blindings: Vec<Scalar> = Vec::new();
@@ -188,12 +188,12 @@ pub fn sweep_validator_rewards(
 
     for entry in &entries {
         let Some(note_bytes) = hex_decode(&entry.note_hex) else { continue };
-        let Some((height, value)) = crate::wallet::note::open(&note_key, &note_bytes) else { continue };
+        let Some((height, value)) = haze_crypto::note::open(&note_key, &note_bytes) else { continue };
         if !utxo_set.contains(&entry.commitment_hex) {
             continue; // already spent (or somehow not ours) - nothing to sweep
         }
 
-        let blinding = crate::wallet::note::coinbase_blinding(&stake_key, height as u64);
+        let blinding = haze_crypto::note::coinbase_blinding(&stake_key, height as u64);
         let commitment = Commitment::new(value, blinding);
         if commitment.to_hex() != entry.commitment_hex {
             continue; // sanity check failed - not a real match, skip it
@@ -217,7 +217,7 @@ pub fn sweep_validator_rewards(
     let dest_blinding = keystore.derive_blinding(dest_index);
     let dest_commitment = Commitment::new(dest_value, dest_blinding);
     let dest_proof = RangeProof::prove(dest_value, &dest_blinding);
-    let dest_note = crate::wallet::note::seal(&keystore.note_key(), dest_index, dest_value);
+    let dest_note = haze_crypto::note::seal(&keystore.note_key(), dest_index, dest_value);
     let dest_output = Output { commitment: dest_commitment, proof: dest_proof, note: dest_note };
 
     let sum_input_blinding: Scalar = input_blindings.iter().sum();
@@ -547,7 +547,7 @@ pub fn build_stake_request(keystore_bytes: Vec<u8>, store_bytes: Vec<u8>, min_va
     }
 
     let blinding = planner::blinding_for(&keystore, largest.index);
-    let msg = crate::core::chain::stake_registration_message(&largest.commitment, largest.value);
+    let msg = haze_chain::chain::stake_registration_message(&largest.commitment, largest.value);
     let proof = Signature::sign(&msg, &blinding);
     let req = StakeRequestJson { commitment: largest.commitment, value: largest.value, proof };
     serde_json::to_string(&req).map_err(|_| js_err("failed to serialize stake request"))
@@ -631,7 +631,7 @@ pub fn build_register_name_request(keystore_bytes: Vec<u8>, store_bytes: Vec<u8>
         let change_blinding = keystore.derive_blinding(change_index);
         let change_commitment = Commitment::new(change_value, change_blinding);
         let change_proof = RangeProof::prove(change_value, &change_blinding);
-        let change_note = crate::wallet::note::seal(&keystore.note_key(), change_index, change_value);
+        let change_note = haze_crypto::note::seal(&keystore.note_key(), change_index, change_value);
         let output = Output { commitment: change_commitment, proof: change_proof, note: change_note };
         let change_info = WasmOwnedOutput { index: change_index, value: change_value, commitment_hex: change_commitment.to_hex() };
         (vec![output], Some(change_info), change_blinding)
@@ -809,8 +809,8 @@ pub fn build_mint_asset_request(keystore_bytes: Vec<u8>, store_bytes: Vec<u8>, a
     if fee < ASSET_MINT_FEE {
         return Err(js_err(format!("fee must be at least {}", ASSET_MINT_FEE)));
     }
-    if metadata.len() > crate::core::assets::MAX_METADATA_BYTES {
-        return Err(js_err(format!("metadata must be at most {} bytes", crate::core::assets::MAX_METADATA_BYTES)));
+    if metadata.len() > haze_chain::assets::MAX_METADATA_BYTES {
+        return Err(js_err(format!("metadata must be at most {} bytes", haze_chain::assets::MAX_METADATA_BYTES)));
     }
 
     let mut keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
@@ -837,7 +837,7 @@ pub fn build_mint_asset_request(keystore_bytes: Vec<u8>, store_bytes: Vec<u8>, a
         let change_blinding = keystore.derive_blinding(change_index);
         let change_commitment = Commitment::new(change_value, change_blinding);
         let change_proof = RangeProof::prove(change_value, &change_blinding);
-        let change_note = crate::wallet::note::seal(&keystore.note_key(), change_index, change_value);
+        let change_note = haze_crypto::note::seal(&keystore.note_key(), change_index, change_value);
         let output = Output { commitment: change_commitment, proof: change_proof, note: change_note };
         let change_info = WasmOwnedOutput { index: change_index, value: change_value, commitment_hex: change_commitment.to_hex() };
         (vec![output], Some(change_info), change_blinding)
@@ -1006,8 +1006,8 @@ pub fn build_cancel_listing_request(keystore_bytes: Vec<u8>, asset_id: String) -
 /// must POST the returned JSON to /v1/collections/launch.
 #[wasm_bindgen]
 pub fn build_launch_collection_request(keystore_bytes: Vec<u8>, collection_id: String, name: String, symbol: String, metadata: String, phases_json: String, royalty_bps: u16) -> Result<String, JsValue> {
-    if royalty_bps > crate::core::collections::MAX_ROYALTY_BPS {
-        return Err(js_err(format!("royalty_bps must be at most {}", crate::core::collections::MAX_ROYALTY_BPS)));
+    if royalty_bps > haze_chain::collections::MAX_ROYALTY_BPS {
+        return Err(js_err(format!("royalty_bps must be at most {}", haze_chain::collections::MAX_ROYALTY_BPS)));
     }
     let keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
     let creator_secret = keystore.identity_key();
@@ -1045,8 +1045,8 @@ pub fn build_collection_mint_asset_request(
     if fee < ASSET_MINT_FEE {
         return Err(js_err(format!("fee must be at least {}", ASSET_MINT_FEE)));
     }
-    if metadata.len() > crate::core::assets::MAX_METADATA_BYTES {
-        return Err(js_err(format!("metadata must be at most {} bytes", crate::core::assets::MAX_METADATA_BYTES)));
+    if metadata.len() > haze_chain::assets::MAX_METADATA_BYTES {
+        return Err(js_err(format!("metadata must be at most {} bytes", haze_chain::assets::MAX_METADATA_BYTES)));
     }
 
     let mut keystore = Keystore::from_bytes(&keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
@@ -1073,7 +1073,7 @@ pub fn build_collection_mint_asset_request(
         let change_blinding = keystore.derive_blinding(change_index);
         let change_commitment = Commitment::new(change_value, change_blinding);
         let change_proof = RangeProof::prove(change_value, &change_blinding);
-        let change_note = crate::wallet::note::seal(&keystore.note_key(), change_index, change_value);
+        let change_note = haze_crypto::note::seal(&keystore.note_key(), change_index, change_value);
         let output = Output { commitment: change_commitment, proof: change_proof, note: change_note };
         let change_info = WasmOwnedOutput { index: change_index, value: change_value, commitment_hex: change_commitment.to_hex() };
         (vec![output], Some(change_info), change_blinding)
@@ -1227,7 +1227,7 @@ pub fn sign_allowlist_publish(keystore_bytes: Vec<u8>, collection_id: String, ph
         .map(|h| Commitment::from_hex(h).ok_or_else(|| js_err(format!("invalid pubkey hex: {}", h))))
         .collect::<Result<Vec<_>, _>>()?;
 
-    let signature = crate::core::allowlist::AllowlistEntry::sign(&collection_id, phase_index, &pubkeys, published_at, &creator_secret);
-    let entry = crate::core::allowlist::AllowlistEntry { collection_id, phase_index, creator_pubkey, pubkeys, published_at, signature };
+    let signature = haze_chain::allowlist::AllowlistEntry::sign(&collection_id, phase_index, &pubkeys, published_at, &creator_secret);
+    let entry = haze_chain::allowlist::AllowlistEntry { collection_id, phase_index, creator_pubkey, pubkeys, published_at, signature };
     serde_json::to_string(&entry).map_err(|_| js_err("failed to serialize allowlist publish"))
 }

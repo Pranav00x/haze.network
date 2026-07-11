@@ -7,17 +7,17 @@
 use std::sync::{Arc, Mutex};
 use clap::Parser;
 
-use haze_core::core::mempool::Mempool;
-use haze_core::core::proposer::Proposer;
-use haze_core::core::storage::Storage;
-use haze_core::core::chain::ApplyResult;
-use haze_core::core::compaction::Compactor;
-use haze_core::core::genesis;
-use haze_core::core::marketplace::MarketplaceState;
-use haze_core::core::allowlist::AllowlistState;
-use haze_core::p2p::server::P2pServer;
-use haze_core::api::server::ApiServer;
-use haze_core::wallet::cli::{Cli, Commands, Wallet};
+use haze_chain::mempool::Mempool;
+use haze_chain::proposer::Proposer;
+use haze_chain::storage::Storage;
+use haze_chain::chain::ApplyResult;
+use haze_chain::compaction::Compactor;
+use haze_chain::genesis;
+use haze_chain::marketplace::MarketplaceState;
+use haze_chain::allowlist::AllowlistState;
+use haze_p2p::server::P2pServer;
+use haze_api::server::ApiServer;
+use haze_wallet::cli::{Cli, Commands, Wallet};
 
 /// Accepts either a plain decimal (e.g. the well-known devnet keys 42/43) or
 /// a 64-char hex-encoded scalar (the raw blinding revealed by the web

@@ -1,9 +1,18 @@
+[workspace]
+resolver = "2"
+members = ["crypto", "core", "wallet", "p2p", "api"]
+
 [package]
 name = "haze"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
+# Kept as haze_core (not renamed to match the haze-chain workspace member)
+# because Android's build expects exactly this name - libhaze_core.so and
+# the generated Kotlin bindings under uniffi/haze_core/ are both derived
+# from it. This is the mobile-facing FFI surface (src/ffi.rs) plus the
+# wasm surface (src/wasm.rs), not the consensus logic itself anymore.
 name = "haze_core"
 path = "src/lib.rs"
 crate-type = ["lib", "cdylib", "staticlib"]
@@ -18,20 +27,28 @@ name = "uniffi-bindgen"
 path = "src/bin/uniffi-bindgen.rs"
 required-features = ["native"]
 
+[[bin]]
+name = "genesis-keygen"
+path = "src/bin/genesis_keygen.rs"
+
 [features]
 default = ["native"]
 # Everything that needs a real OS: sockets (p2p, the API server), a filesystem
 # (sled storage), a native TLS stack (reqwest), and UniFFI's mobile scaffolding.
 # None of this compiles to wasm32-unknown-unknown.
-native = ["dep:sled", "dep:warp", "dep:reqwest", "dep:clap", "dep:uniffi", "dep:tokio", "dep:tokio-tungstenite", "dep:futures-util"]
+native = ["dep:clap", "dep:uniffi", "dep:tokio", "dep:haze-p2p", "dep:haze-api", "haze-chain/native", "haze-wallet/native"]
 wasm = ["dep:wasm-bindgen"]
 
 [dependencies]
+haze-chain = { path = "core" }
+haze-crypto = { path = "crypto" }
+haze-wallet = { path = "wallet" }
+haze-p2p = { path = "p2p", optional = true }
+haze-api = { path = "api", optional = true }
+
 curve25519-dalek-ng = { version = "4.1.1", features = ["serde"] }
 bulletproofs = "4.0.0"
 rand = "0.8"
-merlin = "3.0.0"
-sha2 = "0.10.8"
 serde = { version = "1.0", features = ["derive"] }
 bincode = "1.3.3"
 serde_json = "1.0.150"
@@ -39,27 +56,9 @@ thiserror = "1.0"
 
 tokio = { version = "1.52.3", features = ["full"], optional = true }
 clap = { version = "4.6.1", features = ["derive"], optional = true }
-warp = { version = "0.4.3", features = ["server", "websocket"], optional = true }
-reqwest = { version = "0.13.4", features = ["json"], optional = true }
-sled = { version = "0.34", optional = true }
 uniffi = { version = "0.28", features = ["cli"], optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
-# Outbound-only WS client, used by connect_to_peer when a --peers entry is a
-# ws(s):// address (see src/p2p/transport.rs) - rustls to match the TLS stack
-# reqwest/hyper-rustls already pull in, rather than adding a second (OpenSSL)
-# stack via native-tls.
-tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"], optional = true }
-futures-util = { version = "0.3", default-features = false, features = ["sink", "std"], optional = true }
-bip39 = "2.2.2"
-chacha20poly1305 = "0.11.0"
 
-# rand/OsRng (keystore generation, nonces, range proofs) depends on getrandom
-# 0.2, which does nothing on wasm32-unknown-unknown unless its "js" feature is
-# enabled - without this every RNG call panics at runtime in the browser.
-# chacha20poly1305 (wallet::note) transitively pulls in a *separate* getrandom
-# 0.4 via crypto-common - a different major version needing its own "wasm_js"
-# feature, hence the second (otherwise-unused) direct dependency below just to
-# activate it for the version already in the tree.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
 getrandom04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }

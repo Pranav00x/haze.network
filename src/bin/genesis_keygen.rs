@@ -15,9 +15,9 @@
 //! belongs in genesis.rs.
 use curve25519_dalek_ng::scalar::Scalar;
 use rand::rngs::OsRng;
-use haze_core::crypto::pedersen::Commitment;
-use haze_core::crypto::range_proof::RangeProof;
-use haze_core::crypto::schnorr::Signature;
+use haze_crypto::pedersen::Commitment;
+use haze_crypto::range_proof::RangeProof;
+use haze_crypto::schnorr::Signature;
 
 fn to_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()

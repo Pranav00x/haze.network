@@ -820,27 +820,106 @@ name = "haze"
 version = "0.1.0"
 dependencies = [
  "bincode",
- "bip39",
  "bulletproofs",
- "chacha20poly1305",
  "clap",
  "curve25519-dalek-ng",
- "futures-util",
+ "getrandom 0.2.17",
+ "getrandom 0.4.3",
+ "haze-api",
+ "haze-chain",
+ "haze-crypto",
+ "haze-p2p",
+ "haze-wallet",
+ "rand 0.8.6",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "uniffi",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "haze-api"
+version = "0.1.0"
+dependencies = [
+ "curve25519-dalek-ng",
+ "haze-chain",
+ "haze-crypto",
+ "haze-p2p",
+ "haze-wallet",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "warp",
+]
+
+[[package]]
+name = "haze-chain"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "bulletproofs",
+ "curve25519-dalek-ng",
+ "getrandom 0.2.17",
+ "haze-crypto",
+ "rand 0.8.6",
+ "serde",
+ "sha2",
+ "sled",
+ "tokio",
+]
+
+[[package]]
+name = "haze-crypto"
+version = "0.1.0"
+dependencies = [
+ "bulletproofs",
+ "chacha20poly1305",
+ "curve25519-dalek-ng",
  "getrandom 0.2.17",
  "getrandom 0.4.3",
  "merlin",
+ "rand 0.8.6",
+ "serde",
+ "sha2",
+]
+
+[[package]]
+name = "haze-p2p"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "curve25519-dalek-ng",
+ "futures-util",
+ "haze-chain",
+ "haze-crypto",
+ "rand 0.8.6",
+ "serde",
+ "sha2",
+ "tokio",
+ "tokio-tungstenite 0.24.0",
+ "warp",
+]
+
+[[package]]
+name = "haze-wallet"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "bip39",
+ "clap",
+ "curve25519-dalek-ng",
+ "getrandom 0.2.17",
+ "getrandom 0.4.3",
+ "haze-chain",
+ "haze-crypto",
  "rand 0.8.6",
  "reqwest",
  "serde",
  "serde_json",
  "sha2",
- "sled",
- "thiserror 1.0.69",
- "tokio",
- "tokio-tungstenite 0.24.0",
- "uniffi",
- "warp",
- "wasm-bindgen",
 ]
 
 [[package]]
