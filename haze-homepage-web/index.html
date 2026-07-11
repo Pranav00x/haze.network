@@ -14,593 +14,352 @@
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    color-scheme: dark;
-    --bg-0: #050505;
-    --bg-1: #0d0d0d;
-    --line: rgba(255,255,255,0.14);
-    --line-faint: rgba(255,255,255,0.08);
-    --ink: #f5f4f2;
-    --ink-dim: rgba(245,244,242,0.62);
-    --ink-faint: rgba(245,244,242,0.38);
-    --amber: #f0a04b;
-    --ok: #56d18b;
-    --danger: #e2604f;
-    --on-amber: #0a0a0a;
-    --font-display: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
-    --font-body: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
-    --font-mono: "IBM Plex Mono", monospace;
-  }
-
-  :root[data-theme="light"] {
     color-scheme: light;
-    --bg-0: #fbfaf8;
-    --bg-1: #f1efeb;
-    --line: rgba(10,10,10,0.14);
-    --line-faint: rgba(10,10,10,0.08);
-    --ink: #0e0d0c;
-    --ink-dim: rgba(14,13,12,0.64);
-    --ink-faint: rgba(14,13,12,0.4);
-    --amber: #c26a1c;
-    --ok: #227a4f;
-    --danger: #b53c2b;
-    --on-amber: #fbfaf8;
+    --bg: #ffffff;
+    --ink: #111111;
+    --ink-dim: #666666;
+    --ink-faint: #999999;
+    --line: #d9d9d9;
+    --font: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0b0b0b;
+    --ink: #f0f0f0;
+    --ink-dim: #999999;
+    --ink-faint: #666666;
+    --line: #2a2a2a;
   }
 
   * { box-sizing: border-box; }
   html { scroll-behavior: smooth; }
-
   body {
-    background: var(--bg-0);
+    background: var(--bg);
     color: var(--ink);
-    font-family: var(--font-body);
+    font-family: var(--font);
     margin: 0;
     min-height: 100vh;
-    -webkit-font-smoothing: antialiased;
-    overflow-x: hidden;
+    line-height: 1.6;
+  }
+  a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+  a:hover { color: var(--ink-dim); }
+  ::selection { background: var(--ink); color: var(--bg); }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 24px; }
+  code {
+    font-family: var(--font);
+    font-size: 0.95em;
+    border-bottom: 1px dotted var(--line);
+    overflow-wrap: break-word;
   }
 
-  a { color: inherit; }
-  ::selection { background: color-mix(in srgb, var(--amber) 35%, transparent); }
-  .wrap { max-width: 1240px; margin: 0 auto; padding: 0 clamp(20px, 5vw, 64px); }
-  .amber-text { color: var(--amber); }
-
-  /* ---------- Topbar: flat, transparent-over-hero, zero radius ---------- */
-  .topbar-wrap { position: sticky; top: 0; z-index: 30; }
-  .topbar {
-    max-width: 1240px;
-    margin: 0 auto;
+  /* ---------- Header ---------- */
+  header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 16px;
-    padding: 20px clamp(20px, 5vw, 64px);
+    padding: 28px 24px;
+    max-width: 880px;
+    margin: 0 auto;
   }
-  .brand { display: flex; align-items: center; gap: 9px; text-decoration: none; }
-  .brand-mark { width: 24px; height: 24px; display: block; flex-shrink: 0; }
-  .brand-name { font-family: var(--font-display); font-weight: 600; font-size: 16px; letter-spacing: -0.01em; }
+  .brand { display: flex; align-items: center; gap: 8px; text-decoration: none; }
+  .brand-mark { width: 20px; height: 20px; display: block; flex-shrink: 0; }
+  .brand-name { font-weight: 600; font-size: 15px; }
 
-  .topnav { display: flex; align-items: center; gap: 4px; }
-  .topnav a.navlink {
-    font-size: 14px;
-    font-weight: 500;
-    color: var(--ink-dim);
-    text-decoration: none;
-    padding: 9px 14px;
-    transition: color 0.15s ease;
-  }
-  .topnav a.navlink:hover { color: var(--ink); }
-  .topnav .theme-toggle {
-    color: var(--ink-dim);
-    background: transparent;
-    border: 1px solid var(--line);
-    width: 34px;
-    height: 34px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+  nav.topnav { display: flex; align-items: center; gap: 20px; }
+  nav.topnav a { font-size: 13px; }
+  .theme-toggle {
+    background: none;
+    border: none;
+    color: inherit;
+    font-family: var(--font);
+    font-size: 13px;
+    text-decoration: underline;
+    text-underline-offset: 3px;
     cursor: pointer;
-    margin-left: 8px;
-    flex-shrink: 0;
-    transition: border-color 0.2s ease, color 0.2s ease;
+    padding: 0;
   }
-  .topnav .theme-toggle:hover { border-color: var(--amber); color: var(--amber); }
-  .topnav .theme-toggle svg { width: 14px; height: 14px; }
-  .topnav .theme-toggle .icon-moon { display: none; }
-  :root[data-theme="light"] .topnav .theme-toggle .icon-sun { display: none; }
-  :root[data-theme="light"] .topnav .theme-toggle .icon-moon { display: block; }
-  .btn-nav {
-    font-family: var(--font-display);
-    font-weight: 600;
-    font-size: 14px;
-    color: var(--on-amber);
-    background: var(--amber);
-    text-decoration: none;
-    padding: 10px 20px;
-    margin-left: 10px;
-    white-space: nowrap;
-    transition: filter 0.2s ease;
-  }
-  .btn-nav:hover { filter: brightness(1.08); }
 
   .nav-toggle {
     display: none;
-    color: var(--ink);
-    background: transparent;
+    background: none;
     border: 1px solid var(--line);
-    width: 38px;
-    height: 38px;
+    color: var(--ink);
+    width: 36px;
+    height: 36px;
     align-items: center;
     justify-content: center;
     cursor: pointer;
     flex-shrink: 0;
   }
-  .nav-toggle svg { width: 17px; height: 17px; }
+  .nav-toggle svg { width: 16px; height: 16px; }
   .nav-toggle .icon-close { display: none; }
-  .topbar-wrap.nav-open .nav-toggle .icon-menu { display: none; }
-  .topbar-wrap.nav-open .nav-toggle .icon-close { display: block; }
+  header.nav-open .nav-toggle .icon-menu { display: none; }
+  header.nav-open .nav-toggle .icon-close { display: block; }
 
-  @media (max-width: 760px) {
-    .topnav {
+  @media (max-width: 600px) {
+    nav.topnav {
       position: fixed;
-      top: 74px;
-      left: 0;
+      top: 0;
       right: 0;
+      bottom: 0;
+      width: min(78vw, 300px);
+      background: var(--bg);
+      border-left: 1px solid var(--line);
       flex-direction: column;
-      align-items: stretch;
-      gap: 0;
-      padding: 6px clamp(20px, 5vw, 64px) 18px;
-      background: var(--bg-0);
-      border-bottom: 1px solid var(--line);
-      border-top: 1px solid var(--line);
-      max-height: 0;
-      overflow: hidden;
-      opacity: 0;
-      transition: max-height 0.35s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease;
+      align-items: flex-start;
+      gap: 4px;
+      padding: 80px 24px 24px;
+      transform: translateX(100%);
+      transition: transform 0.3s ease;
+      z-index: 40;
     }
-    .topbar-wrap.nav-open .topnav { max-height: 420px; opacity: 1; }
-    .topnav a.navlink { padding: 14px 4px; font-size: 15.5px; border-bottom: 1px solid var(--line-faint); }
-    .topnav .theme-toggle { order: -1; align-self: flex-end; margin: 8px 0; }
-    .btn-nav { margin: 10px 0 0; text-align: center; padding: 14px 18px; }
+    header.nav-open nav.topnav { transform: translateX(0); }
+    nav.topnav a, nav.topnav .theme-toggle { padding: 12px 0; width: 100%; }
     .nav-toggle { display: flex; }
   }
 
-  /* ---------- Hero: huge, centered, tight tracking, weight 400 ---------- */
-  .hero { padding: clamp(48px, 9vw, 96px) 0 0; text-align: center; }
-  .eyebrow {
-    font-size: 12px;
+  /* ---------- Hero ---------- */
+  .hero { padding: clamp(40px, 8vw, 96px) 0 40px; }
+  .eyebrow { font-size: 13px; color: var(--ink-dim); margin: 0 0 20px; }
+  h1 {
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--ink-dim);
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    margin: 0 0 26px;
-    padding: 7px 14px;
-    border: 1px solid var(--line);
-  }
-  .eyebrow .pulse-dot {
-    width: 6px; height: 6px; border-radius: 50%;
-    background: var(--ok);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 20%, transparent);
-    animation: pulse 2.4s ease-in-out infinite;
-  }
-  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
-
-  h1.hero-headline {
-    font-family: var(--font-display);
-    font-weight: 400;
-    font-size: clamp(38px, 8vw, 108px);
-    line-height: 0.98;
-    letter-spacing: -0.035em;
-    margin: 0 auto 26px;
-    max-width: 15ch;
-  }
-  h1.hero-headline em { font-style: normal; color: var(--amber); }
-
-  .hero-sub {
-    font-size: clamp(15px, 1.3vw, 18px);
-    line-height: 1.6;
-    color: var(--ink-dim);
-    max-width: 54ch;
-    margin: 0 auto 36px;
-  }
-
-  .hero-ctas { display: flex; gap: 2px; flex-wrap: wrap; justify-content: center; margin-bottom: clamp(56px, 8vw, 100px); }
-  .btn {
-    font-family: var(--font-display);
-    font-size: 15px;
-    font-weight: 600;
-    text-decoration: none;
-    padding: 15px 28px;
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    border: 1px solid transparent;
-    transition: filter 0.2s ease, border-color 0.2s ease, background 0.2s ease;
-  }
-  .btn-primary { background: var(--amber); color: var(--on-amber); }
-  .btn-primary:hover { filter: brightness(1.08); }
-  .btn-ghost { background: transparent; border-color: var(--line); color: var(--ink); }
-  .btn-ghost:hover { border-color: var(--ink); }
-
-  /* ---------- Live stats: one flat bordered strip, huge blunt numerals ---------- */
-  .stats-strip {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    border-top: 1px solid var(--line);
-    border-bottom: 1px solid var(--line);
-  }
-  @media (max-width: 780px) { .stats-strip { grid-template-columns: repeat(2, 1fr); } }
-  .stat-cell {
-    padding: clamp(22px, 3vw, 32px) clamp(18px, 2.5vw, 28px);
-    text-align: left;
-    border-left: 1px solid var(--line);
-  }
-  .stat-cell:first-child { border-left: none; }
-  @media (max-width: 780px) {
-    .stat-cell:nth-child(odd) { border-left: none; }
-    .stat-cell:nth-child(n+3) { border-top: 1px solid var(--line); }
-  }
-  .stat-cell .st-label {
-    font-size: 11.5px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.07em;
-    color: var(--ink-faint);
-    margin-bottom: 10px;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .stat-cell .st-value {
-    font-family: var(--font-display);
-    font-weight: 400;
-    font-size: clamp(26px, 2.8vw, 40px);
-    letter-spacing: -0.02em;
-    font-variant-numeric: tabular-nums;
-    line-height: 1;
-  }
-  .stat-cell .st-value.mono { font-family: var(--font-mono); font-size: 14px; font-weight: 500; word-break: break-all; line-height: 1.4; }
-  .node-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-faint); flex-shrink: 0; }
-  .node-dot.online { background: var(--ok); }
-  .node-dot.offline { background: var(--danger); }
-  .node-indicator { cursor: pointer; }
-  #node-label { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .stats-foot {
-    text-align: center;
-    padding: 16px 20px;
-    font-size: 12.5px;
-    color: var(--ink-faint);
-  }
-  .stats-foot a { color: var(--amber); text-decoration: none; }
-  .stats-foot a:hover { text-decoration: underline; }
-
-  section { padding: clamp(64px, 9vw, 128px) 0; border-top: 1px solid var(--line); }
-  .section-head { margin-bottom: clamp(36px, 5vw, 56px); }
-  .section-eyebrow {
-    font-size: 12px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--amber);
-    margin: 0 0 16px;
-  }
-  .section-head h2 {
-    font-family: var(--font-display);
-    font-weight: 400;
-    font-size: clamp(30px, 4.6vw, 58px);
-    letter-spacing: -0.025em;
-    line-height: 1.04;
-    margin: 0 0 16px;
+    font-size: clamp(26px, 4vw, 42px);
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+    margin: 0 0 24px;
     max-width: 18ch;
   }
-  .section-head p { font-size: 16px; line-height: 1.6; color: var(--ink-dim); max-width: 60ch; margin: 0; }
+  .hero-sub { font-size: 15px; color: var(--ink-dim); max-width: 68ch; margin: 0 0 32px; }
+  .hero-ctas { display: flex; gap: 24px; flex-wrap: wrap; font-size: 14px; margin-bottom: 8px; }
 
-  /* ---------- State model ---------- */
-  .formula-panel { border-top: 1px solid var(--line); padding-top: clamp(28px, 4vw, 40px); }
-  .formula-panel p { font-size: 16px; line-height: 1.8; color: var(--ink-dim); margin: 0 0 20px; }
-  .formula-panel p:last-of-type { margin-bottom: 0; }
-  .formula-panel strong { color: var(--ink); font-weight: 600; }
-  code {
-    font-family: var(--font-mono);
-    font-size: 0.86em;
-    background: var(--bg-1);
-    color: var(--amber);
-    padding: 2px 6px;
-    overflow-wrap: break-word;
-  }
-  .not-list { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
-  .not-chip {
-    font-size: 12.5px;
-    font-weight: 500;
-    color: var(--danger);
-    border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
-    padding: 6px 13px;
-  }
+  hr { border: none; border-top: 1px solid var(--line); margin: 40px 0; }
 
-  /* ---------- Protocol mechanics: numbered row list, hairline dividers ---------- */
-  .mech-list { border-top: 1px solid var(--line); }
-  .mech-row {
-    display: grid;
-    grid-template-columns: 72px 1fr 1.4fr;
-    gap: clamp(16px, 3vw, 40px);
-    padding: clamp(22px, 3vw, 34px) 0;
-    border-bottom: 1px solid var(--line);
-    align-items: baseline;
-  }
-  @media (max-width: 760px) {
-    .mech-row { grid-template-columns: 1fr; gap: 8px; }
-  }
-  .mech-row .mr-num { font-family: var(--font-mono); font-size: 14px; color: var(--amber); }
-  .mech-row h3 { font-family: var(--font-display); font-weight: 600; font-size: clamp(18px, 1.8vw, 22px); margin: 0; letter-spacing: -0.01em; }
-  .mech-row p { font-size: 14.5px; line-height: 1.65; color: var(--ink-dim); margin: 0; }
-
-  /* ---------- Under the hood ---------- */
-  .tech-grid { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
-  @media (max-width: 780px) { .tech-grid { grid-template-columns: 1fr; } }
-  .tech-cell { padding: clamp(24px, 3vw, 32px); border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); min-width: 0; }
-  .tech-cell .tc-label { font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: var(--amber); margin-bottom: 14px; }
-  .tech-cell .tc-body { font-size: 14.5px; line-height: 1.7; color: var(--ink-dim); }
-  .target-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 16px; }
-  .target-pill { font-family: var(--font-mono); font-size: 11px; color: var(--ink-dim); border: 1px solid var(--line); padding: 4px 9px; }
-
-  /* ---------- Get started ---------- */
-  .gs-grid { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
-  @media (max-width: 900px) { .gs-grid { grid-template-columns: 1fr; } }
-  .gs-card {
-    padding: clamp(28px, 3.5vw, 40px) clamp(24px, 3vw, 32px);
-    border-right: 1px solid var(--line);
-    border-bottom: 1px solid var(--line);
+  /* ---------- Live stats: plain mono key/value lines ---------- */
+  .stats-block { font-size: 13.5px; }
+  .stats-block .stat-line {
     display: flex;
-    flex-direction: column;
     gap: 16px;
-    min-width: 0;
-    text-decoration: none;
-    color: var(--ink);
-    transition: background 0.2s ease;
+    padding: 7px 0;
+    border-top: 1px solid var(--line);
   }
-  .gs-card:hover { background: var(--bg-1); }
-  .gs-card .gs-glyph {
-    width: 38px; height: 38px;
-    border: 1.5px solid var(--amber);
-    display: flex; align-items: center; justify-content: center;
-    font-family: var(--font-mono); font-weight: 600; font-size: 14px; color: var(--amber);
-  }
-  .gs-card h3 { font-family: var(--font-display); font-weight: 600; font-size: 20px; margin: 0; letter-spacing: -0.01em; }
-  .gs-card p { font-size: 14.5px; line-height: 1.65; color: var(--ink-dim); margin: 0; flex-grow: 1; }
-  .gs-card .gs-cta { font-size: 13.5px; font-weight: 600; color: var(--amber); display: flex; align-items: center; gap: 5px; }
+  .stats-block .stat-line:last-of-type { border-bottom: 1px solid var(--line); }
+  .stats-block .st-key { color: var(--ink-dim); width: 130px; flex-shrink: 0; }
+  .stats-block .st-val { font-variant-numeric: tabular-nums; word-break: break-all; }
+  .node-indicator { cursor: pointer; }
+  .node-indicator:hover .st-key { color: var(--ink); }
+  #node-label { }
+  .stats-foot { font-size: 12.5px; color: var(--ink-faint); margin-top: 12px; }
 
-  .node-download {
-    padding: clamp(22px, 3vw, 30px) clamp(24px, 3vw, 32px);
-    border: 1px solid var(--line);
-    border-top: none;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 20px;
-    flex-wrap: wrap;
+  /* ---------- Sections ---------- */
+  section { padding: 40px 0; }
+  .section-eyebrow { font-size: 12px; color: var(--ink-faint); margin: 0 0 8px; }
+  h2 { font-weight: 600; font-size: clamp(19px, 2.2vw, 24px); letter-spacing: -0.005em; margin: 0 0 14px; }
+  .section-intro { font-size: 14px; color: var(--ink-dim); max-width: 68ch; margin: 0 0 28px; }
+
+  .prose p { font-size: 14.5px; line-height: 1.8; color: var(--ink-dim); margin: 0 0 18px; }
+  .prose p:last-of-type { margin-bottom: 0; }
+  .prose strong { color: var(--ink); font-weight: 600; }
+  .not-list { margin-top: 22px; font-size: 13px; color: var(--ink-dim); }
+  .not-list span:not(:last-child)::after { content: " · "; color: var(--ink-faint); }
+
+  /* ---------- Numbered lists (mechanics, get-started) ---------- */
+  .num-list .num-row {
+    padding: 20px 0;
+    border-top: 1px solid var(--line);
   }
-  .node-download .nd-text h4 { font-family: var(--font-display); font-weight: 600; font-size: 16px; margin: 0 0 4px; }
-  .node-download .nd-text p { font-size: 13px; color: var(--ink-faint); margin: 0; }
+  .num-list .num-row:last-child { border-bottom: 1px solid var(--line); }
+  .num-row .nr-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; }
+  .num-row .nr-num { color: var(--ink-faint); font-size: 13px; }
+  .num-row h3 { font-weight: 600; font-size: 15.5px; margin: 0; }
+  .num-row p { font-size: 13.5px; line-height: 1.7; color: var(--ink-dim); margin: 0; max-width: 68ch; }
+  .num-row a { font-size: 13.5px; }
+
+  /* ---------- Under the hood: definition-list style ---------- */
+  dl.tech-list { margin: 0; }
+  dl.tech-list > div { padding: 18px 0; border-top: 1px solid var(--line); }
+  dl.tech-list > div:last-child { border-bottom: 1px solid var(--line); }
+  dl.tech-list dt { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-faint); margin: 0 0 8px; }
+  dl.tech-list dd { font-size: 13.5px; line-height: 1.7; color: var(--ink-dim); margin: 0; }
+  .target-list { margin-top: 10px; font-size: 12.5px; color: var(--ink-dim); }
+  .target-list span:not(:last-child)::after { content: ", "; }
 
   /* ---------- Footer ---------- */
-  footer { border-top: 1px solid var(--line); padding: clamp(28px, 4vw, 40px) 0; }
-  .footer-row { display: flex; justify-content: space-between; align-items: center; gap: 20px; flex-wrap: wrap; }
-  .footer-row .fr-brand { display: flex; align-items: center; gap: 8px; }
-  .footer-row .fr-brand .brand-mark { width: 18px; height: 18px; }
-  .footer-row .fr-brand .brand-name { font-size: 14px; }
-  .footer-links { display: flex; gap: 20px; flex-wrap: wrap; }
-  .footer-links a { font-size: 13px; color: var(--ink-faint); text-decoration: none; }
-  .footer-links a:hover { color: var(--amber); }
-  .footer-note { font-size: 12px; color: var(--ink-faint); margin-top: 20px; max-width: 70ch; }
+  footer { border-top: 1px solid var(--line); padding: 32px 0 48px; }
+  .footer-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; font-size: 13px; }
+  .footer-links { display: flex; gap: 18px; flex-wrap: wrap; }
+  .footer-note { font-size: 12px; color: var(--ink-faint); margin-top: 18px; max-width: 70ch; }
 </style>
 </head>
 <body>
 
-  <div class="topbar-wrap" id="topbar-wrap">
-    <header class="topbar">
-      <a class="brand" href="#top">
-        <img class="brand-mark" src="assets/logo-icon.svg" alt="Haze">
-        <span class="brand-name">Haze</span>
-      </a>
-      <nav class="topnav">
-        <a class="navlink" href="#what-is-haze">Protocol</a>
-        <a class="navlink" href="#mechanics">Mechanics</a>
-        <a class="navlink" href="#tech">Under the hood</a>
-        <a class="navlink" href="https://github.com/Pranav00x/haze" target="_blank" rel="noopener">GitHub</a>
-        <button class="theme-toggle" id="theme-toggle" title="Toggle light / dark mode" aria-label="Toggle light / dark mode">
-          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path></svg>
-          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
-        </button>
-        <a class="btn-nav" href="#get-started">Launch wallet</a>
-      </nav>
-      <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu" aria-expanded="false">
-        <svg class="icon-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M3 12h18M3 18h18"></path></svg>
-        <svg class="icon-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"></path></svg>
-      </button>
-    </header>
-  </div>
+  <header id="site-header">
+    <a class="brand" href="#top">
+      <img class="brand-mark" src="assets/logo-icon.svg" alt="Haze">
+      <span class="brand-name">haze</span>
+    </a>
+    <nav class="topnav">
+      <a href="#what-is-haze">protocol</a>
+      <a href="#mechanics">mechanics</a>
+      <a href="#tech">under the hood</a>
+      <a href="https://github.com/Pranav00x/haze" target="_blank" rel="noopener">github</a>
+      <a href="#get-started">wallet</a>
+      <button class="theme-toggle" id="theme-toggle">light/dark</button>
+    </nav>
+    <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu" aria-expanded="false">
+      <svg class="icon-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M3 12h18M3 18h18"></path></svg>
+      <svg class="icon-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+    </button>
+  </header>
 
   <div class="wrap" id="top">
 
-    <section class="hero" style="border-top: none;">
-      <div class="eyebrow"><span class="pulse-dot"></span> Public testnet — live network</div>
-      <h1 class="hero-headline">A ledger that doesn&rsquo;t <em>remember</em></h1>
+    <section class="hero">
+      <p class="eyebrow">public testnet — live network</p>
+      <h1>A ledger that doesn't remember who paid whom.</h1>
       <p class="hero-sub">A from-scratch Mimblewimble layer-1: Pedersen-committed, Bulletproofs-range-proved UTXOs, no account model, no address book — settled by a proof-of-stake validator set with deterministic weighted proposer selection. No smart contract layer.</p>
       <div class="hero-ctas">
-        <a class="btn btn-primary" href="#get-started">Open the wallet</a>
-        <a class="btn btn-ghost" href="#what-is-haze">Read the protocol spec</a>
+        <a href="#get-started">open the wallet →</a>
+        <a href="#what-is-haze">read the protocol spec →</a>
       </div>
+    </section>
 
-      <div class="stats-strip">
-        <div class="stat-cell node-indicator" id="node-indicator" title="Click to point this page at a different node">
-          <div class="st-label"><span class="node-dot" id="node-dot"></span> <span id="node-label">node</span></div>
-          <div class="st-value mono" id="stat-tip">—</div>
+    <hr>
+
+    <section style="padding-top:0; padding-bottom:0;">
+      <div class="stats-block">
+        <div class="stat-line node-indicator" id="node-indicator" title="Click to point this page at a different node">
+          <span class="st-key">node</span>
+          <span class="st-val"><span id="node-dot">[…]</span> <span id="node-label">node</span></span>
         </div>
-        <div class="stat-cell">
-          <div class="st-label">Block height</div>
-          <div class="st-value" id="stat-height">—</div>
+        <div class="stat-line">
+          <span class="st-key">block height</span>
+          <span class="st-val" id="stat-height">—</span>
         </div>
-        <div class="stat-cell">
-          <div class="st-label">Active validators</div>
-          <div class="st-value" id="stat-validators">—</div>
+        <div class="stat-line">
+          <span class="st-key">active validators</span>
+          <span class="st-val" id="stat-validators">—</span>
         </div>
-        <div class="stat-cell">
-          <div class="st-label">Mempool</div>
-          <div class="st-value" id="stat-mempool">—</div>
+        <div class="stat-line">
+          <span class="st-key">mempool</span>
+          <span class="st-val" id="stat-mempool">—</span>
+        </div>
+        <div class="stat-line">
+          <span class="st-key">tip hash</span>
+          <span class="st-val" id="stat-tip">—</span>
         </div>
       </div>
-      <div class="stats-foot" id="stats-foot">Connecting…</div>
+      <p class="stats-foot" id="stats-foot">connecting…</p>
     </section>
 
     <section id="what-is-haze">
-      <div class="section-head">
-        <div class="section-eyebrow">State model</div>
-        <h2>No accounts. No balances. No transaction graph.</h2>
-      </div>
-      <div class="formula-panel">
+      <p class="section-eyebrow">state model</p>
+      <h2>No accounts. No balances. No transaction graph.</h2>
+      <div class="prose">
         <p>An <strong>output</strong> is the triple <code>(C, π, ξ)</code>: a Pedersen commitment <code>C = v·H + r·G</code> on Ristretto255 hiding value <code>v</code> under blinding factor <code>r</code>; a Bulletproofs range proof <code>π</code> certifying <code>v ∈ [0, 2⁶⁴)</code> with no trusted setup; and an optional ChaCha20-Poly1305-sealed note <code>ξ</code> the owner can later decrypt to recover <code>v</code> and <code>r</code>. A <strong>kernel</strong> is <code>(excess, fee, σ)</code>: <code>excess = Σr_in − Σr_out</code> committed to value 0, signed with <code>σ = Schnorr(excess_sk, fee_LE)</code> over a <code>merlin</code> Fiat–Shamir transcript.</p>
         <p>Block validity is one identity, checked in <code>core::transaction::validate_with_reward</code>: <code>ΣC_in − ΣC_out − fee·H + reward·H ≟ Σexcess_i</code>, plus every output's range proof and every kernel's signature. There is no account balance to update and no address to route a payment to — just unspent, confidential outputs and the arithmetic that proves a spend is real without revealing how much moved or between which two outputs.</p>
         <p>Spent inputs and their matching outputs <strong>cut through</strong> — cancel out of history entirely, per block and across the whole mempool, before they ever land. A node compacts spent pairs below a rolling horizon (default 1,000 blocks) and still answers any tip-relative UTXO-set query correctly; it just can't replay full history past that point for a peer that asks (<code>PrunedRange</code>, handled via an aggregate-validation fallback instead).</p>
-        <div class="not-list">
-          <span class="not-chip">no accounts</span>
-          <span class="not-chip">no balances</span>
-          <span class="not-chip">no address book</span>
-          <span class="not-chip">no tx graph</span>
-          <span class="not-chip">no smart contracts</span>
-        </div>
+        <p class="not-list"><span>no accounts</span><span>no balances</span><span>no address book</span><span>no tx graph</span><span>no smart contracts</span></p>
       </div>
     </section>
 
     <section id="mechanics">
-      <div class="section-head">
-        <div class="section-eyebrow">Shipped, not roadmap</div>
-        <h2>Protocol mechanics</h2>
-        <p>What's actually running on the live testnet right now.</p>
-      </div>
+      <p class="section-eyebrow">shipped, not roadmap</p>
+      <h2>Protocol mechanics</h2>
+      <p class="section-intro">What's actually running on the live testnet right now.</p>
 
-      <div class="mech-list">
-        <div class="mech-row">
-          <div class="mr-num">01</div>
-          <h3>Dandelion++ propagation</h3>
+      <div class="num-list">
+        <div class="num-row">
+          <div class="nr-head"><span class="nr-num">01</span><h3>Dandelion++ propagation</h3></div>
           <p>20% fluff probability per hop, 15s fallback-fluff timer. The originating node isn't trivially identifiable as the broadcaster — value-privacy extended to the network layer.</p>
         </div>
-        <div class="mech-row">
-          <div class="mr-num">02</div>
-          <h3>Weighted proposer selection</h3>
+        <div class="num-row">
+          <div class="nr-head"><span class="nr-num">02</span><h3>Weighted proposer selection</h3></div>
           <p><code>proposer(h) = active_validators[H(h ‖ prev_hash) mod |active_validators|]</code>. Any active validator may sign a given height — liveness falls through on a timeout instead of stalling.</p>
         </div>
-        <div class="mech-row">
-          <div class="mr-num">03</div>
-          <h3>Deterministic validator set</h3>
+        <div class="num-row">
+          <div class="nr-head"><span class="nr-num">03</span><h3>Deterministic validator set</h3></div>
           <p>Stake registration is a signed proof-of-ownership op included in blocks (<code>RegisterValidatorOp</code>) — every node derives the same active-validator set by replaying block content.</p>
         </div>
-        <div class="mech-row">
-          <div class="mr-num">04</div>
-          <h3>Reorg-safe state</h3>
+        <div class="num-row">
+          <div class="nr-head"><span class="nr-num">04</span><h3>Reorg-safe state</h3></div>
           <p><code>apply_linear_block</code> / <code>rollback_block</code> are exactly symmetric across the UTXO set, kernel-excess set, and every registry — a heavier fork triggers a clean rollback-then-replay.</p>
         </div>
-        <div class="mech-row">
-          <div class="mr-num">05</div>
-          <h3>Flat, size-based fees</h3>
+        <div class="num-row">
+          <div class="nr-head"><span class="nr-num">05</span><h3>Flat, size-based fees</h3></div>
           <p>Mempool floor is <code>FEE_PER_KB · size_bytes / 1000</code> — no congestion multiplier inflating the default with mempool backlog.</p>
         </div>
-        <div class="mech-row">
-          <div class="mr-num">06</div>
-          <h3>Transport-agnostic P2P</h3>
+        <div class="num-row">
+          <div class="nr-head"><span class="nr-num">06</span><h3>Transport-agnostic P2P</h3></div>
           <p>TCP and WebSocket peers interoperate transparently. Sync batches 256 blocks at a time, with an aggregate-validation fallback past a peer's compaction horizon.</p>
         </div>
       </div>
     </section>
 
     <section id="tech">
-      <div class="section-head">
-        <div class="section-eyebrow">Under the hood</div>
-        <h2>One codebase, every target</h2>
-        <p>The consensus/crypto core has zero native dependencies and compiles unmodified to WebAssembly and every mobile ABI.</p>
-      </div>
+      <p class="section-eyebrow">under the hood</p>
+      <h2>One codebase, every target</h2>
+      <p class="section-intro">The consensus/crypto core has zero native dependencies and compiles unmodified to WebAssembly and every mobile ABI.</p>
 
-      <div class="tech-grid">
-        <div class="tech-cell">
-          <div class="tc-label">Crypto stack</div>
-          <div class="tc-body">Ristretto255 (<code>curve25519-dalek</code>), Bulletproofs range proofs, <code>merlin</code> Fiat–Shamir transcripts, ChaCha20-Poly1305 for recoverable output notes, <code>bip39</code> for seed phrases. Zero pairing-based cryptography anywhere in the tree.</div>
+      <dl class="tech-list">
+        <div>
+          <dt>Crypto stack</dt>
+          <dd>Ristretto255 (<code>curve25519-dalek</code>), Bulletproofs range proofs, <code>merlin</code> Fiat–Shamir transcripts, ChaCha20-Poly1305 for recoverable output notes, <code>bip39</code> for seed phrases. Zero pairing-based cryptography anywhere in the tree.</dd>
         </div>
-        <div class="tech-cell">
-          <div class="tc-label">Supply &amp; emission</div>
-          <div class="tc-body">21,000,000,000 HAZE target: 65% emitted via block rewards, halving every 12,600,000 blocks (~4 years at a 10s block time); 35% minted at genesis (13% team, 13% investors — each vesting over a 6-month cliff plus 7 quarterly tranches — 6% airdrop, 3% treasury).</div>
+        <div>
+          <dt>Supply &amp; emission</dt>
+          <dd>21,000,000,000 HAZE target: 65% emitted via block rewards, halving every 12,600,000 blocks (~4 years at a 10s block time); 35% minted at genesis (13% team, 13% investors — each vesting over a 6-month cliff plus 7 quarterly tranches — 6% airdrop, 3% treasury).</dd>
         </div>
-        <div class="tech-cell">
-          <div class="tc-label">Build surface</div>
-          <div class="tc-body">One Rust codebase, every target from CI:
-            <div class="target-pills">
-              <span class="target-pill">linux-x86_64</span>
-              <span class="target-pill">windows-msvc</span>
-              <span class="target-pill">macos-x86_64</span>
-              <span class="target-pill">macos-aarch64</span>
-              <span class="target-pill">android (4 ABIs)</span>
-              <span class="target-pill">wasm32</span>
+        <div>
+          <dt>Build surface</dt>
+          <dd>
+            One Rust codebase, every target from CI:
+            <div class="target-list">
+              <span>linux-x86_64</span><span>windows-msvc</span><span>macos-x86_64</span><span>macos-aarch64</span><span>android (4 ABIs)</span><span>wasm32</span>
             </div>
-          </div>
+          </dd>
         </div>
-      </div>
+      </dl>
     </section>
 
     <section id="get-started">
-      <div class="section-head">
-        <div class="section-eyebrow">Get started</div>
-        <h2>Run something real</h2>
-        <p>All talk to any Haze node over a plain HTTP/WS API — point them at your own node, or a public one, at any time.</p>
-      </div>
+      <p class="section-eyebrow">get started</p>
+      <h2>Run something real</h2>
+      <p class="section-intro">All talk to any Haze node over a plain HTTP/WS API — point them at your own node, or a public one, at any time.</p>
 
-      <div class="gs-grid">
-        <a class="gs-card" href="https://wallet.hazeprotocol.xyz">
-          <span class="gs-glyph">W</span>
-          <h3>Wallet</h3>
-          <p>Send and receive confidential payments, register a <code>.haze</code> name, register as a validator. Non-custodial — key material never leaves the client.</p>
-          <span class="gs-cta">Open the wallet →</span>
-        </a>
-        <a class="gs-card" href="https://hazescan.xyz">
-          <span class="gs-glyph">E</span>
-          <h3>Explorer</h3>
-          <p>Live chain height, block detail, search by height, hash, or commitment, and the current validator set — reads directly from a node's public API.</p>
-          <span class="gs-cta">Explore the chain →</span>
-        </a>
-        <a class="gs-card" href="https://github.com/Pranav00x/haze/releases" target="_blank" rel="noopener">
-          <span class="gs-glyph">V</span>
-          <h3>Run a validator</h3>
-          <p>Any currently-unspent UTXO can register as a validator with a signed proof of ownership. No stake-lock token, no slashing, no minimum beyond owning a real output.</p>
-          <span class="gs-cta">Download the node →</span>
-        </a>
-      </div>
-
-      <div class="node-download">
-        <div class="nd-text">
-          <h4>Prebuilt binaries</h4>
-          <p>Windows, macOS (Intel + Apple Silicon), Linux, and an Android wallet APK — every testnet release.</p>
+      <div class="num-list">
+        <div class="num-row">
+          <div class="nr-head"><span class="nr-num">w</span><h3>Wallet</h3></div>
+          <p>Send and receive confidential payments, register a <code>.haze</code> name, register as a validator. Non-custodial — key material never leaves the client. <a href="https://wallet.hazeprotocol.xyz">open the wallet →</a></p>
         </div>
-        <a class="btn btn-ghost" href="https://github.com/Pranav00x/haze/releases" target="_blank" rel="noopener">Download →</a>
+        <div class="num-row">
+          <div class="nr-head"><span class="nr-num">e</span><h3>Explorer</h3></div>
+          <p>Live chain height, block detail, search by height, hash, or commitment, and the current validator set — reads directly from a node's public API. <a href="https://hazescan.xyz">explore the chain →</a></p>
+        </div>
+        <div class="num-row">
+          <div class="nr-head"><span class="nr-num">v</span><h3>Run a validator</h3></div>
+          <p>Any currently-unspent UTXO can register as a validator with a signed proof of ownership. No stake-lock token, no slashing, no minimum beyond owning a real output. <a href="https://github.com/Pranav00x/haze/releases" target="_blank" rel="noopener">download the node →</a></p>
+        </div>
       </div>
+
+      <p class="section-intro" style="margin-top:24px;">Prebuilt binaries — Windows, macOS (Intel + Apple Silicon), Linux, and an Android wallet APK — every testnet release. <a href="https://github.com/Pranav00x/haze/releases" target="_blank" rel="noopener">download →</a></p>
     </section>
 
   </div>
 
   <footer>
     <div class="wrap footer-row">
-      <div class="fr-brand">
-        <img class="brand-mark" src="assets/logo-icon.svg" alt="Haze">
-        <span class="brand-name">Haze</span>
-      </div>
+      <span>haze — public testnet</span>
       <div class="footer-links">
-        <a href="https://github.com/Pranav00x/haze" target="_blank" rel="noopener">GitHub</a>
-        <a href="https://github.com/Pranav00x/haze/releases" target="_blank" rel="noopener">Releases</a>
-        <a href="https://github.com/Pranav00x/haze/issues" target="_blank" rel="noopener">Issues</a>
+        <a href="https://github.com/Pranav00x/haze" target="_blank" rel="noopener">github</a>
+        <a href="https://github.com/Pranav00x/haze/releases" target="_blank" rel="noopener">releases</a>
+        <a href="https://github.com/Pranav00x/haze/issues" target="_blank" rel="noopener">issues</a>
       </div>
     </div>
-    <div class="wrap footer-note">This is public testnet software. HAZE has no monetary value, and the chain may still be reset if a serious bug is found — don't treat any balance here as real.</div>
+    <p class="wrap footer-note">This is public testnet software. HAZE has no monetary value, and the chain may still be reset if a serious bug is found — don't treat any balance here as real.</p>
   </footer>
 
 <script>
@@ -611,15 +370,15 @@ document.getElementById("theme-toggle").addEventListener("click", () => {
   localStorage.setItem("hazeTheme", next);
 });
 
-const topbarWrap = document.getElementById("topbar-wrap");
+const header = document.getElementById("site-header");
 const navToggle = document.getElementById("nav-toggle");
 navToggle.addEventListener("click", () => {
-  const open = topbarWrap.classList.toggle("nav-open");
+  const open = header.classList.toggle("nav-open");
   navToggle.setAttribute("aria-expanded", open ? "true" : "false");
 });
 document.querySelectorAll(".topnav a").forEach((a) => {
   a.addEventListener("click", () => {
-    topbarWrap.classList.remove("nav-open");
+    header.classList.remove("nav-open");
     navToggle.setAttribute("aria-expanded", "false");
   });
 });
@@ -643,7 +402,7 @@ let API_BASE = resolveApiBase();
 
 function renderNodeLabel(reachable) {
   document.getElementById("node-label").textContent = API_BASE.replace(/^https?:\/\//, "");
-  document.getElementById("node-dot").className = "node-dot " + (reachable ? "online" : "offline");
+  document.getElementById("node-dot").textContent = reachable ? "[online]" : "[offline]";
 }
 
 document.getElementById("node-indicator").addEventListener("click", () => {
@@ -666,15 +425,15 @@ async function refreshStatus() {
     document.getElementById("stat-height").textContent = s.height;
     document.getElementById("stat-validators").textContent = s.active_validators === 0 ? "1" : s.active_validators;
     document.getElementById("stat-mempool").textContent = s.mempool_size;
-    document.getElementById("stat-tip").textContent = shortHash(s.tip_hash, 16);
-    foot.innerHTML = `Tip hash: ${s.tip_hash} · <a href="https://hazescan.xyz">view full explorer →</a>`;
+    document.getElementById("stat-tip").textContent = shortHash(s.tip_hash, 24);
+    foot.innerHTML = `tip hash in full: ${s.tip_hash} — <a href="https://hazescan.xyz">view full explorer →</a>`;
     renderNodeLabel(true);
   } catch (e) {
     document.getElementById("stat-height").textContent = "—";
     document.getElementById("stat-validators").textContent = "—";
     document.getElementById("stat-mempool").textContent = "—";
     document.getElementById("stat-tip").textContent = "—";
-    foot.innerHTML = `Can&rsquo;t reach a node at <strong>${API_BASE}</strong> — click the node cell above to point at one.`;
+    foot.innerHTML = `can't reach a node at <strong>${API_BASE}</strong> — click "node" above to point at one.`;
     renderNodeLabel(false);
   }
 }
