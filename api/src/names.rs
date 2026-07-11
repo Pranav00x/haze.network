@@ -118,8 +118,8 @@ pub async fn handle_sponsored_register_name(
     // NAME_REGISTRATION_FEE here, so a change to the underlying constant
     // doesn't need a matching update at every call site.
     let suggested_fee = { mempool.lock().unwrap().suggested_name_fee() };
-    let fee_payment = match faucet.build_sponsored_fee_payment(suggested_fee) {
-        Ok(tx) => tx,
+    let (fee_payment, spent, change_index) = match faucet.build_sponsored_fee_payment(suggested_fee) {
+        Ok(built) => built,
         Err(_) => return Ok(error_reply(StatusCode::SERVICE_UNAVAILABLE, "sponsor reserve temporarily depleted - try again shortly")),
     };
 
@@ -136,6 +136,12 @@ pub async fn handle_sponsored_register_name(
         mp.add_name_op(op.clone())
     };
     if !added {
+        // The fee payment was already built (and its inputs/change
+        // optimistically marked Spent/Pending in the faucet's store) before
+        // we knew the op itself couldn't be queued - undo that, or the
+        // faucet's balance view permanently loses this amount even though
+        // nothing was ever actually spent on-chain.
+        faucet.revert_fee_payment(&spent, change_index);
         return Ok(error_reply(StatusCode::BAD_REQUEST, "name already pending registration"));
     }
 

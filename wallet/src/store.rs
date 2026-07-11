@@ -88,6 +88,28 @@ impl WalletStore {
         }
     }
 
+    /// Reverts a mark_spent call - for a caller that optimistically spent an
+    /// output before actually queuing the transaction that spends it, and
+    /// then found out the queue attempt failed (see
+    /// FaucetState::revert_fee_payment). Only reverts if the output is
+    /// still Spent (not Confirmed/Pending) and hasn't already disappeared
+    /// from the chain via reconcile(), so this can't resurrect an output
+    /// that's genuinely gone.
+    pub fn unmark_spent(&mut self, commitment: &Commitment) {
+        if let Some(o) = self.outputs.iter_mut().find(|o| &o.commitment == commitment && o.status == OutputStatus::Spent) {
+            o.status = OutputStatus::Confirmed;
+        }
+    }
+
+    /// Removes an output outright - for reverting an add_output call whose
+    /// transaction never actually got queued (see
+    /// FaucetState::revert_fee_payment). Only removes it while still
+    /// Pending, so a real on-chain output that reconcile() has already
+    /// confirmed can't be discarded by an unrelated revert.
+    pub fn remove_pending_output(&mut self, index: u32) {
+        self.outputs.retain(|o| !(o.index == index && o.status == OutputStatus::Pending));
+    }
+
     /// Reconciles local ledger state against the node's current on-chain UTXO set.
     pub fn reconcile(&mut self, chain_utxos: &HashSet<Commitment>) {
         for output in self.outputs.iter_mut() {

@@ -197,7 +197,15 @@ impl FaucetState {
     /// wallet with zero balance still register a name: it signs the
     /// registration itself (free - just needs its own secret key), and the
     /// faucet covers the flat fee.
-    pub fn build_sponsored_fee_payment(&self, fee: u64) -> Result<Transaction, PlanError> {
+    /// Returns the built transaction alongside what's needed to undo this
+    /// call's store mutations (the inputs it optimistically marked Spent,
+    /// and the index of the Pending change output it created, if any) - see
+    /// revert_fee_payment. Necessary because the caller queues `fee_payment`
+    /// into the mempool as part of a larger op (see
+    /// api::names::handle_sponsored_register_name) that can still fail
+    /// *after* this call succeeds (e.g. a duplicate-registration race), at
+    /// which point this spend never actually happens on-chain.
+    pub fn build_sponsored_fee_payment(&self, fee: u64) -> Result<(Transaction, Vec<Commitment>, Option<u32>), PlanError> {
         let mut keystore = self.keystore.lock().unwrap();
         let mut store = self.store.lock().unwrap();
 
@@ -214,7 +222,7 @@ impl FaucetState {
         }
 
         let change_value = selected_total - fee;
-        let (outputs, change_blinding) = if change_value > 0 {
+        let (outputs, change_blinding, change_index) = if change_value > 0 {
             let change_index = keystore.allocate_index();
             let change_blinding = keystore.derive_blinding(change_index);
             let change_commitment = Commitment::new(change_value, change_blinding);
@@ -222,9 +230,9 @@ impl FaucetState {
             let change_note = haze_crypto::note::seal(&keystore.note_key(), change_index, change_value);
             let output = Output { commitment: change_commitment, proof: change_proof, note: change_note };
             store.add_output(change_index, change_value, change_commitment, OutputStatus::Pending);
-            (vec![output], change_blinding)
+            (vec![output], change_blinding, Some(change_index))
         } else {
-            (vec![], Scalar::zero())
+            (vec![], Scalar::zero(), None)
         };
 
         for c in &spent {
@@ -239,7 +247,24 @@ impl FaucetState {
             signature: Signature::sign(&fee.to_le_bytes(), &excess_r),
         };
 
-        Ok(Transaction { inputs, outputs, kernels: vec![kernel] })
+        Ok((Transaction { inputs, outputs, kernels: vec![kernel] }, spent, change_index))
+    }
+
+    /// Undoes build_sponsored_fee_payment's store mutations for a fee
+    /// payment that was built but never actually got queued (see
+    /// api::names::handle_sponsored_register_name's `!added` branch) -
+    /// without this, that spend is permanently and incorrectly lost from
+    /// the faucet's local view of its own confirmed balance, since nothing
+    /// else ever reverts it (reconcile() only confirms real changes, it
+    /// doesn't undo a spend that never happened on-chain).
+    pub fn revert_fee_payment(&self, spent: &[Commitment], change_index: Option<u32>) {
+        let mut store = self.store.lock().unwrap();
+        for c in spent {
+            store.unmark_spent(c);
+        }
+        if let Some(index) = change_index {
+            store.remove_pending_output(index);
+        }
     }
 }
 
