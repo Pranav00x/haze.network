@@ -355,6 +355,71 @@ pub fn commit_send(
     Ok(store.to_bytes())
 }
 
+// ---------- seed rotation ----------
+// There's no "account" to re-key here the way there would be on an
+// account-based chain - owning a coin means knowing its blinding factor,
+// which is derived from the seed that sealed it. "Replacing" a seed
+// therefore has to be a real on-chain sweep: spend everything the old seed
+// owns into fresh outputs owned by a brand-new seed, in one transaction.
+// Reuses the two-party slate protocol (wallet::slate) driven synchronously
+// end-to-end in a single call, since both "parties" (old and new keystore)
+// are known locally here - no out-of-band JSON hand-off needed.
+
+/// Builds a transaction sweeping this wallet's entire confirmed balance into
+/// a single fresh output owned by `new_keystore_bytes` - generate that via
+/// `generate_keystore_with_mnemonic()` first. `dest` is the swept output;
+/// the caller should build a *fresh* store for the new keystore (see
+/// `wallet_store_new`) and add it as Pending via `commit_send`-style logic
+/// (spent_commitments_hex is empty for a brand-new store, dest is this
+/// call's `dest`, no change) once the transaction is confirmed broadcast.
+/// The old keystore/store can simply be discarded afterward - nothing is
+/// left behind under the old seed by construction (amount is set to
+/// exactly balance-minus-fee, so selection must use every confirmed output
+/// and change is always zero; see wallet::slate::build_slate).
+#[wasm_bindgen]
+pub fn rotate_seed_transaction(old_keystore_bytes: Vec<u8>, store_bytes: Vec<u8>, new_keystore_bytes: Vec<u8>, fee: u64) -> Result<WasmRotateSeedResult, JsValue> {
+    let mut old_keystore = Keystore::from_bytes(&old_keystore_bytes).ok_or_else(|| js_err("invalid keystore bytes"))?;
+    let store = WalletStore::from_bytes(&store_bytes).ok_or_else(|| js_err("invalid wallet store bytes"))?;
+    let mut new_keystore = Keystore::from_bytes(&new_keystore_bytes).ok_or_else(|| js_err("invalid new keystore bytes"))?;
+
+    let balance = store.balance();
+    let amount = balance.checked_sub(fee)
+        .ok_or_else(|| js_err(format!("insufficient balance: have {}, need at least {} to cover the fee", balance, fee)))?;
+
+    let (built_slate, pending) = slate::create_slate(&mut old_keystore, &store, amount, fee)
+        .map_err(|e| match e {
+            PlanError::InsufficientBalance { have, need } => js_err(format!("insufficient balance: have {}, need {}", have, need)),
+        })?;
+
+    let (response, receiver_info) = slate::respond_to_slate(&mut new_keystore, &built_slate);
+    let tx = slate::finalize_slate(&pending, &response).map_err(|_| js_err("failed to finalize rotate-seed transaction"))?;
+
+    // Should be unreachable (amount == balance - fee forces every confirmed
+    // output into the selection, leaving nothing for change) - a hard error
+    // instead of a silent Some(..) is deliberate: this flow's entire point
+    // is that nothing stays behind under the seed being abandoned.
+    if pending.change.is_some() {
+        return Err(js_err("internal error: rotate-seed transaction unexpectedly produced change - aborting rather than stranding funds under the old seed"));
+    }
+
+    let transaction_json = serde_json::to_string(&tx).map_err(|_| js_err("failed to serialize transaction"))?;
+    let spent_commitments_hex = pending.spent_commitments.iter().map(|c| c.to_hex()).collect();
+    let dest = WasmOwnedOutput {
+        index: receiver_info.index,
+        value: receiver_info.value,
+        commitment_hex: receiver_info.commitment.to_hex(),
+    };
+
+    Ok(WasmRotateSeedResult { transaction_json, spent_commitments_hex, dest })
+}
+
+#[wasm_bindgen(getter_with_clone)]
+pub struct WasmRotateSeedResult {
+    pub transaction_json: String,
+    pub spent_commitments_hex: Vec<String>,
+    pub dest: WasmOwnedOutput,
+}
+
 // ---------- two-party ("slate") payments, mirroring src/wallet/cli.rs's
 // pay/receive/complete - see src/wallet/slate.rs for the protocol itself.
 // Slates cross the JS boundary as JSON (to hand to the other party, out of

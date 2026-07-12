@@ -107,6 +107,15 @@ export class WasmRespondResult {
     updated_keystore_bytes: Uint8Array;
 }
 
+export class WasmRotateSeedResult {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    dest: WasmOwnedOutput;
+    spent_commitments_hex: string[];
+    transaction_json: string;
+}
+
 export class WasmSendPlan {
     private constructor();
     free(): void;
@@ -421,6 +430,21 @@ export function restore_keystore_from_mnemonic(phrase: string): Uint8Array;
 export function reveal_stake_blinding_hex(keystore_bytes: Uint8Array, store_bytes: Uint8Array, min_value: bigint): string;
 
 /**
+ * Builds a transaction sweeping this wallet's entire confirmed balance into
+ * a single fresh output owned by `new_keystore_bytes` - generate that via
+ * `generate_keystore_with_mnemonic()` first. `dest` is the swept output;
+ * the caller should build a *fresh* store for the new keystore (see
+ * `wallet_store_new`) and add it as Pending via `commit_send`-style logic
+ * (spent_commitments_hex is empty for a brand-new store, dest is this
+ * call's `dest`, no change) once the transaction is confirmed broadcast.
+ * The old keystore/store can simply be discarded afterward - nothing is
+ * left behind under the old seed by construction (amount is set to
+ * exactly balance-minus-fee, so selection must use every confirmed output
+ * and change is always zero; see wallet::slate::build_slate).
+ */
+export function rotate_seed_transaction(old_keystore_bytes: Uint8Array, store_bytes: Uint8Array, new_keystore_bytes: Uint8Array, fee: bigint): WasmRotateSeedResult;
+
+/**
  * Signs an allowlist publish (see core::allowlist::AllowlistEntry) so the
  * off-chain, best-effort allowlist gossip can be cross-checked against this
  * collection's registered creator_pubkey server-side. `pubkeys_hex` is the
@@ -562,6 +586,7 @@ export interface InitOutput {
     readonly __wbg_wasmrecoveryresult_free: (a: number, b: number) => void;
     readonly __wbg_wasmregisternameresult_free: (a: number, b: number) => void;
     readonly __wbg_wasmrespondresult_free: (a: number, b: number) => void;
+    readonly __wbg_wasmrotateseedresult_free: (a: number, b: number) => void;
     readonly __wbg_wasmsendplan_free: (a: number, b: number) => void;
     readonly __wbg_wasmslatereservation_free: (a: number, b: number) => void;
     readonly __wbg_wasmsweepresult_free: (a: number, b: number) => void;
@@ -592,6 +617,7 @@ export interface InitOutput {
     readonly respond_to_slate: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly restore_keystore_from_mnemonic: (a: number, b: number) => [number, number, number, number];
     readonly reveal_stake_blinding_hex: (a: number, b: number, c: number, d: number, e: bigint) => [number, number, number, number];
+    readonly rotate_seed_transaction: (a: number, b: number, c: number, d: number, e: number, f: number, g: bigint) => [number, number, number];
     readonly sign_allowlist_publish: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: bigint) => [number, number, number, number];
     readonly sign_collection_mint_approval: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => [number, number, number, number];
     readonly sign_identity_message: (a: number, b: number, c: number, d: number) => [number, number, number, number];
@@ -612,9 +638,11 @@ export interface InitOutput {
     readonly __wbg_set_wasmmintassetresult_change: (a: number, b: number) => void;
     readonly __wbg_set_wasmregisternameresult_change: (a: number, b: number) => void;
     readonly __wbg_set_wasmslatereservation_change: (a: number, b: number) => void;
+    readonly __wbg_get_wasmrotateseedresult_dest: (a: number) => number;
     readonly __wbg_get_wasmsendplan_dest: (a: number) => number;
     readonly __wbg_get_wasmsweepresult_dest: (a: number) => number;
     readonly __wbg_set_wasmregisternameresult_spent_commitments_hex: (a: number, b: number, c: number) => void;
+    readonly __wbg_set_wasmrotateseedresult_spent_commitments_hex: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmkeystoreandmnemonic_keystore_bytes: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmkeystoreandmnemonic_mnemonic: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmmerkleproofresult_root_hex: (a: number, b: number, c: number) => void;
@@ -625,6 +653,7 @@ export interface InitOutput {
     readonly __wbg_set_wasmregisternameresult_updated_keystore_bytes: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmrespondresult_response_slate_json: (a: number, b: number, c: number) => void;
     readonly __wbg_set_wasmrespondresult_updated_keystore_bytes: (a: number, b: number, c: number) => void;
+    readonly __wbg_set_wasmrotateseedresult_transaction_json: (a: number, b: number, c: number) => void;
     readonly __wbg_get_wasmrecoveryresult_keystore_bytes: (a: number) => [number, number];
     readonly __wbg_get_wasmrecoveryresult_store_bytes: (a: number) => [number, number];
     readonly __wbg_get_wasmregisternameresult_updated_keystore_bytes: (a: number) => [number, number];
@@ -634,9 +663,12 @@ export interface InitOutput {
     readonly __wbg_get_wasmownedoutput_commitment_hex: (a: number) => [number, number];
     readonly __wbg_get_wasmregisternameresult_op_json: (a: number) => [number, number];
     readonly __wbg_get_wasmrespondresult_response_slate_json: (a: number) => [number, number];
+    readonly __wbg_get_wasmrotateseedresult_transaction_json: (a: number) => [number, number];
+    readonly __wbg_set_wasmrotateseedresult_dest: (a: number, b: number) => void;
     readonly __wbg_set_wasmsendplan_dest: (a: number, b: number) => void;
     readonly __wbg_set_wasmsweepresult_dest: (a: number, b: number) => void;
     readonly __wbg_get_wasmregisternameresult_spent_commitments_hex: (a: number) => [number, number];
+    readonly __wbg_get_wasmrotateseedresult_spent_commitments_hex: (a: number) => [number, number];
     readonly commit_slate_send: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly commit_register_name: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly __wbindgen_malloc: (a: number, b: number) => number;

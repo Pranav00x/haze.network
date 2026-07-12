@@ -403,7 +403,8 @@ import init, {
   build_collection_mint_asset_request, attach_creator_signature_to_mint,
   sign_collection_mint_approval, compute_allowlist_merkle_proof,
   generate_keystore_with_mnemonic, restore_keystore_from_mnemonic,
-  recover_wallet_from_chain, sweep_validator_rewards
+  recover_wallet_from_chain, sweep_validator_rewards,
+  rotate_seed_transaction
 } from './pkg/haze_core.js';
 
 // ---------- Node API base (same convention as the explorer) ----------
@@ -1625,6 +1626,13 @@ function renderDashboard() {
           <div id="sweep-rewards-message"></div>
         </div>
 
+        <div class="panel">
+          <h2>Rotate seed phrase</h2>
+          <div class="sub">Generates a brand new recovery phrase and moves your entire confirmed balance to it in one on-chain transaction (a normal network fee applies). Do this if you think your current phrase may have been exposed. Your .haze name, if you have one, is transferred to the new phrase too - nothing else changes.</div>
+          <button class="btn-ghost btn-small" id="rotate-seed-start-btn">Start</button>
+          <div id="rotate-seed-flow"></div>
+        </div>
+
         <div class="action-row">
           <button class="btn-ghost btn-small" id="lock-btn">Lock wallet</button>
         </div>
@@ -1776,6 +1784,108 @@ function renderDashboard() {
       btn.disabled = false;
     }
   });
+
+  // ---------- Rotate seed phrase ----------
+  // There's no "account" to re-key here the way there would be on an
+  // account-based chain - owning a coin means knowing its blinding factor,
+  // derived from the seed that sealed it. "Replacing" a seed is therefore a
+  // real on-chain sweep: spend everything into fresh outputs owned by a
+  // brand-new seed, in one transaction (see rotate_seed_transaction).
+  document.getElementById("rotate-seed-start-btn").addEventListener("click", () => {
+    const storeBytes = loadWalletStoreBytes();
+    const balance = wallet_balance(storeBytes);
+    if (balance <= 0n) {
+      document.getElementById("rotate-seed-flow").innerHTML = `<div class="message error">No confirmed balance to move - nothing to rotate yet.</div>`;
+      return;
+    }
+    if (!window.confirm("This creates a new recovery phrase and moves your entire balance to it in one transaction. Your current phrase will no longer control these funds afterward. Continue?")) {
+      return;
+    }
+    renderRotateSeedMnemonicStep();
+  });
+
+  function renderRotateSeedMnemonicStep() {
+    const generated = generate_keystore_with_mnemonic();
+    const flow = document.getElementById("rotate-seed-flow");
+    flow.innerHTML = `
+      <div class="sub" style="margin-top:14px;">Save this NEW recovery phrase - it's the only way to recover your funds after rotation.</div>
+      <textarea id="rotate-mnemonic-display" readonly style="min-height:70px;font-size:15px;text-align:center;">${generated.mnemonic}</textarea>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:12px;text-transform:none;font-size:13.5px;color:var(--ink-dim);">
+        <input type="checkbox" id="rotate-mnemonic-confirm-check" style="width:auto;" />
+        I've written down the new recovery phrase
+      </label>
+      <button class="btn-primary" id="rotate-execute-btn" disabled>Move my funds to the new phrase</button>
+      <div id="rotate-seed-message"></div>
+    `;
+    const checkbox = document.getElementById("rotate-mnemonic-confirm-check");
+    const execBtn = document.getElementById("rotate-execute-btn");
+    checkbox.addEventListener("change", () => { execBtn.disabled = !checkbox.checked; });
+    execBtn.addEventListener("click", () => executeRotateSeed(generated));
+  }
+
+  async function executeRotateSeed(generated) {
+    const messageEl = document.getElementById("rotate-seed-message");
+    const execBtn = document.getElementById("rotate-execute-btn");
+    execBtn.disabled = true;
+    messageEl.innerHTML = `<div class="message success">Building transaction&hellip;</div>`;
+
+    try {
+      const storeBytes = loadWalletStoreBytes();
+      const fee = await getSuggestedFee();
+      const result = rotate_seed_transaction(sessionKeystoreBytes, storeBytes, generated.keystore_bytes, fee);
+
+      const res = await fetch(API_BASE + "/v1/transactions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: result.transaction_json,
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        messageEl.innerHTML = `<div class="message error">Node rejected transaction: ${text}</div>`;
+        execBtn.disabled = false;
+        return;
+      }
+
+      // Best-effort: also hand the .haze name (if any) to the new identity,
+      // so it doesn't keep pointing at a wallet that's about to be
+      // abandoned. Doesn't block the rotation itself - funds have already
+      // moved by this point regardless of whether this succeeds.
+      const myName = loadMyName();
+      if (myName) {
+        try {
+          const newPubkeyHex = wallet_identity_pubkey_hex(generated.keystore_bytes);
+          const transferJson = build_transfer_name_request(sessionKeystoreBytes, myName, newPubkeyHex, newPubkeyHex);
+          await fetch(API_BASE + "/v1/names/transfer", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: transferJson,
+          });
+        } catch (e) {
+          // Non-fatal - see comment above.
+        }
+      }
+
+      const password = window.prompt("Set a password to encrypt your new wallet in this browser (can be the same as before):");
+      if (!password) {
+        messageEl.innerHTML = `<div class="message error">Your funds are moving on-chain to the new phrase, but this browser still needs a password to save it. Refresh and use "Restore from phrase" with the recovery phrase above to finish.</div>`;
+        return;
+      }
+
+      const newStoreBytes = commit_send(wallet_store_new(), [], result.dest, null);
+      const encrypted = await encryptKeystore(password, generated.keystore_bytes);
+      localStorage.setItem(KEYSTORE_STORAGE_KEY, JSON.stringify(encrypted));
+      saveWalletStoreBytes(newStoreBytes);
+      sessionKeystoreBytes = generated.keystore_bytes;
+
+      const link = explorerLinkForTx(result.transaction_json);
+      pushActivity({ type: "sent", title: "Rotated to a new seed phrase", detail: "Moved balance to a new wallet" });
+      messageEl.innerHTML = `<div class="message success">Done - your funds are moving to the new phrase now (confirms shortly). <a href="${link}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">View on explorer &rarr;</a></div>`;
+      await refreshBalance();
+    } catch (e) {
+      messageEl.innerHTML = `<div class="message error">${e.message || e}</div>`;
+      execBtn.disabled = false;
+    }
+  }
 
   // ---------- Haze Naming Registry ----------
   try {

@@ -718,6 +718,81 @@ export class WasmRespondResult {
 }
 if (Symbol.dispose) WasmRespondResult.prototype[Symbol.dispose] = WasmRespondResult.prototype.free;
 
+export class WasmRotateSeedResult {
+    static __wrap(ptr) {
+        const obj = Object.create(WasmRotateSeedResult.prototype);
+        obj.__wbg_ptr = ptr;
+        WasmRotateSeedResultFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmRotateSeedResultFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmrotateseedresult_free(ptr, 0);
+    }
+    /**
+     * @returns {WasmOwnedOutput}
+     */
+    get dest() {
+        const ret = wasm.__wbg_get_wasmrotateseedresult_dest(this.__wbg_ptr);
+        return WasmOwnedOutput.__wrap(ret);
+    }
+    /**
+     * @returns {string[]}
+     */
+    get spent_commitments_hex() {
+        const ret = wasm.__wbg_get_wasmrotateseedresult_spent_commitments_hex(this.__wbg_ptr);
+        var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {string}
+     */
+    get transaction_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.__wbg_get_wasmrotateseedresult_transaction_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @param {WasmOwnedOutput} arg0
+     */
+    set dest(arg0) {
+        _assertClass(arg0, WasmOwnedOutput);
+        var ptr0 = arg0.__destroy_into_raw();
+        wasm.__wbg_set_wasmrotateseedresult_dest(this.__wbg_ptr, ptr0);
+    }
+    /**
+     * @param {string[]} arg0
+     */
+    set spent_commitments_hex(arg0) {
+        const ptr0 = passArrayJsValueToWasm0(arg0, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_wasmrotateseedresult_spent_commitments_hex(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * @param {string} arg0
+     */
+    set transaction_json(arg0) {
+        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_wasmrotateseedresult_transaction_json(this.__wbg_ptr, ptr0, len0);
+    }
+}
+if (Symbol.dispose) WasmRotateSeedResult.prototype[Symbol.dispose] = WasmRotateSeedResult.prototype.free;
+
 export class WasmSendPlan {
     static __wrap(ptr) {
         const obj = Object.create(WasmSendPlan.prototype);
@@ -1829,6 +1904,38 @@ export function reveal_stake_blinding_hex(keystore_bytes, store_bytes, min_value
 }
 
 /**
+ * Builds a transaction sweeping this wallet's entire confirmed balance into
+ * a single fresh output owned by `new_keystore_bytes` - generate that via
+ * `generate_keystore_with_mnemonic()` first. `dest` is the swept output;
+ * the caller should build a *fresh* store for the new keystore (see
+ * `wallet_store_new`) and add it as Pending via `commit_send`-style logic
+ * (spent_commitments_hex is empty for a brand-new store, dest is this
+ * call's `dest`, no change) once the transaction is confirmed broadcast.
+ * The old keystore/store can simply be discarded afterward - nothing is
+ * left behind under the old seed by construction (amount is set to
+ * exactly balance-minus-fee, so selection must use every confirmed output
+ * and change is always zero; see wallet::slate::build_slate).
+ * @param {Uint8Array} old_keystore_bytes
+ * @param {Uint8Array} store_bytes
+ * @param {Uint8Array} new_keystore_bytes
+ * @param {bigint} fee
+ * @returns {WasmRotateSeedResult}
+ */
+export function rotate_seed_transaction(old_keystore_bytes, store_bytes, new_keystore_bytes, fee) {
+    const ptr0 = passArray8ToWasm0(old_keystore_bytes, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(store_bytes, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArray8ToWasm0(new_keystore_bytes, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.rotate_seed_transaction(ptr0, len0, ptr1, len1, ptr2, len2, fee);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return WasmRotateSeedResult.__wrap(ret[0]);
+}
+
+/**
  * Signs an allowlist publish (see core::allowlist::AllowlistEntry) so the
  * off-chain, best-effort allowlist gossip can be cross-checked against this
  * collection's registered creator_pubkey server-side. `pubkeys_hex` is the
@@ -2249,6 +2356,9 @@ const WasmRegisterNameResultFinalization = (typeof FinalizationRegistry === 'und
 const WasmRespondResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmrespondresult_free(ptr, 1));
+const WasmRotateSeedResultFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmrotateseedresult_free(ptr, 1));
 const WasmSendPlanFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmsendplan_free(ptr, 1));
