@@ -277,6 +277,54 @@ class WalletRepository(private val storage: SecureStorage) {
         }
     }
 
+    // ---------------- seed rotation ----------------
+    // Pure passthrough (no repository state touched) - the UI holds the
+    // result locally while the user confirms they've saved the new phrase,
+    // then hands the keystore bytes back via executeSeedRotation below.
+    // Kept here rather than called directly from MainActivity so the UI
+    // layer still never touches uniffi.haze_core itself.
+    fun generateRotationCandidate(): FfiKeystoreAndMnemonic = generateKeystoreWithMnemonic()
+
+    // There's no "account" to re-key here - owning a coin means knowing its
+    // blinding factor, derived from the seed that sealed it. "Replacing" a
+    // seed is therefore a real on-chain sweep: spend everything the old
+    // seed owns into fresh outputs owned by a brand-new seed, in one
+    // transaction. The UI generates the new keystore+mnemonic first (via
+    // generateKeystoreWithMnemonic(), shown so the user can confirm they've
+    // saved it) before calling this with those bytes - kept as two steps
+    // so the sweep only happens after that confirmation.
+    suspend fun executeSeedRotation(newKeystoreBytes: ByteArray): String? = withContext(Dispatchers.IO) {
+        try {
+            val fee = currentFeeEstimate()
+            val result = rotateSeedTransaction(requireKeystore(), storeBytes, newKeystoreBytes, fee.toULong())
+            api.submitTransaction(result.transactionJson)
+
+            // Best-effort: hand the claimed name (if any) to the new
+            // identity too, so it doesn't keep pointing at a wallet that's
+            // about to be abandoned. Doesn't block rotation itself - funds
+            // have already moved by this point regardless.
+            val myName = _state.value.claimedName
+            if (myName != null) {
+                try {
+                    val newPubkeyHex = walletIdentityPubkeyHex(newKeystoreBytes)
+                    val opJson = buildTransferNameRequest(requireKeystore(), myName, newPubkeyHex, newPubkeyHex)
+                    api.transferName(opJson)
+                } catch (e: Exception) {
+                    // Non-fatal - see comment above.
+                }
+            }
+
+            val newStoreBytes = commitSend(walletStoreNew(), emptyList(), result.dest, null)
+            persistKeystore(newKeystoreBytes)
+            persistStore(newStoreBytes)
+            pushActivity("Rotated to a new seed phrase", "Moved balance to a new wallet")
+            refreshBalance()
+            null
+        } catch (e: Exception) {
+            e.message ?: "failed to rotate seed"
+        }
+    }
+
     private fun jsonBytesToHex(arr: JSONArray): String {
         val bytes = ByteArray(arr.length()) { i -> arr.getInt(i).toByte() }
         return bytes.joinToString("") { String.format("%02x", it) }

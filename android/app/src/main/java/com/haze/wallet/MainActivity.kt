@@ -495,6 +495,81 @@ private fun MoreScreen(repo: WalletRepository) {
         sweepMessage?.let { Text(it) }
 
         Spacer(Modifier.height(32.dp))
+        Text("Rotate seed phrase", style = MaterialTheme.typography.titleLarge)
+        Text("Generates a brand new recovery phrase and moves your entire confirmed balance to it in one on-chain transaction (a normal network fee applies). Your .haze name, if you have one, is transferred to the new phrase too - nothing else changes.")
+        Spacer(Modifier.height(8.dp))
+        var showRotateConfirm by remember { mutableStateOf(false) }
+        var rotateMnemonic by remember { mutableStateOf<String?>(null) }
+        var rotateNewKeystoreBytes by remember { mutableStateOf<ByteArray?>(null) }
+        var rotateConfirmedSaved by remember { mutableStateOf(false) }
+        var rotateBusy by remember { mutableStateOf(false) }
+        var rotateMessage by remember { mutableStateOf<String?>(null) }
+
+        if (rotateMnemonic == null) {
+            OutlinedButton(
+                onClick = {
+                    rotateMessage = null
+                    if (state.confirmedBalance <= 0) {
+                        rotateMessage = "No confirmed balance to move - nothing to rotate yet."
+                    } else {
+                        showRotateConfirm = true
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Start") }
+        } else {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Text(rotateMnemonic!!, modifier = Modifier.padding(16.dp))
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = rotateConfirmedSaved, onCheckedChange = { rotateConfirmedSaved = it })
+                Text("I've written down the new recovery phrase")
+            }
+            Spacer(Modifier.height(8.dp))
+            Button(
+                enabled = rotateConfirmedSaved && !rotateBusy,
+                onClick = {
+                    val newBytes = rotateNewKeystoreBytes ?: return@Button
+                    rotateBusy = true
+                    scope.launch {
+                        val result = repo.executeSeedRotation(newBytes)
+                        rotateBusy = false
+                        if (result == null) {
+                            rotateMessage = "Done - your funds are moving to the new phrase now (confirms shortly)."
+                            rotateMnemonic = null
+                            rotateNewKeystoreBytes = null
+                            rotateConfirmedSaved = false
+                        } else {
+                            rotateMessage = result
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(if (rotateBusy) "Moving funds…" else "Move my funds to the new phrase") }
+        }
+        rotateMessage?.let { Text(it) }
+
+        if (showRotateConfirm) {
+            AlertDialog(
+                onDismissRequest = { showRotateConfirm = false },
+                title = { Text("Rotate seed phrase?") },
+                text = { Text("This creates a new recovery phrase and moves your entire balance to it in one transaction. Your current phrase will no longer control these funds afterward.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showRotateConfirm = false
+                        val generated = repo.generateRotationCandidate()
+                        rotateMnemonic = generated.mnemonic
+                        rotateNewKeystoreBytes = generated.keystoreBytes
+                    }) { Text("Continue") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showRotateConfirm = false }) { Text("Cancel") }
+                },
+            )
+        }
+
+        Spacer(Modifier.height(32.dp))
         Button(
             onClick = { repo.lockWallet() },
             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),

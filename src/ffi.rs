@@ -73,6 +73,8 @@ pub enum FfiError {
     InvalidName(String),
     #[error("fee must be at least {0}")]
     FeeBelowRegistrationFloor(u64),
+    #[error("internal error: rotate-seed transaction unexpectedly produced change - aborting rather than stranding funds under the old seed")]
+    UnexpectedRotateChange,
 }
 
 fn hex_decode(hex: &str) -> Option<Vec<u8>> {
@@ -377,6 +379,71 @@ pub fn commit_send(
     }
 
     Ok(store.to_bytes())
+}
+
+// ---------- seed rotation ----------
+// There's no "account" to re-key here the way there would be on an
+// account-based chain - owning a coin means knowing its blinding factor,
+// which is derived from the seed that sealed it. "Replacing" a seed
+// therefore has to be a real on-chain sweep: spend everything the old seed
+// owns into fresh outputs owned by a brand-new seed, in one transaction.
+// Mirrors src/wasm.rs's rotate_seed_transaction exactly - reuses the
+// two-party slate protocol (wallet::slate) driven synchronously end-to-end
+// in a single call, since both "parties" (old and new keystore) are known
+// locally here.
+
+#[derive(uniffi::Record)]
+pub struct FfiRotateSeedResult {
+    pub transaction_json: String,
+    pub spent_commitments_hex: Vec<String>,
+    pub dest: FfiOwnedOutput,
+}
+
+/// Builds a transaction sweeping this wallet's entire confirmed balance into
+/// a single fresh output owned by `new_keystore_bytes` - generate that via
+/// `generate_keystore_with_mnemonic()` first. `dest` is the swept output;
+/// the caller should build a *fresh* store for the new keystore and add it
+/// as Pending via `commit_send`-style logic (spent_commitments_hex empty,
+/// dest is this call's `dest`, no change) once the transaction is confirmed
+/// broadcast. The old keystore/store can simply be discarded afterward -
+/// nothing is left behind under the old seed by construction (amount is set
+/// to exactly balance-minus-fee, so selection must use every confirmed
+/// output and change is always zero; see wallet::slate::build_slate).
+#[uniffi::export]
+pub fn rotate_seed_transaction(old_keystore_bytes: Vec<u8>, store_bytes: Vec<u8>, new_keystore_bytes: Vec<u8>, fee: u64) -> Result<FfiRotateSeedResult, FfiError> {
+    let mut old_keystore = Keystore::from_bytes(&old_keystore_bytes).ok_or(FfiError::InvalidKeystore)?;
+    let store = WalletStore::from_bytes(&store_bytes).ok_or(FfiError::InvalidStore)?;
+    let mut new_keystore = Keystore::from_bytes(&new_keystore_bytes).ok_or(FfiError::InvalidKeystore)?;
+
+    let balance = store.balance();
+    let amount = balance.checked_sub(fee)
+        .ok_or(FfiError::InsufficientBalance { have: balance, need: fee })?;
+
+    let (built_slate, pending) = slate::create_slate(&mut old_keystore, &store, amount, fee)
+        .map_err(|e| match e {
+            PlanError::InsufficientBalance { have, need } => FfiError::InsufficientBalance { have, need },
+        })?;
+
+    let (response, receiver_info) = slate::respond_to_slate(&mut new_keystore, &built_slate);
+    let tx = slate::finalize_slate(&pending, &response).map_err(|_| FfiError::IncompleteSlateResponse)?;
+
+    // Should be unreachable (amount == balance - fee forces every confirmed
+    // output into the selection, leaving nothing for change) - a hard error
+    // instead of a silent Some(..) is deliberate: this flow's entire point
+    // is that nothing stays behind under the seed being abandoned.
+    if pending.change.is_some() {
+        return Err(FfiError::UnexpectedRotateChange);
+    }
+
+    let transaction_json = serde_json::to_string(&tx).map_err(|_| FfiError::SerializationFailed)?;
+    let spent_commitments_hex = pending.spent_commitments.iter().map(|c| c.to_hex()).collect();
+    let dest = FfiOwnedOutput {
+        index: receiver_info.index,
+        value: receiver_info.value,
+        commitment_hex: receiver_info.commitment.to_hex(),
+    };
+
+    Ok(FfiRotateSeedResult { transaction_json, spent_commitments_hex, dest })
 }
 
 // ---------- two-party ("slate") payments, mirroring src/wallet/cli.rs's
