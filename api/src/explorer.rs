@@ -623,6 +623,10 @@ const EXPLORER_HTML: &str = r#"<!DOCTYPE html>
   .node-indicator .node-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-faint); flex-shrink: 0; }
   .node-indicator .node-dot.online { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in oklch, var(--ok) 15%, transparent); }
   .node-indicator .node-dot.offline { background: var(--danger); box-shadow: 0 0 0 3px color-mix(in oklch, var(--danger) 15%, transparent); }
+  /* A real node URL (e.g. https://node.hazeprotocol.xyz) is much longer
+     than the placeholder em-dash this pill was sized around - without a
+     cap it can push the pill wide enough to overflow a narrow topbar. */
+  #node-label { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   .theme-toggle {
     font-family: var(--font-mono);
@@ -736,6 +740,12 @@ const EXPLORER_HTML: &str = r#"<!DOCTYPE html>
   }
   @media (max-width: 880px) {
     .panels { grid-template-columns: 1fr; }
+  }
+  /* The hero stat number's "auto" column can crowd the minor stats column
+     on a real phone even though nothing technically overflows (stat-minor
+     wraps internally) - stacking it removes the squeeze entirely. */
+  @media (max-width: 560px) {
+    .stat-row { grid-template-columns: 1fr; }
   }
 
   .panel h2 {
