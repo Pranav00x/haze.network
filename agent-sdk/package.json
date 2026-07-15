@@ -1,0 +1,24 @@
+{
+  "name": "@haze/agent-sdk",
+  "version": "0.1.0",
+  "description": "Private, agent-to-agent payments on Haze. Confidential Mimblewimble settlement wrapped in a minimal API built for AI agents paying other agents or services, not humans clicking buttons.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "wasm"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "example": "npm run build && node dist-examples/basic.js"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "@types/node": "^20.14.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}
