@@ -16,7 +16,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Check wasm/mobile FFI surfaces stay in sync
-        run: ./scripts/check-ffi-wasm-parity.sh
+        # Invoked via `sh` explicitly, not `./scripts/...` - the executable
+        # bit doesn't survive a `git add` from a Windows dev machine
+        # reliably, and this way it doesn't matter whether it's set.
+        run: sh scripts/check-ffi-wasm-parity.sh
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
