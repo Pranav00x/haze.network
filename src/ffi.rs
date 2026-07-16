@@ -845,43 +845,12 @@ pub fn build_transfer_name_request(keystore_bytes: Vec<u8>, name: String, new_ow
     serde_json::to_string(&op).map_err(|_| FfiError::SerializationFailed)
 }
 
-// ---------- plain send planning, identity signing, slate reservations ----------
+// ---------- identity signing, slate reservations ----------
 // These mirror src/wasm.rs exactly but were missing from this mobile surface
 // entirely until now - not a design choice, just drift between the two
-// bindings surfaces that had gone unnoticed.
-
-/// Builds a plain self-planned send (no two-party handshake) - see
-/// wallet::planner::plan_send. The caller must POST `transaction_json`
-/// themselves, then call `commit_send` only on success.
-#[uniffi::export]
-pub fn plan_send(keystore_bytes: Vec<u8>, store_bytes: Vec<u8>, amount: u64, fee: u64) -> Result<FfiSendPlan, FfiError> {
-    let mut keystore = Keystore::from_bytes(&keystore_bytes).ok_or(FfiError::InvalidKeystore)?;
-    let store = WalletStore::from_bytes(&store_bytes).ok_or(FfiError::InvalidStore)?;
-
-    let plan = planner::plan_send(&mut keystore, &store, amount, fee)
-        .map_err(|e| match e {
-            PlanError::InsufficientBalance { have, need } => FfiError::InsufficientBalance { have, need },
-        })?;
-
-    let transaction_json = serde_json::to_string(&plan.transaction).map_err(|_| FfiError::SerializationFailed)?;
-
-    let (dest_index, dest_commitment, dest_value) = plan.dest;
-    let dest = FfiOwnedOutput { index: dest_index, value: dest_value, commitment_hex: dest_commitment.to_hex() };
-    let change = plan.change.map(|(index, commitment, value)| FfiOwnedOutput {
-        index,
-        value,
-        commitment_hex: commitment.to_hex(),
-    });
-    let spent_commitments_hex = plan.spent_commitments.iter().map(|c| c.to_hex()).collect();
-
-    Ok(FfiSendPlan {
-        transaction_json,
-        updated_keystore_bytes: keystore.to_bytes(),
-        dest,
-        change,
-        spent_commitments_hex,
-    })
-}
+// bindings surfaces that had gone unnoticed. (Plain send planning itself
+// was NOT actually missing - plan_send_ffi above already covers it under a
+// mobile-specific name; ffi.rs and wasm.rs deliberately differ there.)
 
 #[derive(uniffi::Record)]
 pub struct FfiSlateReservation {

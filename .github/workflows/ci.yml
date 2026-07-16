@@ -15,6 +15,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check wasm/mobile FFI surfaces stay in sync
+        run: ./scripts/check-ffi-wasm-parity.sh
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
