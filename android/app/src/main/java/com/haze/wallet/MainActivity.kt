@@ -82,6 +82,7 @@ fun HazeApp(repo: WalletRepository) {
             HazeNavItem("send", "Send", Icons.Filled.Send, route = "send"),
             HazeNavItem("receive", "Receive", Icons.Filled.CallReceived, route = "receive"),
             HazeNavItem("names", "Names", Icons.Filled.AlternateEmail, route = "names"),
+            HazeNavItem("market", "Market", Icons.Filled.Storefront, route = "market"),
             HazeNavItem("history", "History", Icons.Filled.History, route = "history"),
             HazeNavItem(
                 "explorer", "Explorer", Icons.Filled.Explore,
@@ -121,6 +122,7 @@ fun HazeApp(repo: WalletRepository) {
             composable("send") { SendScreen(repo) }
             composable("receive") { ReceiveScreen(repo) }
             composable("names") { NamesScreen(repo) }
+            composable("market") { MarketplaceScreen(repo) }
             composable("history") { HistoryScreen(repo) }
             composable("more") { MoreScreen(repo) }
         }
@@ -406,6 +408,176 @@ private fun NamesScreen(repo: WalletRepository) {
             scope.launch { transferMessage = repo.transferName(transferName.trim(), transferTo.trim()) ?: "Transferred." }
         }, modifier = Modifier.fillMaxWidth()) { Text("Transfer") }
         transferMessage?.let { Text(it) }
+    }
+}
+
+@Composable
+private fun MarketplaceScreen(repo: WalletRepository) {
+    var tab by remember { mutableStateOf(0) } // 0 = browse, 1 = my assets, 2 = mint
+
+    // Auto-respond to buyers' "want_transfer" for any of this wallet's own
+    // listings, but only while this screen is actually on screen - this app
+    // has no background service, same constraint as the web wallet's "the
+    // tab must be open" reasoning.
+    LaunchedEffect(Unit) {
+        while (true) {
+            try { repo.pollAndRespondAsSeller() } catch (e: Exception) { /* transient - retry next tick */ }
+            kotlinx.coroutines.delay(4000)
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
+        Text("Marketplace", style = MaterialTheme.typography.titleLarge)
+        Spacer(Modifier.height(16.dp))
+        TabRow(selectedTabIndex = tab) {
+            Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Browse") })
+            Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("My Assets") })
+            Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Mint") })
+        }
+        Spacer(Modifier.height(16.dp))
+        when (tab) {
+            0 -> MarketplaceBrowseTab(repo)
+            1 -> MarketplaceMyAssetsTab(repo)
+            else -> MarketplaceMintTab(repo)
+        }
+    }
+}
+
+@Composable
+private fun MarketplaceBrowseTab(repo: WalletRepository) {
+    val scope = rememberCoroutineScope()
+    var listings by remember { mutableStateOf<List<WalletRepository.MarketListing>>(emptyList()) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var buyingAssetId by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(Unit) {
+        try { listings = repo.browseListings() } catch (e: Exception) { message = e.message }
+    }
+
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        OutlinedButton(
+            onClick = { scope.launch { try { listings = repo.browseListings() } catch (e: Exception) { message = e.message } } },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Refresh") }
+        Spacer(Modifier.height(8.dp))
+        message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        if (listings.isEmpty()) {
+            Spacer(Modifier.height(16.dp))
+            Text("No listings yet.")
+        }
+        listings.forEach { listing ->
+            Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(listing.assetId, style = MaterialTheme.typography.titleSmall)
+                    Text("price: ${listing.price}", style = MaterialTheme.typography.bodySmall)
+                    Text("seller: ${listing.sellerPubkeyHex.take(16)}…", style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        enabled = buyingAssetId == null,
+                        onClick = {
+                            buyingAssetId = listing.assetId
+                            message = "Buying ${listing.assetId} - this can take up to ~40s while the seller's wallet responds…"
+                            scope.launch {
+                                val err = repo.buyListing(listing)
+                                buyingAssetId = null
+                                message = err ?: "Bought ${listing.assetId}."
+                                if (err == null) listings = try { repo.browseListings() } catch (e: Exception) { listings }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(if (buyingAssetId == listing.assetId) "Buying…" else "Buy") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MarketplaceMyAssetsTab(repo: WalletRepository) {
+    val scope = rememberCoroutineScope()
+    var assets by remember { mutableStateOf<List<WalletRepository.MarketAsset>>(emptyList()) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var listPriceFields by remember { mutableStateOf(mapOf<String, String>()) }
+
+    LaunchedEffect(Unit) {
+        try { assets = repo.myAssets() } catch (e: Exception) { message = e.message }
+    }
+
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        OutlinedButton(
+            onClick = { scope.launch { try { assets = repo.myAssets() } catch (e: Exception) { message = e.message } } },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Refresh") }
+        Spacer(Modifier.height(8.dp))
+        message?.let { Text(it) }
+        if (assets.isEmpty()) {
+            Spacer(Modifier.height(16.dp))
+            Text("You don't own any assets yet - mint one in the Mint tab.")
+        }
+        assets.forEach { asset ->
+            Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(asset.assetId, style = MaterialTheme.typography.titleSmall)
+                    if (asset.metadata.isNotBlank()) Text(asset.metadata, style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = listPriceFields[asset.assetId] ?: "",
+                            onValueChange = { listPriceFields = listPriceFields + (asset.assetId to it) },
+                            label = { Text("Price") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Button(onClick = {
+                            val price = (listPriceFields[asset.assetId] ?: "").toLongOrNull() ?: return@Button
+                            scope.launch { message = repo.listAssetForSale(asset.assetId, price) ?: "Listed ${asset.assetId} for $price." }
+                        }) { Text("List") }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    TextButton(onClick = {
+                        scope.launch { message = repo.cancelAssetListing(asset.assetId) ?: "Cancelled listing for ${asset.assetId}." }
+                    }) { Text("Cancel listing") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MarketplaceMintTab(repo: WalletRepository) {
+    val scope = rememberCoroutineScope()
+    var assetId by remember { mutableStateOf("") }
+    var metadata by remember { mutableStateOf("") }
+    var message by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        Text("Mint an NFT", style = MaterialTheme.typography.titleMedium)
+        Text("Costs a small burned fee (the marketplace fee floor). asset_id must be unique network-wide.")
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(value = assetId, onValueChange = { assetId = it }, label = { Text("Asset ID") }, modifier = Modifier.fillMaxWidth())
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = metadata, onValueChange = { metadata = it },
+            label = { Text("Metadata (free-form text, e.g. JSON)") },
+            modifier = Modifier.fillMaxWidth().height(120.dp),
+        )
+        Spacer(Modifier.height(8.dp))
+        Button(
+            enabled = !busy && assetId.isNotBlank(),
+            onClick = {
+                busy = true
+                scope.launch {
+                    val err = repo.mintAsset(assetId.trim(), metadata)
+                    busy = false
+                    message = err ?: "Minted ${assetId.trim()}."
+                    if (err == null) { assetId = ""; metadata = "" }
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text(if (busy) "Minting…" else "Mint") }
+        message?.let { Text(it) }
     }
 }
 

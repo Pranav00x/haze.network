@@ -329,4 +329,243 @@ class WalletRepository(private val storage: SecureStorage) {
         val bytes = ByteArray(arr.length()) { i -> arr.getInt(i).toByte() }
         return bytes.joinToString("") { String.format("%02x", it) }
     }
+
+    // ---------------- marketplace: minting ----------------
+
+    private fun currentAssetFeeEstimate(): Long =
+        try { api.feeEstimate().getLong("suggested_asset_fee") } catch (e: Exception) { 2_000L }
+
+    suspend fun mintAsset(assetId: String, metadata: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val fee = currentAssetFeeEstimate()
+            val built = buildMintAssetRequest(requireKeystore(), storeBytes, assetId.trim(), metadata, fee.toULong())
+            persistKeystore(built.updatedKeystoreBytes)
+            api.mintAsset(built.opJson)
+            persistStore(commitMintAsset(storeBytes, built.spentCommitmentsHex, built.change))
+            pushActivity("Minted $assetId", "")
+            refreshBalance()
+            null
+        } catch (e: Exception) {
+            e.message ?: "failed to mint asset"
+        }
+    }
+
+    // ---------------- marketplace: browsing / listing ----------------
+
+    data class MarketAsset(val assetId: String, val ownerPubkeyHex: String, val metadata: String, val collectionId: String?)
+    data class MarketListing(val assetId: String, val sellerPubkeyHex: String, val price: Long, val listedAt: Long)
+
+    private fun assetFromJson(o: JSONObject): MarketAsset = MarketAsset(
+        assetId = o.getString("asset_id"),
+        ownerPubkeyHex = jsonBytesToHex(o.getJSONArray("owner_pubkey")),
+        metadata = try {
+            val bytes = o.getJSONArray("metadata")
+            ByteArray(bytes.length()) { i -> bytes.getInt(i).toByte() }.toString(Charsets.UTF_8)
+        } catch (e: Exception) { "" },
+        collectionId = if (o.isNull("collection_id")) null else o.optString("collection_id", null),
+    )
+
+    private fun listingFromJson(o: JSONObject): MarketListing = MarketListing(
+        assetId = o.getString("asset_id"),
+        sellerPubkeyHex = jsonBytesToHex(o.getJSONArray("seller_pubkey")),
+        price = o.getLong("price"),
+        listedAt = o.getLong("listed_at"),
+    )
+
+    suspend fun myAssets(): List<MarketAsset> = withContext(Dispatchers.IO) {
+        val myPubkeyHex = walletIdentityPubkeyHex(requireKeystore())
+        val arr = api.listAssets(200)
+        (0 until arr.length()).map { assetFromJson(arr.getJSONObject(it)) }.filter { it.ownerPubkeyHex == myPubkeyHex }
+    }
+
+    suspend fun browseListings(): List<MarketListing> = withContext(Dispatchers.IO) {
+        val arr = api.listListings(200)
+        (0 until arr.length()).map { listingFromJson(arr.getJSONObject(it)) }
+    }
+
+    suspend fun listAssetForSale(assetId: String, price: Long): String? = withContext(Dispatchers.IO) {
+        try {
+            val listingJson = buildCreateListingRequest(requireKeystore(), assetId.trim(), price.toULong(), (System.currentTimeMillis() / 1000L).toULong())
+            api.createListing(listingJson)
+            pushActivity("Listed $assetId for $price", "")
+            null
+        } catch (e: Exception) {
+            e.message ?: "failed to list asset"
+        }
+    }
+
+    suspend fun cancelAssetListing(assetId: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val cancelJson = buildCancelListingRequest(requireKeystore(), assetId.trim())
+            api.cancelListing(cancelJson)
+            pushActivity("Cancelled listing for $assetId", "")
+            null
+        } catch (e: Exception) {
+            e.message ?: "failed to cancel listing"
+        }
+    }
+
+    // ---------------- marketplace: buying (trustless handshake) ----------------
+    //
+    // Mirrors the web wallet's buy flow exactly (see haze-wallet-web's
+    // pollInbox "response"/"want_transfer"/"signed_transfer" handling): pay
+    // the seller (and, if this asset came from a royalty-charging
+    // collection, the creator too - a second, independent payment) via the
+    // two-party slate protocol, wait for both to accept, only THEN ask the
+    // seller for a conditional TransferAssetOp (bound to the exact kernel
+    // excess of the payment(s) that just landed), and only broadcast the
+    // payment(s) once that signed transfer is in hand. The transfer is
+    // inert until its required kernel(s) exist on-chain, so broadcasting
+    // payment-then-transfer in that order carries no risk of the seller
+    // taking the money and never delivering.
+    suspend fun buyListing(listing: MarketListing): String? = withContext(Dispatchers.IO) {
+        try {
+            val myPubkeyHex = walletIdentityPubkeyHex(requireKeystore())
+            val fee = currentFeeEstimate()
+
+            var royaltyPubkeyHex: String? = null
+            var royaltyAmount = 0L
+            try {
+                val asset = api.getAsset(listing.assetId)
+                val collectionId = asset?.let { if (it.isNull("collection_id")) null else it.optString("collection_id", null) }
+                if (collectionId != null) {
+                    val collection = api.getCollection(collectionId)
+                    val royaltyBps = collection?.optInt("royalty_bps", 0) ?: 0
+                    if (royaltyBps > 0) {
+                        royaltyPubkeyHex = jsonBytesToHex(collection!!.getJSONArray("creator_pubkey"))
+                        royaltyAmount = (listing.price * royaltyBps) / 10000L
+                    }
+                }
+            } catch (e: Exception) { /* asset/collection lookup failing just means no royalty applies */ }
+            val hasRoyaltyLeg = royaltyPubkeyHex != null && royaltyAmount > 0L
+            val sellerAmount = listing.price - royaltyAmount
+
+            val sellerSlate = createSendSlate(requireKeystore(), storeBytes, sellerAmount.toULong(), fee.toULong())
+            persistKeystore(sellerSlate.updatedKeystoreBytes)
+            api.postInbox(listing.sellerPubkeyHex, myPubkeyHex, "request", sellerSlate.slateJson)
+
+            var royaltyPendingSlateBytes: ByteArray? = null
+            if (hasRoyaltyLeg) {
+                // Eagerly reserve the seller slate's inputs before building
+                // a second, independent slate off the same store - otherwise
+                // the royalty slate could pick the exact same UTXO.
+                val reservation = pendingSlateReservation(sellerSlate.pendingSlateBytes)
+                persistStore(commitSlateSend(storeBytes, reservation.spentCommitmentsHex, reservation.change))
+                val royaltySlate = createSendSlate(requireKeystore(), storeBytes, royaltyAmount.toULong(), fee.toULong())
+                persistKeystore(royaltySlate.updatedKeystoreBytes)
+                api.postInbox(royaltyPubkeyHex!!, myPubkeyHex, "request", royaltySlate.slateJson)
+                royaltyPendingSlateBytes = royaltySlate.pendingSlateBytes
+            }
+
+            var sellerDone = false
+            var royaltyDone = !hasRoyaltyLeg
+            var finalizedTxJson: String? = null
+            var spentCommitmentsHex: List<String> = emptyList()
+            var change: FfiOwnedOutput? = null
+            var kernelExcessHex: String? = null
+            var finalizedRoyaltyTxJson: String? = null
+            var royaltySpentCommitmentsHex: List<String> = emptyList()
+            var royaltyChange: FfiOwnedOutput? = null
+            var royaltyKernelExcessHex: String? = null
+
+            // Phase 1: wait for the seller's (and, if present, the royalty
+            // creator's) response to our payment slate(s).
+            repeat(20) {
+                if (sellerDone && royaltyDone) return@repeat
+                val messages = api.getInbox(myPubkeyHex)
+                for (i in 0 until messages.length()) {
+                    val msg = messages.getJSONObject(i)
+                    val from = msg.getString("from_pubkey_hex")
+                    if (msg.getString("kind") == "response" && from == listing.sellerPubkeyHex && !sellerDone) {
+                        val finalized = finalizeSlate(sellerSlate.pendingSlateBytes, msg.getString("payload_json"))
+                        finalizedTxJson = finalized.transactionJson
+                        spentCommitmentsHex = finalized.spentCommitmentsHex
+                        change = finalized.change
+                        kernelExcessHex = txKernelExcessHex(finalized.transactionJson)
+                        sellerDone = true
+                    } else if (hasRoyaltyLeg && msg.getString("kind") == "response" && from == royaltyPubkeyHex && !royaltyDone) {
+                        val finalized = finalizeSlate(royaltyPendingSlateBytes!!, msg.getString("payload_json"))
+                        finalizedRoyaltyTxJson = finalized.transactionJson
+                        royaltySpentCommitmentsHex = finalized.spentCommitmentsHex
+                        royaltyChange = finalized.change
+                        royaltyKernelExcessHex = txKernelExcessHex(finalized.transactionJson)
+                        royaltyDone = true
+                    }
+                }
+                if (sellerDone && royaltyDone) return@repeat
+                kotlinx.coroutines.delay(2000)
+            }
+            if (!sellerDone || !royaltyDone) return@withContext "seller hasn't accepted the offer yet - try again shortly"
+
+            // Phase 2: ask the seller to sign the conditional transfer, now
+            // that both kernel excesses are known.
+            api.postInbox(
+                listing.sellerPubkeyHex, myPubkeyHex, "want_transfer",
+                JSONObject()
+                    .put("asset_id", listing.assetId)
+                    .put("buyer_pubkey_hex", myPubkeyHex)
+                    .put("kernel_excess_hex", kernelExcessHex)
+                    .put("royalty_kernel_excess_hex", royaltyKernelExcessHex)
+                    .toString(),
+            )
+
+            var opJson: String? = null
+            repeat(20) {
+                val messages = api.getInbox(myPubkeyHex)
+                for (i in 0 until messages.length()) {
+                    val msg = messages.getJSONObject(i)
+                    if (msg.getString("kind") == "signed_transfer" && msg.getString("from_pubkey_hex") == listing.sellerPubkeyHex) {
+                        opJson = JSONObject(msg.getString("payload_json")).getString("op_json")
+                    }
+                }
+                if (opJson != null) return@repeat
+                kotlinx.coroutines.delay(2000)
+            }
+            val signedOpJson = opJson
+                ?: return@withContext "payment accepted, but the seller hasn't signed the transfer yet - nothing was broadcast, safe to try buying again"
+
+            // Phase 3: broadcast payment(s) first (inert until then), then
+            // the now-valid conditional transfer.
+            api.submitTransaction(finalizedTxJson!!)
+            persistStore(commitSlateSend(storeBytes, spentCommitmentsHex, change))
+            if (hasRoyaltyLeg) {
+                api.submitTransaction(finalizedRoyaltyTxJson!!)
+                persistStore(commitSlateSend(storeBytes, royaltySpentCommitmentsHex, royaltyChange))
+            }
+            api.transferAsset(signedOpJson)
+            pushActivity("Bought ${listing.assetId}", "for ${listing.price}")
+            refreshBalance()
+            null
+        } catch (e: Exception) {
+            e.message ?: "failed to buy asset"
+        }
+    }
+
+    // Seller-side auto-response to a buyer's "want_transfer" - signing costs
+    // nothing, since the resulting TransferAssetOp is conditioned on a
+    // kernel excess that only becomes real once the buyer's payment lands
+    // on-chain (see core::assets::TransferAssetOp::required_kernel_excess).
+    // Only meant to be called while a screen showing "My Listings" is
+    // visible (this app has no background service) - mirrors the web
+    // wallet's tab-must-be-open constraint exactly.
+    suspend fun pollAndRespondAsSeller(): Int = withContext(Dispatchers.IO) {
+        val myPubkeyHex = walletIdentityPubkeyHex(requireKeystore())
+        val messages = api.getInbox(myPubkeyHex)
+        var handled = 0
+        for (i in 0 until messages.length()) {
+            val msg = messages.getJSONObject(i)
+            if (msg.getString("kind") != "want_transfer") continue
+            val req = JSONObject(msg.getString("payload_json"))
+            val opJson = buildTransferAssetRequest(
+                requireKeystore(),
+                req.getString("asset_id"),
+                req.getString("buyer_pubkey_hex"),
+                req.optString("kernel_excess_hex", null),
+                if (req.isNull("royalty_kernel_excess_hex")) null else req.optString("royalty_kernel_excess_hex", null),
+            )
+            api.postInbox(req.getString("buyer_pubkey_hex"), myPubkeyHex, "signed_transfer", JSONObject().put("op_json", opJson).toString())
+            handled++
+        }
+        handled
+    }
 }

@@ -129,6 +129,46 @@ class NodeApi(private var baseUrl: String) {
 
     /** GET /v1/inbox/:pubkeyHex -> drains and returns queued messages. */
     fun getInbox(pubkeyHex: String): JSONArray = JSONArray(get("/v1/inbox/$pubkeyHex"))
+
+    /** POST /v1/assets/mint */
+    fun mintAsset(opJson: String) {
+        post("/v1/assets/mint", opJson)
+    }
+
+    /** POST /v1/assets/transfer */
+    fun transferAsset(opJson: String) {
+        post("/v1/assets/transfer", opJson)
+    }
+
+    /** GET /v1/assets/:asset_id -> null if not minted. */
+    fun getAsset(assetId: String): JSONObject? = try {
+        JSONObject(get("/v1/assets/$assetId"))
+    } catch (e: NodeApiException) {
+        if (e.code == 404) null else throw e
+    }
+
+    /** GET /v1/assets?limit=N - newest first. */
+    fun listAssets(limit: Int = 100): JSONArray = JSONArray(get("/v1/assets?limit=$limit"))
+
+    /** POST /v1/marketplace/list */
+    fun createListing(listingJson: String) {
+        post("/v1/marketplace/list", listingJson)
+    }
+
+    /** POST /v1/marketplace/cancel */
+    fun cancelListing(cancelJson: String) {
+        post("/v1/marketplace/cancel", cancelJson)
+    }
+
+    /** GET /v1/marketplace/listings?limit=N - newest first. */
+    fun listListings(limit: Int = 100): JSONArray = JSONArray(get("/v1/marketplace/listings?limit=$limit"))
+
+    /** GET /v1/collections/:collection_id -> null if not launched. */
+    fun getCollection(collectionId: String): JSONObject? = try {
+        JSONObject(get("/v1/collections/$collectionId"))
+    } catch (e: NodeApiException) {
+        if (e.code == 404) null else throw e
+    }
 }
 
 class NodeApiException(val code: Int, val bodyText: String) : Exception("HTTP $code: $bodyText")
