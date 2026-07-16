@@ -7,17 +7,25 @@
 # transfer, collection launches, allowlist signing, and
 # sign_identity_message - missing from ffi.rs for an unknown but real
 # stretch of time before anyone noticed).
+#
+# Deliberately POSIX sh, not bash - no process substitution (<(...)), since
+# CI runs this via `sh` and Ubuntu's /bin/sh is dash, not bash. Uses real
+# temp files instead.
 set -e
 cd "$(dirname "$0")/.."
 
+WASM_TMP=$(mktemp)
+FFI_TMP=$(mktemp)
+trap 'rm -f "$WASM_TMP" "$FFI_TMP"' EXIT
+
+grep -oE '^pub fn [a-z_0-9]+' src/wasm.rs | sed 's/pub fn //' | sort > "$WASM_TMP"
 # plan_send (wasm.rs) / plan_send_ffi (ffi.rs) are the same function under a
 # deliberately different name on the mobile side - not a gap, normalize it
 # away before comparing.
-WASM_FNS=$(grep -oE '^pub fn [a-z_0-9]+' src/wasm.rs | sed 's/pub fn //' | sort)
-FFI_FNS=$(grep -oE '^pub fn [a-z_0-9]+' src/ffi.rs | sed 's/pub fn //' | sed 's/^plan_send_ffi$/plan_send/' | sort)
+grep -oE '^pub fn [a-z_0-9]+' src/ffi.rs | sed 's/pub fn //' | sed 's/^plan_send_ffi$/plan_send/' | sort > "$FFI_TMP"
 
-MISSING_FROM_FFI=$(comm -23 <(echo "$WASM_FNS") <(echo "$FFI_FNS"))
-MISSING_FROM_WASM=$(comm -13 <(echo "$WASM_FNS") <(echo "$FFI_FNS"))
+MISSING_FROM_FFI=$(comm -23 "$WASM_TMP" "$FFI_TMP")
+MISSING_FROM_WASM=$(comm -13 "$WASM_TMP" "$FFI_TMP")
 
 if [ -n "$MISSING_FROM_FFI" ] || [ -n "$MISSING_FROM_WASM" ]; then
   echo "FFI/wasm parity check failed:"
@@ -32,5 +40,5 @@ if [ -n "$MISSING_FROM_FFI" ] || [ -n "$MISSING_FROM_WASM" ]; then
   exit 1
 fi
 
-COUNT=$(echo "$WASM_FNS" | wc -l)
+COUNT=$(wc -l < "$WASM_TMP")
 echo "FFI/wasm parity check passed - $COUNT functions match on both sides."
