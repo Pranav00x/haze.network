@@ -422,6 +422,7 @@ private fun MarketplaceScreen(repo: WalletRepository) {
     LaunchedEffect(Unit) {
         while (true) {
             try { repo.pollAndRespondAsSeller() } catch (e: Exception) { /* transient - retry next tick */ }
+            try { repo.pollAndRespondAsCreator() } catch (e: Exception) { /* transient - retry next tick */ }
             kotlinx.coroutines.delay(4000)
         }
     }
@@ -433,12 +434,14 @@ private fun MarketplaceScreen(repo: WalletRepository) {
             Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Browse") })
             Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("My Assets") })
             Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Mint") })
+            Tab(selected = tab == 3, onClick = { tab = 3 }, text = { Text("Collections") })
         }
         Spacer(Modifier.height(16.dp))
         when (tab) {
             0 -> MarketplaceBrowseTab(repo)
             1 -> MarketplaceMyAssetsTab(repo)
-            else -> MarketplaceMintTab(repo)
+            2 -> MarketplaceMintTab(repo)
+            else -> MarketplaceCollectionsTab(repo)
         }
     }
 }
@@ -578,6 +581,122 @@ private fun MarketplaceMintTab(repo: WalletRepository) {
             modifier = Modifier.fillMaxWidth(),
         ) { Text(if (busy) "Minting…" else "Mint") }
         message?.let { Text(it) }
+    }
+}
+
+@Composable
+private fun MarketplaceCollectionsTab(repo: WalletRepository) {
+    val scope = rememberCoroutineScope()
+    var collections by remember { mutableStateOf<List<WalletRepository.MarketCollection>>(emptyList()) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var mintingKey by remember { mutableStateOf<String?>(null) }
+
+    var showLaunch by remember { mutableStateOf(false) }
+    var collectionId by remember { mutableStateOf("") }
+    var name by remember { mutableStateOf("") }
+    var symbol by remember { mutableStateOf("") }
+    var metadata by remember { mutableStateOf("") }
+    var startTime by remember { mutableStateOf("") }
+    var endTime by remember { mutableStateOf("") }
+    var price by remember { mutableStateOf("") }
+    var perWalletLimit by remember { mutableStateOf("1") }
+    var royaltyBps by remember { mutableStateOf("0") }
+    var launchBusy by remember { mutableStateOf(false) }
+
+    fun refresh() {
+        scope.launch { try { collections = repo.browseCollections() } catch (e: Exception) { message = e.message } }
+    }
+    LaunchedEffect(Unit) { refresh() }
+
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        Row {
+            OutlinedButton(onClick = { refresh() }, modifier = Modifier.weight(1f)) { Text("Refresh") }
+            Spacer(Modifier.width(8.dp))
+            Button(onClick = { showLaunch = !showLaunch }, modifier = Modifier.weight(1f)) { Text(if (showLaunch) "Cancel" else "Launch a collection") }
+        }
+        Spacer(Modifier.height(8.dp))
+        message?.let { Text(it) }
+
+        if (showLaunch) {
+            Spacer(Modifier.height(8.dp))
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text("New collection (single Public phase)", style = MaterialTheme.typography.titleSmall)
+                    Text("Times are Unix seconds. Multi-phase/allowlisted drops can still be launched from the web wallet.", style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(value = collectionId, onValueChange = { collectionId = it }, label = { Text("Collection ID") }, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(value = symbol, onValueChange = { symbol = it }, label = { Text("Symbol") }, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(value = metadata, onValueChange = { metadata = it }, label = { Text("Metadata") }, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(value = startTime, onValueChange = { startTime = it }, label = { Text("Start time (unix seconds)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(value = endTime, onValueChange = { endTime = it }, label = { Text("End time (unix seconds)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(value = price, onValueChange = { price = it }, label = { Text("Mint price") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(value = perWalletLimit, onValueChange = { perWalletLimit = it }, label = { Text("Per-wallet limit") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(value = royaltyBps, onValueChange = { royaltyBps = it }, label = { Text("Resale royalty (basis points, 0-10000)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        enabled = !launchBusy && collectionId.isNotBlank() && name.isNotBlank() && symbol.isNotBlank(),
+                        onClick = {
+                            launchBusy = true
+                            scope.launch {
+                                val err = repo.launchCollection(
+                                    collectionId.trim(), name, symbol, metadata,
+                                    startTime.toLongOrNull() ?: 0L, endTime.toLongOrNull() ?: 0L,
+                                    price.toLongOrNull() ?: 0L, perWalletLimit.toIntOrNull() ?: 1, royaltyBps.toIntOrNull() ?: 0,
+                                )
+                                launchBusy = false
+                                message = err ?: "Launched ${collectionId.trim()}."
+                                if (err == null) { showLaunch = false; refresh() }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(if (launchBusy) "Launching…" else "Launch") }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+        if (collections.isEmpty()) Text("No collections launched yet.")
+        collections.forEach { collection ->
+            Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text("${collection.name} (${collection.symbol})", style = MaterialTheme.typography.titleSmall)
+                    Text(collection.collectionId, style = MaterialTheme.typography.bodySmall)
+                    if (collection.royaltyBps > 0) Text("resale royalty: ${collection.royaltyBps} bps", style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(8.dp))
+                    val nowSecs = System.currentTimeMillis() / 1000L
+                    collection.phases.forEachIndexed { idx, phase ->
+                        val active = nowSecs in phase.startTime until phase.endTime
+                        val key = "${collection.collectionId}:$idx"
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("${phase.name}${if (phase.hasAllowlist) " (allowlist)" else ""} — price ${phase.price}, limit ${phase.perWalletLimit}", style = MaterialTheme.typography.bodySmall)
+                                Text(if (active) "active now" else if (nowSecs < phase.startTime) "starts at ${phase.startTime}" else "ended at ${phase.endTime}", style = MaterialTheme.typography.labelSmall)
+                            }
+                            Button(
+                                enabled = active && mintingKey == null,
+                                onClick = {
+                                    mintingKey = key
+                                    scope.launch {
+                                        val err = repo.mintFromCollection(collection, idx)
+                                        mintingKey = null
+                                        message = err ?: "Minted from ${collection.collectionId}."
+                                    }
+                                },
+                            ) { Text(if (mintingKey == key) "Minting…" else "Mint") }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

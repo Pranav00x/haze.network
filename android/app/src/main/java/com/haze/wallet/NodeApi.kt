@@ -169,6 +169,21 @@ class NodeApi(private var baseUrl: String) {
     } catch (e: NodeApiException) {
         if (e.code == 404) null else throw e
     }
+
+    /** GET /v1/collections?limit=N - newest first. */
+    fun listCollections(limit: Int = 100): JSONArray = JSONArray(get("/v1/collections?limit=$limit"))
+
+    /** POST /v1/collections/launch */
+    fun launchCollection(opJson: String) {
+        post("/v1/collections/launch", opJson)
+    }
+
+    /** GET /v1/collections/:collection_id/phases/:phase_index/allowlist -> null if unpublished. */
+    fun getAllowlist(collectionId: String, phaseIndex: Int): JSONObject? = try {
+        JSONObject(get("/v1/collections/$collectionId/phases/$phaseIndex/allowlist"))
+    } catch (e: NodeApiException) {
+        if (e.code == 404) null else throw e
+    }
 }
 
 class NodeApiException(val code: Int, val bodyText: String) : Exception("HTTP $code: $bodyText")

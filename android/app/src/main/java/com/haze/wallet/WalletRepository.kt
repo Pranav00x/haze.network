@@ -568,4 +568,188 @@ class WalletRepository(private val storage: SecureStorage) {
         }
         handled
     }
+
+    // ---------------- collections: launching (creator side) ----------------
+
+    data class MarketPhase(val name: String, val startTime: Long, val endTime: Long, val price: Long, val perWalletLimit: Int, val hasAllowlist: Boolean)
+    data class MarketCollection(val collectionId: String, val creatorPubkeyHex: String, val name: String, val symbol: String, val royaltyBps: Int, val phases: List<MarketPhase>)
+
+    // MVP: launches a single Public (no allowlist) phase - multi-phase
+    // GTD/FCFS/Public drops with allowlists can still be launched from the
+    // web wallet (build_launch_collection_request takes an arbitrary phase
+    // list); minting from this app supports allowlisted phases regardless
+    // of where the collection was launched (see mintFromCollection below).
+    suspend fun launchCollection(collectionId: String, name: String, symbol: String, metadata: String, startTime: Long, endTime: Long, price: Long, perWalletLimit: Int, royaltyBps: Int): String? =
+        withContext(Dispatchers.IO) {
+            try {
+                val phase = JSONObject()
+                    .put("name", "Public")
+                    .put("start_time", startTime)
+                    .put("end_time", endTime)
+                    .put("price", price)
+                    .put("per_wallet_limit", perWalletLimit)
+                    .put("allowlist_merkle_root", JSONObject.NULL)
+                val phasesJson = JSONArray().put(phase).toString()
+                val opJson = buildLaunchCollectionRequest(requireKeystore(), collectionId.trim(), name, symbol, metadata, phasesJson, royaltyBps.toUShort())
+                api.launchCollection(opJson)
+                pushActivity("Launched collection $collectionId", "")
+                null
+            } catch (e: Exception) {
+                e.message ?: "failed to launch collection"
+            }
+        }
+
+    suspend fun browseCollections(): List<MarketCollection> = withContext(Dispatchers.IO) {
+        val arr = api.listCollections(100)
+        (0 until arr.length()).map { i ->
+            val o = arr.getJSONObject(i)
+            val phasesArr = o.getJSONArray("phases")
+            val phases = (0 until phasesArr.length()).map { j ->
+                val p = phasesArr.getJSONObject(j)
+                MarketPhase(
+                    name = p.getString("name"),
+                    startTime = p.getLong("start_time"),
+                    endTime = p.getLong("end_time"),
+                    price = p.getLong("price"),
+                    perWalletLimit = p.getInt("per_wallet_limit"),
+                    hasAllowlist = !p.isNull("allowlist_merkle_root"),
+                )
+            }
+            MarketCollection(
+                collectionId = o.getString("collection_id"),
+                creatorPubkeyHex = jsonBytesToHex(o.getJSONArray("creator_pubkey")),
+                name = o.getString("name"),
+                symbol = o.getString("symbol"),
+                royaltyBps = o.optInt("royalty_bps", 0),
+                phases = phases,
+            )
+        }
+    }
+
+    // ---------------- collections: minting (minter side) ----------------
+    //
+    // Mirrors the web wallet's want_collection_mint/signed_collection_mint
+    // handshake: pay the creator, wait for their "response", build our own
+    // conditional MintAssetOp bound to that payment's kernel excess, ask the
+    // creator to co-sign it (their approval is what actually ties the mint
+    // to a real payment - see MintAssetOp::creator_signature), then
+    // broadcast payment before the now-approved mint.
+    suspend fun mintFromCollection(collection: MarketCollection, phaseIndex: Int): String? = withContext(Dispatchers.IO) {
+        try {
+            val phase = collection.phases.getOrNull(phaseIndex) ?: return@withContext "no such phase"
+            val myPubkeyHex = walletIdentityPubkeyHex(requireKeystore())
+
+            var allowlistProofHex: List<String>? = null
+            var allowlistLeafIndex: Int? = null
+            if (phase.hasAllowlist) {
+                val entry = api.getAllowlist(collection.collectionId, phaseIndex)
+                    ?: return@withContext "this round's allowlist hasn't been published yet"
+                val pubkeysArr = entry.getJSONArray("pubkeys")
+                val pubkeysHex = (0 until pubkeysArr.length()).map { jsonBytesToHex(pubkeysArr.getJSONArray(it)) }
+                if (!pubkeysHex.contains(myPubkeyHex)) return@withContext "you're not on this round's allowlist"
+                val proof = computeAllowlistMerkleProof(pubkeysHex, myPubkeyHex)
+                allowlistProofHex = proof.proofHex
+                allowlistLeafIndex = proof.leafIndex.toInt()
+            }
+            if (phase.price <= 0L) return@withContext "free rounds aren't supported yet"
+
+            val fee = currentFeeEstimate()
+            val slate = createSendSlate(requireKeystore(), storeBytes, phase.price.toULong(), fee.toULong())
+            persistKeystore(slate.updatedKeystoreBytes)
+            api.postInbox(collection.creatorPubkeyHex, myPubkeyHex, "request", slate.slateJson)
+
+            var responsePayload: String? = null
+            repeat(20) {
+                val messages = api.getInbox(myPubkeyHex)
+                for (i in 0 until messages.length()) {
+                    val msg = messages.getJSONObject(i)
+                    if (msg.getString("kind") == "response" && msg.getString("from_pubkey_hex") == collection.creatorPubkeyHex) {
+                        responsePayload = msg.getString("payload_json")
+                    }
+                }
+                if (responsePayload != null) return@repeat
+                kotlinx.coroutines.delay(2000)
+            }
+            val response = responsePayload ?: return@withContext "creator hasn't accepted the payment yet - try again shortly"
+
+            val finalized = finalizeSlate(slate.pendingSlateBytes, response)
+            val kernelExcessHex = txKernelExcessHex(finalized.transactionJson)
+            persistStore(commitSlateSend(storeBytes, finalized.spentCommitmentsHex, finalized.change))
+
+            val assetId = "${collection.collectionId}-${System.currentTimeMillis()}"
+            val assetFee = currentAssetFeeEstimate()
+            val built = buildCollectionMintAssetRequest(
+                requireKeystore(), storeBytes, assetId, "Minted from ${collection.name}", assetFee.toULong(),
+                collection.collectionId, phaseIndex.toUInt(),
+                allowlistProofHex, allowlistLeafIndex?.toUInt(), kernelExcessHex,
+            )
+            persistKeystore(built.updatedKeystoreBytes)
+
+            api.postInbox(
+                collection.creatorPubkeyHex, myPubkeyHex, "want_collection_mint",
+                JSONObject()
+                    .put("asset_id", assetId)
+                    .put("collection_id", collection.collectionId)
+                    .put("phase_index", phaseIndex)
+                    .put("owner_pubkey_hex", myPubkeyHex)
+                    .put("required_kernel_excess_hex", kernelExcessHex)
+                    .toString(),
+            )
+
+            var creatorSignatureHex: String? = null
+            repeat(20) {
+                val messages = api.getInbox(myPubkeyHex)
+                for (i in 0 until messages.length()) {
+                    val msg = messages.getJSONObject(i)
+                    if (msg.getString("kind") == "signed_collection_mint" && msg.getString("from_pubkey_hex") == collection.creatorPubkeyHex) {
+                        creatorSignatureHex = JSONObject(msg.getString("payload_json")).getString("creator_signature_hex")
+                    }
+                }
+                if (creatorSignatureHex != null) return@repeat
+                kotlinx.coroutines.delay(2000)
+            }
+            val signature = creatorSignatureHex
+                ?: return@withContext "payment accepted, but the creator hasn't approved the mint yet - nothing was broadcast, safe to try again"
+
+            api.submitTransaction(finalized.transactionJson)
+            val finalOpJson = attachCreatorSignatureToMint(built.opJson, signature)
+            api.mintAsset(finalOpJson)
+            if (built.change != null) persistStore(commitMintAsset(storeBytes, built.spentCommitmentsHex, built.change))
+            pushActivity("Minted $assetId", "from ${collection.collectionId}")
+            refreshBalance()
+            null
+        } catch (e: Exception) {
+            e.message ?: "failed to mint from collection"
+        }
+    }
+
+    // Creator-side auto-response to a minter's "want_collection_mint" - only
+    // meant to run while the Marketplace screen is open, same constraint as
+    // pollAndRespondAsSeller above. Only responds to collections this
+    // wallet actually created.
+    suspend fun pollAndRespondAsCreator(): Int = withContext(Dispatchers.IO) {
+        val myPubkeyHex = walletIdentityPubkeyHex(requireKeystore())
+        val messages = api.getInbox(myPubkeyHex)
+        var handled = 0
+        for (i in 0 until messages.length()) {
+            val msg = messages.getJSONObject(i)
+            if (msg.getString("kind") != "want_collection_mint") continue
+            val req = JSONObject(msg.getString("payload_json"))
+            val collectionId = req.getString("collection_id")
+            val collection = api.getCollection(collectionId) ?: continue
+            if (jsonBytesToHex(collection.getJSONArray("creator_pubkey")) != myPubkeyHex) continue
+
+            val signatureHex = signCollectionMintApproval(
+                requireKeystore(),
+                req.getString("asset_id"),
+                collectionId,
+                req.getInt("phase_index").toUInt(),
+                req.getString("required_kernel_excess_hex"),
+                req.getString("owner_pubkey_hex"),
+            )
+            api.postInbox(req.getString("owner_pubkey_hex"), myPubkeyHex, "signed_collection_mint", JSONObject().put("creator_signature_hex", signatureHex).toString())
+            handled++
+        }
+        handled
+    }
 }
