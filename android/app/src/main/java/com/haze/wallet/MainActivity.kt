@@ -6,10 +6,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.browser.customtabs.CustomTabColorSchemeParams
 import androidx.browser.customtabs.CustomTabsIntent
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -33,6 +31,8 @@ import com.haze.wallet.ui.theme.HazeNavItem
 import com.haze.wallet.ui.theme.HazeGlassBottomBar
 import com.haze.wallet.ui.theme.HazeTheme
 import com.haze.wallet.ui.theme.LocalHazeColors
+import com.haze.wallet.ui.theme.HazeCard
+import com.haze.wallet.ui.theme.HazeScreenTitle
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -165,8 +165,8 @@ private fun OnboardingFlow(repo: WalletRepository) {
                 Spacer(Modifier.height(8.dp))
                 Text("These 12 words are the ONLY way to recover this wallet. Anyone with this phrase can spend your funds - write it down and keep it private. Haze cannot recover it for you.")
                 Spacer(Modifier.height(16.dp))
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Text(generatedMnemonic, modifier = Modifier.padding(16.dp))
+                HazeCard(modifier = Modifier.fillMaxWidth()) {
+                    Text(generatedMnemonic)
                 }
                 Spacer(Modifier.height(16.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -220,13 +220,8 @@ private fun WalletHomeScreen(repo: WalletRepository) {
             color = if (state.claimedName != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
         )
         Spacer(Modifier.height(16.dp))
-        Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = hazeColors.cardVeil.copy(alpha = if (hazeColors.isDark) 0.5f else 0.7f),
-            border = BorderStroke(1.dp, hazeColors.hairline),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Row(modifier = Modifier.padding(20.dp)) {
+        HazeCard(modifier = Modifier.fillMaxWidth(), padding = PaddingValues(20.dp)) {
+            Row {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("CONFIRMED", style = MaterialTheme.typography.labelSmall, color = hazeColors.inkFaint)
                     Spacer(Modifier.height(4.dp))
@@ -274,6 +269,8 @@ private fun SendScreen(repo: WalletRepository) {
     var nameMessage by remember { mutableStateOf<String?>(null) }
 
     Column(modifier = Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState())) {
+        HazeScreenTitle("Send")
+        Spacer(Modifier.height(24.dp))
         Text("Self-pay", style = MaterialTheme.typography.titleLarge)
         Text("Splits/consolidates your own confirmed UTXOs.")
         Spacer(Modifier.height(8.dp))
@@ -333,6 +330,8 @@ private fun ReceiveScreen(repo: WalletRepository) {
     var error by remember { mutableStateOf<String?>(null) }
 
     Column(modifier = Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState())) {
+        HazeScreenTitle("Receive")
+        Spacer(Modifier.height(24.dp))
         Text("Your address", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(8.dp))
         Text(state.claimedName?.let { "$it.haze" } ?: "Claim a name in the Names tab to receive payments by name.")
@@ -379,6 +378,8 @@ private fun NamesScreen(repo: WalletRepository) {
     var transferMessage by remember { mutableStateOf<String?>(null) }
 
     Column(modifier = Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState())) {
+        HazeScreenTitle("Names")
+        Spacer(Modifier.height(24.dp))
         Text("Claim a .haze name", style = MaterialTheme.typography.titleLarge)
         Text("Permanent, first-come-first-served. Free to claim - sponsored by the network.")
         Spacer(Modifier.height(8.dp))
@@ -428,7 +429,7 @@ private fun MarketplaceScreen(repo: WalletRepository) {
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
-        Text("Marketplace", style = MaterialTheme.typography.titleLarge)
+        HazeScreenTitle("Marketplace")
         Spacer(Modifier.height(16.dp))
         TabRow(selectedTabIndex = tab) {
             Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Browse") })
@@ -469,8 +470,8 @@ private fun MarketplaceBrowseTab(repo: WalletRepository) {
             Text("No listings yet.")
         }
         listings.forEach { listing ->
-            Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                Column(modifier = Modifier.padding(12.dp)) {
+            HazeCard(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), padding = PaddingValues(12.dp)) {
+                Column {
                     Text(listing.assetId, style = MaterialTheme.typography.titleSmall)
                     Text("price: ${listing.price}", style = MaterialTheme.typography.bodySmall)
                     Text("seller: ${listing.sellerPubkeyHex.take(16)}…", style = MaterialTheme.typography.bodySmall)
@@ -518,8 +519,8 @@ private fun MarketplaceMyAssetsTab(repo: WalletRepository) {
             Text("You don't own any assets yet - mint one in the Mint tab.")
         }
         assets.forEach { asset ->
-            Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                Column(modifier = Modifier.padding(12.dp)) {
+            HazeCard(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), padding = PaddingValues(12.dp)) {
+                Column {
                     Text(asset.assetId, style = MaterialTheme.typography.titleSmall)
                     if (asset.metadata.isNotBlank()) Text(asset.metadata, style = MaterialTheme.typography.bodySmall)
                     Spacer(Modifier.height(8.dp))
@@ -619,8 +620,8 @@ private fun MarketplaceCollectionsTab(repo: WalletRepository) {
 
         if (showLaunch) {
             Spacer(Modifier.height(8.dp))
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(12.dp)) {
+            HazeCard(modifier = Modifier.fillMaxWidth(), padding = PaddingValues(12.dp)) {
+                Column {
                     Text("New collection (single Public phase)", style = MaterialTheme.typography.titleSmall)
                     Text("Times are Unix seconds. Multi-phase/allowlisted drops can still be launched from the web wallet.", style = MaterialTheme.typography.bodySmall)
                     Spacer(Modifier.height(8.dp))
@@ -666,8 +667,8 @@ private fun MarketplaceCollectionsTab(repo: WalletRepository) {
         Spacer(Modifier.height(16.dp))
         if (collections.isEmpty()) Text("No collections launched yet.")
         collections.forEach { collection ->
-            Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                Column(modifier = Modifier.padding(12.dp)) {
+            HazeCard(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), padding = PaddingValues(12.dp)) {
+                Column {
                     Text("${collection.name} (${collection.symbol})", style = MaterialTheme.typography.titleSmall)
                     Text(collection.collectionId, style = MaterialTheme.typography.bodySmall)
                     if (collection.royaltyBps > 0) Text("resale royalty: ${collection.royaltyBps} bps", style = MaterialTheme.typography.bodySmall)
@@ -704,15 +705,16 @@ private fun MarketplaceCollectionsTab(repo: WalletRepository) {
 private fun HistoryScreen(repo: WalletRepository) {
     val state by repo.state.collectAsState()
     Column(modifier = Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState())) {
-        Text("Activity", style = MaterialTheme.typography.titleLarge)
+        HazeScreenTitle("Activity")
+        Spacer(Modifier.height(8.dp))
         Text("Everything this wallet has sent, received, or registered - newest first.")
         Spacer(Modifier.height(16.dp))
         if (state.activity.isEmpty()) {
             Text("No activity yet.")
         } else {
             state.activity.forEach { entry ->
-                Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                    Column(modifier = Modifier.padding(12.dp)) {
+                HazeCard(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), padding = PaddingValues(12.dp)) {
+                    Column {
                         Text(entry.title, style = MaterialTheme.typography.titleSmall)
                         if (entry.detail.isNotBlank()) Text(entry.detail, style = MaterialTheme.typography.bodySmall)
                     }
@@ -735,6 +737,8 @@ private fun MoreScreen(repo: WalletRepository) {
     var sweepMessage by remember { mutableStateOf<String?>(null) }
 
     Column(modifier = Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState())) {
+        HazeScreenTitle("More")
+        Spacer(Modifier.height(24.dp))
         Text("Node", style = MaterialTheme.typography.titleLarge)
         OutlinedTextField(value = nodeUrlField, onValueChange = { nodeUrlField = it }, label = { Text("Node URL") }, modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(8.dp))
@@ -809,8 +813,8 @@ private fun MoreScreen(repo: WalletRepository) {
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Start") }
         } else {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Text(rotateMnemonic!!, modifier = Modifier.padding(16.dp))
+            HazeCard(modifier = Modifier.fillMaxWidth()) {
+                Text(rotateMnemonic!!)
             }
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
