@@ -16,6 +16,10 @@ use haze_crypto::range_proof::RangeProof;
 use haze_crypto::schnorr::Signature;
 use haze_chain::transaction::{Transaction, Input, Output, TxKernel};
 use haze_chain::registry::{RegisterNameOp, TransferNameOp, NAME_REGISTRATION_FEE, validate_name};
+use haze_chain::assets::{MintAssetOp, TransferAssetOp, ASSET_MINT_FEE, validate_asset_id};
+use haze_chain::marketplace::{Listing, cancel_signing_message};
+use haze_chain::collections::{LaunchCollectionOp, MintPhase, allowlist_leaf};
+use haze_chain::merkle::{merkle_root, build_merkle_proof};
 use haze_wallet::keystore::Keystore;
 use haze_wallet::store::{WalletStore, OutputStatus, GENESIS_INDEX};
 use haze_wallet::planner::{self, PlanError};
@@ -75,6 +79,36 @@ pub enum FfiError {
     FeeBelowRegistrationFloor(u64),
     #[error("internal error: rotate-seed transaction unexpectedly produced change - aborting rather than stranding funds under the old seed")]
     UnexpectedRotateChange,
+    #[error("invalid asset id: {0}")]
+    InvalidAssetId(String),
+    #[error("fee must be at least {0}")]
+    FeeBelowAssetMintFloor(u64),
+    #[error("metadata must be at most {0} bytes")]
+    MetadataTooLarge(u64),
+    #[error("failed to serialize mint")]
+    MintSerializationFailed,
+    #[error("invalid mint op json")]
+    InvalidMintOpJson,
+    #[error("failed to serialize transfer")]
+    TransferSerializationFailed,
+    #[error("invalid transaction json")]
+    InvalidTransactionJson,
+    #[error("transaction has no kernels")]
+    TransactionHasNoKernels,
+    #[error("failed to serialize listing")]
+    ListingSerializationFailed,
+    #[error("failed to serialize cancellation")]
+    CancellationSerializationFailed,
+    #[error("royalty_bps must be at most {0}")]
+    RoyaltyTooHigh(u16),
+    #[error("invalid phases_json: {0}")]
+    InvalidPhasesJson(String),
+    #[error("failed to serialize collection launch")]
+    CollectionLaunchSerializationFailed,
+    #[error("target pubkey is not present in the allowlist")]
+    TargetNotInAllowlist,
+    #[error("failed to serialize allowlist publish")]
+    AllowlistSerializationFailed,
 }
 
 fn hex_decode(hex: &str) -> Option<Vec<u8>> {
@@ -809,4 +843,518 @@ pub fn build_transfer_name_request(keystore_bytes: Vec<u8>, name: String, new_ow
 
     let op = TransferNameOp { name, new_owner_pubkey, new_resolves_to, signature };
     serde_json::to_string(&op).map_err(|_| FfiError::SerializationFailed)
+}
+
+// ---------- plain send planning, identity signing, slate reservations ----------
+// These mirror src/wasm.rs exactly but were missing from this mobile surface
+// entirely until now - not a design choice, just drift between the two
+// bindings surfaces that had gone unnoticed.
+
+/// Builds a plain self-planned send (no two-party handshake) - see
+/// wallet::planner::plan_send. The caller must POST `transaction_json`
+/// themselves, then call `commit_send` only on success.
+#[uniffi::export]
+pub fn plan_send(keystore_bytes: Vec<u8>, store_bytes: Vec<u8>, amount: u64, fee: u64) -> Result<FfiSendPlan, FfiError> {
+    let mut keystore = Keystore::from_bytes(&keystore_bytes).ok_or(FfiError::InvalidKeystore)?;
+    let store = WalletStore::from_bytes(&store_bytes).ok_or(FfiError::InvalidStore)?;
+
+    let plan = planner::plan_send(&mut keystore, &store, amount, fee)
+        .map_err(|e| match e {
+            PlanError::InsufficientBalance { have, need } => FfiError::InsufficientBalance { have, need },
+        })?;
+
+    let transaction_json = serde_json::to_string(&plan.transaction).map_err(|_| FfiError::SerializationFailed)?;
+
+    let (dest_index, dest_commitment, dest_value) = plan.dest;
+    let dest = FfiOwnedOutput { index: dest_index, value: dest_value, commitment_hex: dest_commitment.to_hex() };
+    let change = plan.change.map(|(index, commitment, value)| FfiOwnedOutput {
+        index,
+        value,
+        commitment_hex: commitment.to_hex(),
+    });
+    let spent_commitments_hex = plan.spent_commitments.iter().map(|c| c.to_hex()).collect();
+
+    Ok(FfiSendPlan {
+        transaction_json,
+        updated_keystore_bytes: keystore.to_bytes(),
+        dest,
+        change,
+        spent_commitments_hex,
+    })
+}
+
+#[derive(uniffi::Record)]
+pub struct FfiSlateReservation {
+    pub spent_commitments_hex: Vec<String>,
+    pub change: Option<FfiOwnedOutput>,
+}
+
+/// Sender-side: the inputs/change a pending slate has ALREADY selected at
+/// create_send_slate time, before the recipient has even responded - lets a
+/// caller building a SECOND, independent slate off the same wallet store
+/// (e.g. a royalty payment alongside a marketplace payment) eagerly
+/// commit_slate_send this one's reservation first, so the second selection
+/// can't pick the same commitment.
+#[uniffi::export]
+pub fn pending_slate_reservation(pending_slate_bytes: Vec<u8>) -> Result<FfiSlateReservation, FfiError> {
+    let pending: PendingSlate = bincode::deserialize(&pending_slate_bytes).map_err(|_| FfiError::InvalidPendingSlate)?;
+    let spent_commitments_hex = pending.spent_commitments.iter().map(|c| c.to_hex()).collect();
+    let change = pending.change.as_ref().map(|c| FfiOwnedOutput {
+        index: c.index,
+        value: c.value,
+        commitment_hex: c.output.commitment.to_hex(),
+    });
+    Ok(FfiSlateReservation { spent_commitments_hex, change })
+}
+
+/// Signs an arbitrary UTF-8 message with this wallet's identity key - the
+/// same signature scheme the inbox relay (want_transfer/response/etc) and a
+/// "connect wallet" handoff use to prove control of an identity pubkey.
+#[uniffi::export]
+pub fn sign_identity_message(keystore_bytes: Vec<u8>, message: String) -> Result<String, FfiError> {
+    let keystore = Keystore::from_bytes(&keystore_bytes).ok_or(FfiError::InvalidKeystore)?;
+    let signature = Signature::sign(message.as_bytes(), &keystore.identity_key());
+    Ok(signature.to_hex())
+}
+
+/// Verifies a signature produced by sign_identity_message.
+#[uniffi::export]
+pub fn verify_identity_signature(pubkey_hex: String, message: String, signature_hex: String) -> Result<bool, FfiError> {
+    let pubkey = Commitment::from_hex(&pubkey_hex).ok_or_else(|| FfiError::InvalidHex(pubkey_hex.clone()))?;
+    let signature = Signature::from_hex(&signature_hex).ok_or_else(|| FfiError::InvalidHex(signature_hex.clone()))?;
+    Ok(signature.verify(message.as_bytes(), &pubkey))
+}
+
+// ---------- Haze Asset Registry (NFTs) ----------
+// Same shape as the naming registry above - a separate namespace, but
+// reusing the wallet's stable identity key as the asset owner pubkey too.
+// Mint rides a normal fee-paying transaction, same coin-selection as
+// plan_send/build_register_name_request; transfer is signature-only, no
+// fee/UTXO involved.
+
+#[derive(uniffi::Record)]
+pub struct FfiMintAssetResult {
+    /// POST this to /v1/assets/mint.
+    pub op_json: String,
+    pub updated_keystore_bytes: Vec<u8>,
+    pub spent_commitments_hex: Vec<String>,
+    pub change: Option<FfiOwnedOutput>,
+}
+
+/// Builds a MintAssetOp paying `fee` (must be >= ASSET_MINT_FEE) from the
+/// wallet's own confirmed UTXOs, signed with this wallet's stable identity
+/// key. `metadata` is free-form text (recommended shape: JSON
+/// `{title, description, image}`), bounded at MAX_METADATA_BYTES. The
+/// caller must POST `op_json` themselves, then call `commit_mint_asset`
+/// only on success.
+#[uniffi::export]
+pub fn build_mint_asset_request(keystore_bytes: Vec<u8>, store_bytes: Vec<u8>, asset_id: String, metadata: String, fee: u64) -> Result<FfiMintAssetResult, FfiError> {
+    validate_asset_id(&asset_id).map_err(|e| FfiError::InvalidAssetId(format!("{:?}", e)))?;
+    if fee < ASSET_MINT_FEE {
+        return Err(FfiError::FeeBelowAssetMintFloor(ASSET_MINT_FEE));
+    }
+    if metadata.len() > haze_chain::assets::MAX_METADATA_BYTES {
+        return Err(FfiError::MetadataTooLarge(haze_chain::assets::MAX_METADATA_BYTES as u64));
+    }
+
+    let mut keystore = Keystore::from_bytes(&keystore_bytes).ok_or(FfiError::InvalidKeystore)?;
+    let store = WalletStore::from_bytes(&store_bytes).ok_or(FfiError::InvalidStore)?;
+
+    let selected = planner::select_spendable_confirmed_only(&store, fee)
+        .map_err(|e| match e {
+            PlanError::InsufficientBalance { have, need } => FfiError::InsufficientBalance { have, need },
+        })?;
+    let selected_total: u64 = selected.iter().map(|(_, _, value)| value).sum();
+
+    let mut input_blindings: Vec<Scalar> = Vec::new();
+    let mut inputs: Vec<Input> = Vec::new();
+    let mut spent_commitments_hex: Vec<String> = Vec::new();
+    for (index, commitment, _value) in &selected {
+        input_blindings.push(planner::blinding_for(&keystore, *index));
+        inputs.push(Input { commitment: *commitment });
+        spent_commitments_hex.push(commitment.to_hex());
+    }
+
+    let change_value = selected_total - fee;
+    let (outputs, change, change_blinding) = if change_value > 0 {
+        let change_index = keystore.allocate_index();
+        let change_blinding = keystore.derive_blinding(change_index);
+        let change_commitment = Commitment::new(change_value, change_blinding);
+        let change_proof = RangeProof::prove(change_value, &change_blinding);
+        let change_note = haze_crypto::note::seal(&keystore.note_key(), change_index, change_value);
+        let output = Output { commitment: change_commitment, proof: change_proof, note: change_note };
+        let change_info = FfiOwnedOutput { index: change_index, value: change_value, commitment_hex: change_commitment.to_hex() };
+        (vec![output], Some(change_info), change_blinding)
+    } else {
+        (vec![], None, Scalar::zero())
+    };
+
+    let sum_input_blinding: Scalar = input_blindings.iter().sum();
+    let excess_r = sum_input_blinding - change_blinding;
+    let fee_payment = Transaction {
+        inputs,
+        outputs,
+        kernels: vec![TxKernel {
+            excess: Commitment::new(0, excess_r),
+            fee,
+            signature: Signature::sign(&fee.to_le_bytes(), &excess_r),
+        }],
+    };
+
+    let metadata_bytes = metadata.into_bytes();
+
+    let owner_secret = keystore.identity_key();
+    let gens = bulletproofs::PedersenGens::default();
+    let owner_pubkey = Commitment(owner_secret * gens.B_blinding);
+    let signature = MintAssetOp::sign(&asset_id, &metadata_bytes, &None, &None, &None, &owner_secret);
+
+    let op = MintAssetOp {
+        asset_id,
+        owner_pubkey,
+        metadata: metadata_bytes,
+        fee_payment,
+        collection_id: None,
+        phase_index: None,
+        allowlist_proof: None,
+        allowlist_leaf_index: None,
+        required_kernel_excess: None,
+        signature,
+        creator_signature: None,
+    };
+    let op_json = serde_json::to_string(&op).map_err(|_| FfiError::MintSerializationFailed)?;
+
+    Ok(FfiMintAssetResult {
+        op_json,
+        updated_keystore_bytes: keystore.to_bytes(),
+        spent_commitments_hex,
+        change,
+    })
+}
+
+/// Applies a previously-built asset mint's effects (spent inputs, optional
+/// change) to the store. Must only be called after the mint was successfully
+/// queued via POST /v1/assets/mint.
+#[uniffi::export]
+pub fn commit_mint_asset(store_bytes: Vec<u8>, spent_commitments_hex: Vec<String>, change: Option<FfiOwnedOutput>) -> Result<Vec<u8>, FfiError> {
+    let mut store = WalletStore::from_bytes(&store_bytes).ok_or(FfiError::InvalidStore)?;
+
+    for hex in &spent_commitments_hex {
+        let commitment = Commitment::from_hex(hex).ok_or_else(|| FfiError::InvalidCommitment(hex.clone()))?;
+        store.mark_spent(&commitment);
+    }
+
+    if let Some(change) = change {
+        let change_commitment = Commitment::from_hex(&change.commitment_hex)
+            .ok_or_else(|| FfiError::InvalidCommitment(change.commitment_hex.clone()))?;
+        store.add_output(change.index, change.value, change_commitment, OutputStatus::Pending);
+    }
+
+    Ok(store.to_bytes())
+}
+
+/// Builds a TransferAssetOp handing an asset this wallet currently owns to a
+/// new owner's identity pubkey, signed with this wallet's identity key.
+///
+/// `required_kernel_excess_hex`, if provided, makes this the trustless
+/// marketplace atomic-swap primitive: the transfer only becomes valid once a
+/// transaction kernel with that exact excess exists on-chain (see
+/// core::assets::TransferAssetOp::required_kernel_excess and
+/// tx_kernel_excess_hex below). This lets a seller sign a transfer before a
+/// buyer's payment lands, safely - it's cryptographically inert until that
+/// payment is actually on-chain.
+#[uniffi::export]
+pub fn build_transfer_asset_request(keystore_bytes: Vec<u8>, asset_id: String, new_owner_pubkey_hex: String, required_kernel_excess_hex: Option<String>, required_royalty_kernel_excess_hex: Option<String>) -> Result<String, FfiError> {
+    let keystore = Keystore::from_bytes(&keystore_bytes).ok_or(FfiError::InvalidKeystore)?;
+    let new_owner_pubkey = Commitment::from_hex(&new_owner_pubkey_hex).ok_or_else(|| FfiError::InvalidHex(new_owner_pubkey_hex.clone()))?;
+    let required_kernel_excess = match required_kernel_excess_hex {
+        Some(hex) => Some(Commitment::from_hex(&hex).ok_or_else(|| FfiError::InvalidHex(hex.clone()))?),
+        None => None,
+    };
+    let required_royalty_kernel_excess = match required_royalty_kernel_excess_hex {
+        Some(hex) => Some(Commitment::from_hex(&hex).ok_or_else(|| FfiError::InvalidHex(hex.clone()))?),
+        None => None,
+    };
+
+    let current_owner_secret = keystore.identity_key();
+    let signature = TransferAssetOp::sign(&asset_id, &new_owner_pubkey, &required_kernel_excess, &required_royalty_kernel_excess, &current_owner_secret);
+
+    let op = TransferAssetOp { asset_id, new_owner_pubkey, required_kernel_excess, required_royalty_kernel_excess, signature };
+    serde_json::to_string(&op).map_err(|_| FfiError::TransferSerializationFailed)
+}
+
+/// Extracts a finalized (but not necessarily yet broadcast) transaction's
+/// kernel excess as hex - used by a marketplace buyer to learn the exact
+/// value to send the seller in a "want_transfer" inbox message, so the
+/// seller can build a TransferAssetOp conditioned on this specific payment.
+#[uniffi::export]
+pub fn tx_kernel_excess_hex(transaction_json: String) -> Result<String, FfiError> {
+    let tx: Transaction = serde_json::from_str(&transaction_json).map_err(|_| FfiError::InvalidTransactionJson)?;
+    let kernel = tx.kernels.first().ok_or(FfiError::TransactionHasNoKernels)?;
+    Ok(kernel.excess.to_hex())
+}
+
+// ---------- marketplace listings ----------
+
+/// Builds a signed marketplace Listing advertising an asset this wallet
+/// owns for sale at `price`, signed with this wallet's identity key.
+#[uniffi::export]
+pub fn build_create_listing_request(keystore_bytes: Vec<u8>, asset_id: String, price: u64, listed_at: u64) -> Result<String, FfiError> {
+    let keystore = Keystore::from_bytes(&keystore_bytes).ok_or(FfiError::InvalidKeystore)?;
+    let seller_secret = keystore.identity_key();
+    let gens = bulletproofs::PedersenGens::default();
+    let seller_pubkey = Commitment(seller_secret * gens.B_blinding);
+
+    let signature = Listing::sign(&asset_id, &seller_pubkey, price, listed_at, &seller_secret);
+    let listing = Listing { asset_id, seller_pubkey, price, listed_at, signature };
+    serde_json::to_string(&listing).map_err(|_| FfiError::ListingSerializationFailed)
+}
+
+/// Builds a signed cancellation for a listing this wallet previously
+/// created - see POST /v1/marketplace/cancel.
+#[uniffi::export]
+pub fn build_cancel_listing_request(keystore_bytes: Vec<u8>, asset_id: String) -> Result<String, FfiError> {
+    let keystore = Keystore::from_bytes(&keystore_bytes).ok_or(FfiError::InvalidKeystore)?;
+    let seller_secret = keystore.identity_key();
+    let gens = bulletproofs::PedersenGens::default();
+    let seller_pubkey = Commitment(seller_secret * gens.B_blinding);
+
+    let signature = Signature::sign(&cancel_signing_message(&asset_id, &seller_pubkey), &seller_secret);
+
+    #[derive(serde::Serialize)]
+    struct CancelListingRequest {
+        asset_id: String,
+        seller_pubkey: Commitment,
+        signature: Signature,
+    }
+    serde_json::to_string(&CancelListingRequest { asset_id, seller_pubkey, signature }).map_err(|_| FfiError::CancellationSerializationFailed)
+}
+
+// ---------- scheduled multi-phase collection launches ----------
+
+/// Builds a signed LaunchCollectionOp for a scheduled multi-phase NFT drop -
+/// `phases_json` is the JSON serialization of a `Vec<MintPhase>` (each phase
+/// has `name`, `start_time`, `end_time`, `price`, `per_wallet_limit`, and an
+/// optional `allowlist_merkle_root` - for an allowlisted phase, compute the
+/// root client-side first via `compute_allowlist_merkle_proof`'s root_hex).
+/// No fee_payment - launching costs nothing beyond ordinary block-inclusion.
+#[uniffi::export]
+pub fn build_launch_collection_request(keystore_bytes: Vec<u8>, collection_id: String, name: String, symbol: String, metadata: String, phases_json: String, royalty_bps: u16) -> Result<String, FfiError> {
+    if royalty_bps > haze_chain::collections::MAX_ROYALTY_BPS {
+        return Err(FfiError::RoyaltyTooHigh(haze_chain::collections::MAX_ROYALTY_BPS));
+    }
+    let keystore = Keystore::from_bytes(&keystore_bytes).ok_or(FfiError::InvalidKeystore)?;
+    let creator_secret = keystore.identity_key();
+    let gens = bulletproofs::PedersenGens::default();
+    let creator_pubkey = Commitment(creator_secret * gens.B_blinding);
+
+    let phases: Vec<MintPhase> = serde_json::from_str(&phases_json).map_err(|e| FfiError::InvalidPhasesJson(e.to_string()))?;
+    let metadata_bytes = metadata.into_bytes();
+
+    let signature = LaunchCollectionOp::sign(&collection_id, &creator_pubkey, &name, &symbol, &metadata_bytes, &phases, royalty_bps, &creator_secret);
+    let op = LaunchCollectionOp { collection_id, creator_pubkey, name, symbol, metadata: metadata_bytes, phases, royalty_bps, signature };
+    serde_json::to_string(&op).map_err(|_| FfiError::CollectionLaunchSerializationFailed)
+}
+
+/// Sibling to build_mint_asset_request for a mint claimed against a
+/// collection's scheduled phase - takes the same spendable-UTXO-funded
+/// fee_payment path, plus the collection-drop fields.
+/// `allowlist_proof_hex`/`allowlist_leaf_index` are only required when the
+/// target phase actually has an allowlist_merkle_root;
+/// `required_kernel_excess_hex`, if provided, is the payment-conditioning
+/// primitive (same as build_transfer_asset_request's) - typically supplied
+/// by the collection creator's auto-responding wallet, not built by the
+/// minter themselves.
+#[uniffi::export]
+pub fn build_collection_mint_asset_request(
+    keystore_bytes: Vec<u8>, store_bytes: Vec<u8>, asset_id: String, metadata: String, fee: u64,
+    collection_id: String, phase_index: u32,
+    allowlist_proof_hex: Option<Vec<String>>, allowlist_leaf_index: Option<u32>,
+    required_kernel_excess_hex: Option<String>,
+) -> Result<FfiMintAssetResult, FfiError> {
+    validate_asset_id(&asset_id).map_err(|e| FfiError::InvalidAssetId(format!("{:?}", e)))?;
+    if fee < ASSET_MINT_FEE {
+        return Err(FfiError::FeeBelowAssetMintFloor(ASSET_MINT_FEE));
+    }
+    if metadata.len() > haze_chain::assets::MAX_METADATA_BYTES {
+        return Err(FfiError::MetadataTooLarge(haze_chain::assets::MAX_METADATA_BYTES as u64));
+    }
+
+    let mut keystore = Keystore::from_bytes(&keystore_bytes).ok_or(FfiError::InvalidKeystore)?;
+    let store = WalletStore::from_bytes(&store_bytes).ok_or(FfiError::InvalidStore)?;
+
+    let selected = planner::select_spendable_confirmed_only(&store, fee)
+        .map_err(|e| match e {
+            PlanError::InsufficientBalance { have, need } => FfiError::InsufficientBalance { have, need },
+        })?;
+    let selected_total: u64 = selected.iter().map(|(_, _, value)| value).sum();
+
+    let mut input_blindings: Vec<Scalar> = Vec::new();
+    let mut inputs: Vec<Input> = Vec::new();
+    let mut spent_commitments_hex: Vec<String> = Vec::new();
+    for (index, commitment, _value) in &selected {
+        input_blindings.push(planner::blinding_for(&keystore, *index));
+        inputs.push(Input { commitment: *commitment });
+        spent_commitments_hex.push(commitment.to_hex());
+    }
+
+    let change_value = selected_total - fee;
+    let (outputs, change, change_blinding) = if change_value > 0 {
+        let change_index = keystore.allocate_index();
+        let change_blinding = keystore.derive_blinding(change_index);
+        let change_commitment = Commitment::new(change_value, change_blinding);
+        let change_proof = RangeProof::prove(change_value, &change_blinding);
+        let change_note = haze_crypto::note::seal(&keystore.note_key(), change_index, change_value);
+        let output = Output { commitment: change_commitment, proof: change_proof, note: change_note };
+        let change_info = FfiOwnedOutput { index: change_index, value: change_value, commitment_hex: change_commitment.to_hex() };
+        (vec![output], Some(change_info), change_blinding)
+    } else {
+        (vec![], None, Scalar::zero())
+    };
+
+    let sum_input_blinding: Scalar = input_blindings.iter().sum();
+    let excess_r = sum_input_blinding - change_blinding;
+    let fee_payment = Transaction {
+        inputs,
+        outputs,
+        kernels: vec![TxKernel {
+            excess: Commitment::new(0, excess_r),
+            fee,
+            signature: Signature::sign(&fee.to_le_bytes(), &excess_r),
+        }],
+    };
+
+    let metadata_bytes = metadata.into_bytes();
+    let owner_secret = keystore.identity_key();
+    let gens = bulletproofs::PedersenGens::default();
+    let owner_pubkey = Commitment(owner_secret * gens.B_blinding);
+
+    let allowlist_proof = allowlist_proof_hex
+        .map(|hexes| hexes.iter().map(|h| hex_to_32(h)).collect::<Result<Vec<[u8; 32]>, FfiError>>())
+        .transpose()?;
+    let required_kernel_excess = required_kernel_excess_hex
+        .map(|h| Commitment::from_hex(&h).ok_or_else(|| FfiError::InvalidHex(h.clone())))
+        .transpose()?;
+
+    let collection_id_opt = Some(collection_id);
+    let phase_index_opt = Some(phase_index);
+    let signature = MintAssetOp::sign(&asset_id, &metadata_bytes, &collection_id_opt, &phase_index_opt, &required_kernel_excess, &owner_secret);
+
+    let op = MintAssetOp {
+        asset_id,
+        owner_pubkey,
+        metadata: metadata_bytes,
+        fee_payment,
+        collection_id: collection_id_opt,
+        phase_index: phase_index_opt,
+        allowlist_proof,
+        allowlist_leaf_index,
+        required_kernel_excess,
+        signature,
+        // Left unset here - see attach_creator_signature_to_mint below.
+        // Building this op selects/spends this wallet's UTXOs for
+        // fee_payment; that selection can't be redone once the creator's
+        // approval comes back without risking a different (conflicting)
+        // set of inputs, so the creator's signature is patched into this
+        // exact already-built op_json afterward instead of rebuilding it.
+        creator_signature: None,
+    };
+    let op_json = serde_json::to_string(&op).map_err(|_| FfiError::MintSerializationFailed)?;
+
+    Ok(FfiMintAssetResult {
+        op_json,
+        updated_keystore_bytes: keystore.to_bytes(),
+        spent_commitments_hex,
+        change,
+    })
+}
+
+/// Patches a collection creator's approval signature into an already-built
+/// mint op_json (from build_collection_mint_asset_request), without needing
+/// to rebuild it - rebuilding would re-select this wallet's spendable UTXOs
+/// and could pick a different (conflicting) fee_payment.
+#[uniffi::export]
+pub fn attach_creator_signature_to_mint(op_json: String, creator_signature_hex: String) -> Result<String, FfiError> {
+    let mut op: MintAssetOp = serde_json::from_str(&op_json).map_err(|_| FfiError::InvalidMintOpJson)?;
+    op.creator_signature = Some(Signature::from_hex(&creator_signature_hex).ok_or_else(|| FfiError::InvalidHex(creator_signature_hex.clone()))?);
+    serde_json::to_string(&op).map_err(|_| FfiError::MintSerializationFailed)
+}
+
+/// The collection creator's side of the approval handshake - signs approval
+/// for one specific (asset_id, collection_id, phase_index,
+/// required_kernel_excess, owner_pubkey) combination. The creator's own
+/// wallet should independently verify (against the phase's
+/// timing/allowlist/price and the actual on-chain payment) before calling
+/// this - this function only produces the signature, it doesn't validate
+/// anything itself.
+#[uniffi::export]
+pub fn sign_collection_mint_approval(keystore_bytes: Vec<u8>, asset_id: String, collection_id: String, phase_index: u32, required_kernel_excess_hex: String, owner_pubkey_hex: String) -> Result<String, FfiError> {
+    let keystore = Keystore::from_bytes(&keystore_bytes).ok_or(FfiError::InvalidKeystore)?;
+    let creator_secret = keystore.identity_key();
+    let required_kernel_excess = Commitment::from_hex(&required_kernel_excess_hex).ok_or_else(|| FfiError::InvalidHex(required_kernel_excess_hex.clone()))?;
+    let owner_pubkey = Commitment::from_hex(&owner_pubkey_hex).ok_or_else(|| FfiError::InvalidHex(owner_pubkey_hex.clone()))?;
+    let signature = MintAssetOp::sign_collection_approval(&asset_id, &collection_id, phase_index, &required_kernel_excess, &owner_pubkey, &creator_secret);
+    Ok(signature.to_hex())
+}
+
+fn hex_to_32(hex: &str) -> Result<[u8; 32], FfiError> {
+    if hex.len() != 64 {
+        return Err(FfiError::InvalidHex(hex.to_string()));
+    }
+    let mut bytes = [0u8; 32];
+    for i in 0..32 {
+        bytes[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).map_err(|_| FfiError::InvalidHex(hex.to_string()))?;
+    }
+    Ok(bytes)
+}
+
+#[derive(uniffi::Record)]
+pub struct FfiMerkleProofResult {
+    pub proof_hex: Vec<String>,
+    pub leaf_index: u32,
+    pub root_hex: String,
+}
+
+/// Computes `target_pubkey_hex`'s Merkle inclusion proof against the full
+/// plaintext allowlist `pubkeys_hex` (fetched from the off-chain allowlist
+/// endpoint) - lets a minter get everything build_collection_mint_asset_request
+/// needs without re-deriving the tree by hand. Returns an error if
+/// target_pubkey_hex isn't actually present in the list.
+#[uniffi::export]
+pub fn compute_allowlist_merkle_proof(pubkeys_hex: Vec<String>, target_pubkey_hex: String) -> Result<FfiMerkleProofResult, FfiError> {
+    let pubkeys: Vec<Commitment> = pubkeys_hex.iter()
+        .map(|h| Commitment::from_hex(h).ok_or_else(|| FfiError::InvalidHex(h.clone())))
+        .collect::<Result<Vec<_>, _>>()?;
+    let target = Commitment::from_hex(&target_pubkey_hex).ok_or_else(|| FfiError::InvalidHex(target_pubkey_hex.clone()))?;
+
+    let leaf_index = pubkeys.iter().position(|p| *p == target).ok_or(FfiError::TargetNotInAllowlist)?;
+
+    let leaves: Vec<[u8; 32]> = pubkeys.iter().map(allowlist_leaf).collect();
+    let root = merkle_root(&leaves);
+    let proof = build_merkle_proof(&leaves, leaf_index);
+
+    Ok(FfiMerkleProofResult {
+        proof_hex: proof.iter().map(|p| p.iter().map(|b| format!("{:02x}", b)).collect()).collect(),
+        leaf_index: leaf_index as u32,
+        root_hex: root.iter().map(|b| format!("{:02x}", b)).collect(),
+    })
+}
+
+/// Signs an allowlist publish so the off-chain, best-effort allowlist gossip
+/// can be cross-checked against this collection's registered creator_pubkey
+/// server-side. `pubkeys_hex` is the full plaintext list being published
+/// for this collection/phase.
+#[uniffi::export]
+pub fn sign_allowlist_publish(keystore_bytes: Vec<u8>, collection_id: String, phase_index: u32, pubkeys_hex: Vec<String>, published_at: u64) -> Result<String, FfiError> {
+    let keystore = Keystore::from_bytes(&keystore_bytes).ok_or(FfiError::InvalidKeystore)?;
+    let creator_secret = keystore.identity_key();
+    let gens = bulletproofs::PedersenGens::default();
+    let creator_pubkey = Commitment(creator_secret * gens.B_blinding);
+
+    let pubkeys: Vec<Commitment> = pubkeys_hex.iter()
+        .map(|h| Commitment::from_hex(h).ok_or_else(|| FfiError::InvalidHex(h.clone())))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let signature = haze_chain::allowlist::AllowlistEntry::sign(&collection_id, phase_index, &pubkeys, published_at, &creator_secret);
+    let entry = haze_chain::allowlist::AllowlistEntry { collection_id, phase_index, creator_pubkey, pubkeys, published_at, signature };
+    serde_json::to_string(&entry).map_err(|_| FfiError::AllowlistSerializationFailed)
 }

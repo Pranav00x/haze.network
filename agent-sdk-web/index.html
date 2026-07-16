@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Haze Agent SDK</title>
+<meta name="description" content="Private, agent-to-agent payments on Haze. A TypeScript SDK for AI agents that need to pay and get paid without leaking their spend history to every counterparty.">
+<link rel="icon" type="image/svg+xml" href="assets/logo-icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b0b0b;
+    --ink: #f0f0f0;
+    --ink-dim: #999999;
+    --ink-faint: #666666;
+    --line: #2a2a2a;
+    --amber: #f0a04b;
+    --font: "JetBrains Mono", ui-monospace, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font);
+    margin: 0;
+    min-height: 100vh;
+    line-height: 1.65;
+    text-transform: lowercase;
+  }
+  a { color: var(--amber); text-decoration: underline; text-underline-offset: 3px; }
+  a:hover { color: var(--ink); }
+  ::selection { background: var(--ink); color: var(--bg); }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 0 24px; }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 28px 24px;
+    max-width: 760px;
+    margin: 0 auto;
+  }
+  .brand { display: flex; align-items: center; gap: 8px; text-decoration: none; }
+  .brand-mark { width: 20px; height: 20px; display: block; flex-shrink: 0; }
+  .brand-name { font-weight: 600; font-size: 15px; color: var(--ink); text-decoration: none; }
+  nav.topnav { display: flex; align-items: center; gap: 20px; }
+  nav.topnav a { font-size: 13px; }
+
+  main { padding: clamp(24px, 6vw, 56px) 0 clamp(56px, 8vw, 88px); }
+  .eyebrow { font-size: 13px; color: var(--ink-dim); margin: 0 0 20px; }
+  h1 {
+    font-weight: 600;
+    font-size: clamp(24px, 3.6vw, 36px);
+    letter-spacing: -0.01em;
+    margin: 0 0 20px;
+    text-transform: none;
+  }
+  main p { font-size: 14.5px; line-height: 1.85; color: var(--ink-dim); margin: 0 0 20px; max-width: 68ch; }
+  main p code { text-transform: none; }
+
+  hr { border: none; border-top: 1px solid var(--line); margin: 40px 0; }
+
+  h2 { font-weight: 600; font-size: 17px; margin: 0 0 14px; color: var(--ink); }
+  .section { margin-bottom: 40px; }
+
+  pre {
+    background: #111111;
+    border: 1px solid var(--line);
+    padding: 18px 20px;
+    overflow-x: auto;
+    font-size: 12.5px;
+    line-height: 1.7;
+    margin: 0 0 20px;
+    text-transform: none;
+  }
+  code { font-family: var(--font); color: var(--ink); text-transform: none; }
+  .cm { color: var(--ink-faint); }
+  .kw { color: var(--amber); }
+  .str { color: #8fbf7f; }
+
+  .api-list { margin: 0; padding: 0; list-style: none; }
+  .api-list li { padding: 10px 0; border-top: 1px solid var(--line); font-size: 13.5px; color: var(--ink-dim); }
+  .api-list li:last-child { border-bottom: 1px solid var(--line); }
+  .api-list code { color: var(--amber); }
+
+  footer { border-top: 1px solid var(--line); padding: 24px 0 40px; }
+  .footer-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-faint); }
+  .footer-links { display: flex; gap: 18px; flex-wrap: wrap; }
+
+  @media (max-width: 480px) {
+    header { flex-wrap: wrap; gap: 12px 20px; }
+  }
+</style>
+</head>
+<body>
+
+  <header>
+    <a class="brand" href="https://hazeprotocol.xyz">
+      <img class="brand-mark" src="assets/logo-icon.svg" alt="Haze">
+      <span class="brand-name">haze</span>
+    </a>
+    <nav class="topnav">
+      <a href="https://github.com/Pranav00x/haze/tree/main/agent-sdk" target="_blank" rel="noopener">source</a>
+      <a href="https://hazeprotocol.xyz">manifesto</a>
+      <a href="https://wallet.hazeprotocol.xyz">wallet</a>
+    </nav>
+  </header>
+
+  <main class="wrap">
+    <p class="eyebrow">@haze/agent-sdk — devnet</p>
+    <h1>Payment rails for AI agents, not humans clicking buttons.</h1>
+    <p>An AI agent that pays another agent (or pays for API access, or splits a cost) on a transparent chain exposes its entire counterparty and spending history to everyone it transacts with — every competitor, every customer, every other agent watching the chain. Haze is a Mimblewimble-style chain: balances and transaction graphs are never public on-chain by design. This SDK wraps that in an API shaped for a long-running agent process instead of a wallet UI.</p>
+
+    <div class="section">
+      <pre><code><span class="kw">import</span> { HazeAgent } <span class="kw">from</span> <span class="str">"@haze/agent-sdk"</span>;
+
+<span class="kw">const</span> { agent, mnemonic } = <span class="kw">await</span> HazeAgent.create({ nodeUrl: <span class="str">"https://your-node"</span> });
+<span class="cm">// persist agent.export() somewhere durable - the mnemonic is only
+// ever available right here, at creation time.</span>
+
+agent.listen(); <span class="cm">// starts the background poll loop - required for both
+                // sending and receiving to actually complete</span>
+
+agent.on(<span class="str">"payment"</span>, (p) => {
+  console.log(<span class="str">`received ${p.value} from ${p.fromPubkeyHex}`</span>);
+});
+
+<span class="kw">const</span> txHash = <span class="kw">await</span> agent.pay(<span class="str">"other-agent.haze"</span>, 1_000n);</code></pre>
+    </div>
+
+    <hr>
+
+    <div class="section">
+      <h2>why a poll loop, not webhooks</h2>
+      <p>Haze has no smart contracts and no push mechanism — agents participate in a two-party handshake over a plain HTTP inbox relay, the same protocol the web and Android wallets already use. <code>listen()</code> runs that handshake for you: it accepts incoming payment requests automatically (no human clicks "approve"), and completes your own outgoing payments once the recipient's agent has responded. Both sides need <code>listen()</code> running for a payment between them to settle.</p>
+    </div>
+
+    <div class="section">
+      <h2>api</h2>
+      <ul class="api-list">
+        <li><code>HazeAgent.create(opts)</code> — new identity, returns <code>{ agent, mnemonic }</code>.</li>
+        <li><code>HazeAgent.fromMnemonic(mnemonic, opts)</code> — restore from a 12-word phrase.</li>
+        <li><code>HazeAgent.fromExport(state, opts)</code> — resume a long-running process from <code>agent.export()</code> bytes.</li>
+        <li><code>agent.pubkeyHex</code> — this agent's public identity.</li>
+        <li><code>agent.claimName(name)</code> — optional free <code>.haze</code> name, so other agents can pay <code>"you.haze"</code> instead of a raw pubkey.</li>
+        <li><code>agent.listen()</code> / <code>agent.stopListening()</code>.</li>
+        <li><code>agent.pay(to, amount, { timeoutMs?, fee? })</code> — resolves with the kernel excess hash once accepted; rejects on timeout.</li>
+        <li><code>agent.refreshBalance()</code> — <code>{ confirmed, pending }</code>.</li>
+        <li><code>agent.rotateSeed()</code> — generates a fresh identity and sweeps the entire confirmed balance to it in one transaction.</li>
+        <li><code>agent.on("payment", …)</code> / <code>agent.on("error", …)</code>.</li>
+      </ul>
+    </div>
+
+    <div class="section">
+      <h2>install</h2>
+      <p>Not on npm yet — clone the repo and build from source:</p>
+      <pre><code>git clone https://github.com/Pranav00x/haze
+<span class="kw">cd</span> haze/agent-sdk
+npm install
+npm run build</code></pre>
+    </div>
+
+    <div class="section">
+      <h2>status</h2>
+      <p>This talks to whatever node you point <code>nodeUrl</code> at. Haze is public testnet software — HAZE has no monetary value, and the chain may still be reset. The full protocol (mint, listing, real payment, adversarial rejection paths) is exercised end to end in <a href="https://github.com/Pranav00x/haze/blob/main/agent-sdk/examples/two-agents.ts" target="_blank" rel="noopener">examples/two-agents.ts</a> against a real devnet node — not a mock.</p>
+    </div>
+  </main>
+
+  <footer>
+    <div class="wrap footer-row">
+      <span>haze agent sdk — public testnet, no monetary value</span>
+      <div class="footer-links">
+        <a href="https://github.com/Pranav00x/haze/tree/main/agent-sdk" target="_blank" rel="noopener">github</a>
+        <a href="https://github.com/Pranav00x/haze/issues" target="_blank" rel="noopener">issues</a>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
