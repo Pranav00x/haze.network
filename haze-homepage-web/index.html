@@ -23,6 +23,7 @@
   }
 
   * { box-sizing: border-box; }
+  html { background: var(--bg); }
   body {
     background: var(--bg);
     color: var(--ink);
@@ -31,32 +32,77 @@
     min-height: 100vh;
     line-height: 1.65;
     text-transform: lowercase;
+    position: relative;
+    overflow-x: hidden;
   }
+
+  /* the liquid: a couple of soft, blurred color blobs sitting behind
+     everything - every glass panel's backdrop-filter picks these up,
+     which is what actually makes them read as glass instead of just
+     translucent grey. */
+  body::before, body::after {
+    content: "";
+    position: fixed;
+    border-radius: 50%;
+    filter: blur(90px);
+    z-index: -1;
+    pointer-events: none;
+  }
+  body::before {
+    width: 520px; height: 520px;
+    top: -180px; left: -120px;
+    background: radial-gradient(circle, color-mix(in srgb, var(--amber) 55%, transparent), transparent 70%);
+    opacity: 0.5;
+  }
+  body::after {
+    width: 460px; height: 460px;
+    top: 20%; right: -160px;
+    background: radial-gradient(circle, color-mix(in srgb, #6f7bf0 55%, transparent), transparent 70%);
+    opacity: 0.4;
+  }
+
   a { color: var(--amber); text-decoration: underline; text-underline-offset: 3px; }
   a:hover { color: var(--ink); }
   ::selection { background: var(--ink); color: var(--bg); }
   .wrap { max-width: 860px; margin: 0 auto; padding: 0 24px; }
+
+  .glass {
+    background: color-mix(in srgb, var(--ink) 6%, transparent);
+    backdrop-filter: blur(22px) saturate(160%);
+    -webkit-backdrop-filter: blur(22px) saturate(160%);
+    border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 10%, transparent), 0 8px 24px rgba(0, 0, 0, 0.25);
+  }
 
   header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 16px;
-    padding: 28px 24px;
+    padding: 12px 22px;
     max-width: 860px;
-    margin: 0 auto;
+    margin: 20px auto;
     flex-wrap: wrap;
+    border-radius: 999px;
+    position: sticky;
+    top: 16px;
+    z-index: 10;
   }
   .brand { display: flex; align-items: center; gap: 8px; text-decoration: none; }
   .brand-mark { width: 20px; height: 20px; display: block; flex-shrink: 0; }
   .brand-name { font-weight: 600; font-size: 15px; color: var(--ink); text-decoration: none; }
-  nav.topnav { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
-  nav.topnav a { font-size: 13px; text-decoration: none; color: var(--ink-dim); }
-  nav.topnav a:hover { color: var(--ink); }
-  nav.topnav a.wallet-link { color: var(--amber); text-decoration: underline; text-underline-offset: 3px; }
+  nav.topnav { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  nav.topnav a { font-size: 13px; text-decoration: none; color: var(--ink-dim); padding: 8px 14px; border-radius: 999px; }
+  nav.topnav a:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 8%, transparent); }
+  nav.topnav a.wallet-link { color: #1a1200; background: var(--amber); font-weight: 600; text-decoration: none; }
+  nav.topnav a.wallet-link:hover { color: #1a1200; background: var(--ink); }
 
   main { padding: clamp(24px, 6vw, 56px) 0 clamp(56px, 8vw, 88px); }
-  .eyebrow { font-size: 13px; color: var(--ink-dim); margin: 0 0 20px; display: flex; align-items: center; gap: 8px; }
+  .eyebrow {
+    font-size: 13px; color: var(--ink-dim); margin: 0 0 20px;
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 14px; border-radius: 999px;
+  }
   .pulse-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); display: inline-block; }
 
   h1 {
@@ -70,20 +116,25 @@
   main p { font-size: 14.5px; line-height: 1.85; color: var(--ink-dim); margin: 0 0 20px; max-width: 66ch; }
 
   .ctas { display: flex; gap: 12px; flex-wrap: wrap; margin: 0 0 32px; }
-  .btn { display: inline-block; padding: 10px 18px; font-family: var(--font); font-size: 13.5px; border-radius: 3px; text-decoration: none; }
-  .btn-primary { background: var(--amber); color: #1a1200; font-weight: 600; }
+  .btn {
+    display: inline-block; padding: 12px 24px; font-family: var(--font);
+    font-size: 13.5px; border-radius: 999px; text-decoration: none;
+    transition: transform 0.15s ease;
+  }
+  .btn:hover { transform: translateY(-1px); }
+  .btn-primary { background: var(--amber); color: #1a1200; font-weight: 600; box-shadow: 0 8px 20px color-mix(in srgb, var(--amber) 35%, transparent); }
   .btn-primary:hover { background: var(--ink); }
-  .btn-ghost { border: 1px solid var(--line); color: var(--ink-dim); }
-  .btn-ghost:hover { color: var(--ink); border-color: var(--ink-faint); }
+  .btn-ghost { color: var(--ink-dim); }
+  .btn-ghost:hover { color: var(--ink); }
+  .btn-ghost.glass:hover { background: color-mix(in srgb, var(--ink) 10%, transparent); }
 
   .stats {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    border: 1px solid var(--line);
+    gap: 10px;
     margin-bottom: 8px;
   }
-  .stat-cell { padding: 14px 16px; border-right: 1px solid var(--line); overflow: hidden; }
-  .stat-cell:last-child { border-right: none; }
+  .stat-cell { padding: 16px 18px; overflow: hidden; border-radius: 20px; }
   .st-label { font-size: 11px; color: var(--ink-faint); margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
   .st-value { font-size: 15px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .node-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-faint); display: inline-block; flex-shrink: 0; }
@@ -98,34 +149,34 @@
   .mech-grid, .tech-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 1px;
-    background: var(--line);
-    border: 1px solid var(--line);
+    gap: 10px;
     margin-top: 16px;
   }
-  .mech-card, .tech-cell { background: var(--bg); padding: 18px; }
+  .mech-card, .tech-cell { padding: 20px; border-radius: 20px; }
   .mc-num { font-size: 11px; color: var(--ink-faint); margin-bottom: 8px; }
   .mech-card h3 { font-size: 14px; margin: 0 0 8px; color: var(--ink); font-weight: 600; }
   .mech-card p, .tech-cell p { font-size: 13px; color: var(--ink-dim); margin: 0; line-height: 1.7; }
   .tc-label { font-size: 12px; color: var(--amber); margin-bottom: 8px; }
 
   .target-pills { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
-  .target-pill { font-size: 11px; border: 1px solid var(--line); color: var(--ink-dim); padding: 3px 8px; border-radius: 3px; }
+  .target-pill { font-size: 11px; color: var(--ink-dim); padding: 5px 12px; border-radius: 999px; }
 
-  footer { border-top: 1px solid var(--line); padding: 24px 0 40px; }
+  footer { padding: 24px 0 40px; }
+  .footer-inner { border-radius: 24px; padding: 20px 24px; }
   .footer-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-faint); }
-  .footer-links { display: flex; gap: 18px; flex-wrap: wrap; }
+  .footer-links { display: flex; gap: 4px; flex-wrap: wrap; }
+  .footer-links a { padding: 6px 12px; border-radius: 999px; text-decoration: none; }
+  .footer-links a:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
   .footer-note { font-size: 12px; color: var(--ink-faint); margin-top: 16px; max-width: 66ch; }
 
   @media (max-width: 560px) {
     .stats { grid-template-columns: repeat(2, 1fr); }
-    .stat-cell:nth-child(2) { border-right: none; }
   }
 </style>
 </head>
 <body>
 
-  <header>
+  <header class="glass">
     <a class="brand" href="#top">
       <img class="brand-mark" src="assets/logo-icon.svg" alt="haze">
       <span class="brand-name">haze</span>
@@ -140,29 +191,29 @@
   </header>
 
   <main class="wrap" id="top">
-    <div class="eyebrow"><span class="pulse-dot"></span> public testnet — live network</div>
+    <div class="eyebrow glass"><span class="pulse-dot"></span> public testnet — live network</div>
     <h1>a ledger that doesn't <span class="grad">remember</span> who paid whom</h1>
     <p>a mimblewimble l1. no accounts, no address books, no smart contracts. an output is a commitment, a proof, and a note for the owner to decrypt — nothing more is stored on chain, and nothing more is needed.</p>
 
     <div class="ctas">
       <a class="btn btn-primary" href="https://wallet.hazeprotocol.xyz" target="_blank" rel="noopener">open the wallet →</a>
-      <a class="btn btn-ghost" href="#protocol">read the protocol</a>
+      <a class="btn btn-ghost glass" href="#protocol">read the protocol</a>
     </div>
 
     <div class="stats" id="stats">
-      <div class="stat-cell">
+      <div class="stat-cell glass">
         <div class="st-label"><span class="node-dot" id="node-dot"></span> node</div>
         <div class="st-value" id="st-tip">—</div>
       </div>
-      <div class="stat-cell">
+      <div class="stat-cell glass">
         <div class="st-label">block height</div>
         <div class="st-value" id="st-height">—</div>
       </div>
-      <div class="stat-cell">
+      <div class="stat-cell glass">
         <div class="st-label">active validators</div>
         <div class="st-value" id="st-validators">—</div>
       </div>
-      <div class="stat-cell">
+      <div class="stat-cell glass">
         <div class="st-label">mempool</div>
         <div class="st-value" id="st-mempool">—</div>
       </div>
@@ -184,32 +235,32 @@
       <h2>what's actually running</h2>
       <p>this is what's live on testnet right now, not a roadmap.</p>
       <div class="mech-grid">
-        <div class="mech-card">
+        <div class="mech-card glass">
           <div class="mc-num">01</div>
           <h3>gossip that hides the source</h3>
           <p>transactions route through dandelion++ before they're broadcast, so which node first saw a payment isn't easy to tell.</p>
         </div>
-        <div class="mech-card">
+        <div class="mech-card glass">
           <div class="mc-num">02</div>
           <h3>block proposals don't stall</h3>
           <p>if the main proposer misses its slot, any active validator can step in and keep the chain moving.</p>
         </div>
-        <div class="mech-card">
+        <div class="mech-card glass">
           <div class="mc-num">03</div>
           <h3>validator set needs no trust</h3>
           <p>stake registration lives on chain. every node derives the same active validator set independently.</p>
         </div>
-        <div class="mech-card">
+        <div class="mech-card glass">
           <div class="mc-num">04</div>
           <h3>rollbacks are clean</h3>
           <p>a heavier fork shows up, the chain unwinds and replays state without special-casing anything.</p>
         </div>
-        <div class="mech-card">
+        <div class="mech-card glass">
           <div class="mc-num">05</div>
           <h3>fees are predictable</h3>
           <p>you pay for the bytes your transaction takes up. no spikes because the network got busy.</p>
         </div>
-        <div class="mech-card">
+        <div class="mech-card glass">
           <div class="mc-num">06</div>
           <h3>talks tcp and websockets</h3>
           <p>nodes batch-sync aggressively, so bringing a new peer online doesn't take long.</p>
@@ -224,23 +275,23 @@
       <h2>one codebase, every target</h2>
       <p>the core has no native dependencies. the same rust compiles to wasm, android, ios, and desktop.</p>
       <div class="tech-grid">
-        <div class="tech-cell">
+        <div class="tech-cell glass">
           <div class="tc-label">crypto</div>
           <p>ristretto255, bulletproofs, merlin transcripts. no pairing-based crypto anywhere in the stack.</p>
         </div>
-        <div class="tech-cell">
+        <div class="tech-cell glass">
           <div class="tc-label">supply</div>
           <p>hard capped at 21 billion. most of it enters through block rewards that halve every four years.</p>
         </div>
-        <div class="tech-cell">
+        <div class="tech-cell glass">
           <div class="tc-label">build targets</div>
           <p>ci builds for:</p>
           <div class="target-pills">
-            <span class="target-pill">linux-x86_64</span>
-            <span class="target-pill">windows-msvc</span>
-            <span class="target-pill">macos-arm64</span>
-            <span class="target-pill">android</span>
-            <span class="target-pill">wasm32</span>
+            <span class="target-pill glass">linux-x86_64</span>
+            <span class="target-pill glass">windows-msvc</span>
+            <span class="target-pill glass">macos-arm64</span>
+            <span class="target-pill glass">android</span>
+            <span class="target-pill glass">wasm32</span>
           </div>
         </div>
       </div>
@@ -249,16 +300,18 @@
 
   <footer>
     <div class="wrap">
-      <div class="footer-row">
-        <span>haze — public testnet, no monetary value</span>
-        <div class="footer-links">
-          <a href="Haze_Whitepaper.pdf" target="_blank" rel="noopener">whitepaper</a>
-          <a href="https://github.com/Pranav00x/haze" target="_blank" rel="noopener">github</a>
-          <a href="https://github.com/Pranav00x/haze/releases" target="_blank" rel="noopener">releases</a>
-          <a href="mailto:pranav@hazeprotocol.xyz">contact</a>
+      <div class="footer-inner glass">
+        <div class="footer-row">
+          <span>haze — public testnet, no monetary value</span>
+          <div class="footer-links">
+            <a href="Haze_Whitepaper.pdf" target="_blank" rel="noopener">whitepaper</a>
+            <a href="https://github.com/Pranav00x/haze" target="_blank" rel="noopener">github</a>
+            <a href="https://github.com/Pranav00x/haze/releases" target="_blank" rel="noopener">releases</a>
+            <a href="mailto:pranav@hazeprotocol.xyz">contact</a>
+          </div>
         </div>
+        <div class="footer-note">this is public testnet software. haze has no monetary value, and the chain may still be reset if a serious bug is found — don't treat any balance here as real.</div>
       </div>
-      <div class="footer-note">this is public testnet software. haze has no monetary value, and the chain may still be reset if a serious bug is found — don't treat any balance here as real.</div>
     </div>
   </footer>
 
