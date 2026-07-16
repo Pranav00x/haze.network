@@ -1,14 +1,286 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>haze-website</title>
-    <script type="module" crossorigin src="/assets/index-CkvpOoTv.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-CJVhCLCb.css">
-  </head>
-  <body>
-    <div id="root"></div>
-  </body>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>haze</title>
+<meta name="description" content="a mimblewimble l1. no accounts, no address books, no smart contracts.">
+<link rel="icon" type="image/svg+xml" href="assets/logo-icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b0b0b;
+    --ink: #f0f0f0;
+    --ink-dim: #999999;
+    --ink-faint: #666666;
+    --line: #2a2a2a;
+    --amber: #f0a04b;
+    --ok: #6fbf73;
+    --font: "JetBrains Mono", ui-monospace, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font);
+    margin: 0;
+    min-height: 100vh;
+    line-height: 1.65;
+    text-transform: lowercase;
+  }
+  a { color: var(--amber); text-decoration: underline; text-underline-offset: 3px; }
+  a:hover { color: var(--ink); }
+  ::selection { background: var(--ink); color: var(--bg); }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 0 24px; }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 28px 24px;
+    max-width: 860px;
+    margin: 0 auto;
+    flex-wrap: wrap;
+  }
+  .brand { display: flex; align-items: center; gap: 8px; text-decoration: none; }
+  .brand-mark { width: 20px; height: 20px; display: block; flex-shrink: 0; }
+  .brand-name { font-weight: 600; font-size: 15px; color: var(--ink); text-decoration: none; }
+  nav.topnav { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+  nav.topnav a { font-size: 13px; text-decoration: none; color: var(--ink-dim); }
+  nav.topnav a:hover { color: var(--ink); }
+  nav.topnav a.wallet-link { color: var(--amber); text-decoration: underline; text-underline-offset: 3px; }
+
+  main { padding: clamp(24px, 6vw, 56px) 0 clamp(56px, 8vw, 88px); }
+  .eyebrow { font-size: 13px; color: var(--ink-dim); margin: 0 0 20px; display: flex; align-items: center; gap: 8px; }
+  .pulse-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); display: inline-block; }
+
+  h1 {
+    font-weight: 600;
+    font-size: clamp(26px, 4.2vw, 42px);
+    letter-spacing: -0.01em;
+    margin: 0 0 20px;
+    line-height: 1.2;
+  }
+  h1 .grad { color: var(--amber); }
+  main p { font-size: 14.5px; line-height: 1.85; color: var(--ink-dim); margin: 0 0 20px; max-width: 66ch; }
+
+  .ctas { display: flex; gap: 12px; flex-wrap: wrap; margin: 0 0 32px; }
+  .btn { display: inline-block; padding: 10px 18px; font-family: var(--font); font-size: 13.5px; border-radius: 3px; text-decoration: none; }
+  .btn-primary { background: var(--amber); color: #1a1200; font-weight: 600; }
+  .btn-primary:hover { background: var(--ink); }
+  .btn-ghost { border: 1px solid var(--line); color: var(--ink-dim); }
+  .btn-ghost:hover { color: var(--ink); border-color: var(--ink-faint); }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    border: 1px solid var(--line);
+    margin-bottom: 8px;
+  }
+  .stat-cell { padding: 14px 16px; border-right: 1px solid var(--line); overflow: hidden; }
+  .stat-cell:last-child { border-right: none; }
+  .st-label { font-size: 11px; color: var(--ink-faint); margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+  .st-value { font-size: 15px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .node-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-faint); display: inline-block; flex-shrink: 0; }
+  .node-dot.online { background: var(--ok); }
+
+  hr { border: none; border-top: 1px solid var(--line); margin: 48px 0; }
+
+  .section-eyebrow { font-size: 12px; color: var(--ink-faint); margin: 0 0 8px; }
+  h2 { font-weight: 600; font-size: 19px; margin: 0 0 14px; color: var(--ink); }
+  .section { margin-bottom: 8px; }
+
+  .mech-grid, .tech-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    margin-top: 16px;
+  }
+  .mech-card, .tech-cell { background: var(--bg); padding: 18px; }
+  .mc-num { font-size: 11px; color: var(--ink-faint); margin-bottom: 8px; }
+  .mech-card h3 { font-size: 14px; margin: 0 0 8px; color: var(--ink); font-weight: 600; }
+  .mech-card p, .tech-cell p { font-size: 13px; color: var(--ink-dim); margin: 0; line-height: 1.7; }
+  .tc-label { font-size: 12px; color: var(--amber); margin-bottom: 8px; }
+
+  .target-pills { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .target-pill { font-size: 11px; border: 1px solid var(--line); color: var(--ink-dim); padding: 3px 8px; border-radius: 3px; }
+
+  footer { border-top: 1px solid var(--line); padding: 24px 0 40px; }
+  .footer-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-faint); }
+  .footer-links { display: flex; gap: 18px; flex-wrap: wrap; }
+  .footer-note { font-size: 12px; color: var(--ink-faint); margin-top: 16px; max-width: 66ch; }
+
+  @media (max-width: 560px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .stat-cell:nth-child(2) { border-right: none; }
+  }
+</style>
+</head>
+<body>
+
+  <header>
+    <a class="brand" href="#top">
+      <img class="brand-mark" src="assets/logo-icon.svg" alt="haze">
+      <span class="brand-name">haze</span>
+    </a>
+    <nav class="topnav">
+      <a href="#protocol">protocol</a>
+      <a href="#mechanics">mechanics</a>
+      <a href="#tech">tech</a>
+      <a href="https://github.com/Pranav00x/haze" target="_blank" rel="noopener">github</a>
+      <a class="wallet-link" href="https://wallet.hazeprotocol.xyz" target="_blank" rel="noopener">open wallet</a>
+    </nav>
+  </header>
+
+  <main class="wrap" id="top">
+    <div class="eyebrow"><span class="pulse-dot"></span> public testnet — live network</div>
+    <h1>a ledger that doesn't <span class="grad">remember</span> who paid whom</h1>
+    <p>a mimblewimble l1. no accounts, no address books, no smart contracts. an output is a commitment, a proof, and a note for the owner to decrypt — nothing more is stored on chain, and nothing more is needed.</p>
+
+    <div class="ctas">
+      <a class="btn btn-primary" href="https://wallet.hazeprotocol.xyz" target="_blank" rel="noopener">open the wallet →</a>
+      <a class="btn btn-ghost" href="#protocol">read the protocol</a>
+    </div>
+
+    <div class="stats" id="stats">
+      <div class="stat-cell">
+        <div class="st-label"><span class="node-dot" id="node-dot"></span> node</div>
+        <div class="st-value" id="st-tip">—</div>
+      </div>
+      <div class="stat-cell">
+        <div class="st-label">block height</div>
+        <div class="st-value" id="st-height">—</div>
+      </div>
+      <div class="stat-cell">
+        <div class="st-label">active validators</div>
+        <div class="st-value" id="st-validators">—</div>
+      </div>
+      <div class="stat-cell">
+        <div class="st-label">mempool</div>
+        <div class="st-value" id="st-mempool">—</div>
+      </div>
+    </div>
+
+    <hr>
+
+    <div class="section" id="protocol">
+      <div class="section-eyebrow">state model</div>
+      <h2>no accounts. no balances. no transaction graph.</h2>
+      <p>an output is a pedersen commitment hiding the amount, a bulletproof showing the math holds, and a sealed note for the owner to read later. a block is valid if inputs minus outputs plus fees equals zero — nothing to update, nothing to route.</p>
+      <p>spent inputs and outputs cut through each other before they ever land on chain, so history stays small instead of growing forever.</p>
+    </div>
+
+    <hr>
+
+    <div class="section" id="mechanics">
+      <div class="section-eyebrow">shipped, not planned</div>
+      <h2>what's actually running</h2>
+      <p>this is what's live on testnet right now, not a roadmap.</p>
+      <div class="mech-grid">
+        <div class="mech-card">
+          <div class="mc-num">01</div>
+          <h3>gossip that hides the source</h3>
+          <p>transactions route through dandelion++ before they're broadcast, so which node first saw a payment isn't easy to tell.</p>
+        </div>
+        <div class="mech-card">
+          <div class="mc-num">02</div>
+          <h3>block proposals don't stall</h3>
+          <p>if the main proposer misses its slot, any active validator can step in and keep the chain moving.</p>
+        </div>
+        <div class="mech-card">
+          <div class="mc-num">03</div>
+          <h3>validator set needs no trust</h3>
+          <p>stake registration lives on chain. every node derives the same active validator set independently.</p>
+        </div>
+        <div class="mech-card">
+          <div class="mc-num">04</div>
+          <h3>rollbacks are clean</h3>
+          <p>a heavier fork shows up, the chain unwinds and replays state without special-casing anything.</p>
+        </div>
+        <div class="mech-card">
+          <div class="mc-num">05</div>
+          <h3>fees are predictable</h3>
+          <p>you pay for the bytes your transaction takes up. no spikes because the network got busy.</p>
+        </div>
+        <div class="mech-card">
+          <div class="mc-num">06</div>
+          <h3>talks tcp and websockets</h3>
+          <p>nodes batch-sync aggressively, so bringing a new peer online doesn't take long.</p>
+        </div>
+      </div>
+    </div>
+
+    <hr>
+
+    <div class="section" id="tech">
+      <div class="section-eyebrow">under the hood</div>
+      <h2>one codebase, every target</h2>
+      <p>the core has no native dependencies. the same rust compiles to wasm, android, ios, and desktop.</p>
+      <div class="tech-grid">
+        <div class="tech-cell">
+          <div class="tc-label">crypto</div>
+          <p>ristretto255, bulletproofs, merlin transcripts. no pairing-based crypto anywhere in the stack.</p>
+        </div>
+        <div class="tech-cell">
+          <div class="tc-label">supply</div>
+          <p>hard capped at 21 billion. most of it enters through block rewards that halve every four years.</p>
+        </div>
+        <div class="tech-cell">
+          <div class="tc-label">build targets</div>
+          <p>ci builds for:</p>
+          <div class="target-pills">
+            <span class="target-pill">linux-x86_64</span>
+            <span class="target-pill">windows-msvc</span>
+            <span class="target-pill">macos-arm64</span>
+            <span class="target-pill">android</span>
+            <span class="target-pill">wasm32</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <div class="footer-row">
+        <span>haze — public testnet, no monetary value</span>
+        <div class="footer-links">
+          <a href="Haze_Whitepaper.pdf" target="_blank" rel="noopener">whitepaper</a>
+          <a href="https://github.com/Pranav00x/haze" target="_blank" rel="noopener">github</a>
+          <a href="https://github.com/Pranav00x/haze/releases" target="_blank" rel="noopener">releases</a>
+          <a href="mailto:pranav@hazeprotocol.xyz">contact</a>
+        </div>
+      </div>
+      <div class="footer-note">this is public testnet software. haze has no monetary value, and the chain may still be reset if a serious bug is found — don't treat any balance here as real.</div>
+    </div>
+  </footer>
+
+  <script>
+    const API_BASE = "https://haze-b3l9.onrender.com";
+    async function fetchStats() {
+      try {
+        const res = await fetch(API_BASE + "/v1/status");
+        if (!res.ok) throw new Error("bad status");
+        const s = await res.json();
+        document.getElementById("st-tip").textContent = (s.tip_hash || "").slice(0, 16) + "…";
+        document.getElementById("st-height").textContent = s.height;
+        document.getElementById("st-validators").textContent = s.active_validators === 0 ? "1" : s.active_validators;
+        document.getElementById("st-mempool").textContent = s.mempool_size;
+        document.getElementById("node-dot").classList.add("online");
+      } catch (e) {
+        document.getElementById("node-dot").classList.remove("online");
+      }
+    }
+    fetchStats();
+    setInterval(fetchStats, 8000);
+  </script>
+
+</body>
 </html>
