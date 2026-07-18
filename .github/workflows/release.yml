@@ -27,7 +27,13 @@ jobs:
             asset_name: haze-testnet-linux-x86_64
             archive_ext: tar.gz
           - target: x86_64-apple-darwin
-            os: macos-13 # Intel runner - native build, no cross toolchain needed
+            # macos-13 (the last Intel-hosted runner) has multi-hour+ queue
+            # times as GitHub winds down Intel Mac capacity - cross-compile
+            # the Intel binary from an Apple Silicon runner instead. Works
+            # out of the box: Xcode's toolchain on arm64 runners already
+            # supports the x86_64-apple-darwin target, just needs `rustup
+            # target add`.
+            os: macos-14
             asset_name: haze-testnet-macos-x86_64
             archive_ext: tar.gz
           - target: aarch64-apple-darwin
