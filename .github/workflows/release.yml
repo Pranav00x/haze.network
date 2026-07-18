@@ -8,6 +8,13 @@ on:
     tags:
       - "v*"
 
+# The default GITHUB_TOKEN is read-only unless a workflow explicitly asks
+# for more - without this, publish-release's softprops/action-gh-release
+# step 403s ("Resource not accessible by integration") trying to create
+# the release itself.
+permissions:
+  contents: write
+
 env:
   CARGO_TERM_COLOR: always
   BIN_NAME: haze
