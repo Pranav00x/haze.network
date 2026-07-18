@@ -1,0 +1,106 @@
+name: iOS
+
+# Builds the Rust core for iOS device + simulator, generates the Swift
+# FFI bindings, packages an XCFramework, and compiles HazeWalletCore
+# (the Swift package holding the wallet's business logic) against it -
+# the same "prove it actually compiles in CI" approach release.yml
+# already uses for desktop/Android, since there's no Mac in this dev
+# environment to verify Swift locally.
+#
+# This does NOT build a signed .ipa or run in the simulator - the
+# SwiftUI app shell (Info.plist, asset catalog, signing team) still
+# needs to be wired up once in Xcode by a human, a GUI-only step with
+# no clean headless equivalent. See ios/README.md.
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "src/ffi.rs"
+      - "core/**"
+      - "crypto/**"
+      - "wallet/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "ios/**"
+      - ".github/workflows/ios.yml"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "src/ffi.rs"
+      - "core/**"
+      - "crypto/**"
+      - "wallet/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "ios/**"
+      - ".github/workflows/ios.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ios
+
+      - name: Build the Rust core for iOS device
+        run: cargo build --release --lib --no-default-features --features native --target aarch64-apple-ios
+
+      - name: Build the Rust core for iOS simulator (Apple Silicon)
+        run: cargo build --release --lib --no-default-features --features native --target aarch64-apple-ios-sim
+
+      - name: Generate Swift FFI bindings
+        run: |
+          mkdir -p ios/Generated
+          cargo run --release --bin uniffi-bindgen -- generate \
+            --library target/aarch64-apple-ios/release/libhaze_core.dylib \
+            --language swift \
+            --out-dir ios/Generated
+
+      - name: Assemble the XCFramework
+        run: |
+          set -e
+          FRAMEWORK_DIR=ios/HazeCoreFFI.xcframework
+          rm -rf "$FRAMEWORK_DIR"
+
+          # UniFFI's Swift bindgen emits a C header + modulemap alongside
+          # the .swift file - an XCFramework wants those under a
+          # "Headers" dir per-slice, with the modulemap named exactly
+          # module.modulemap.
+          for slice in device sim; do
+            mkdir -p "ios/Headers-$slice"
+            cp ios/Generated/haze_coreFFI.h "ios/Headers-$slice/"
+            cp ios/Generated/haze_coreFFI.modulemap "ios/Headers-$slice/module.modulemap"
+          done
+
+          xcodebuild -create-xcframework \
+            -library target/aarch64-apple-ios/release/libhaze_core.a -headers ios/Headers-device \
+            -library target/aarch64-apple-ios-sim/release/libhaze_core.a -headers ios/Headers-sim \
+            -output "$FRAMEWORK_DIR"
+
+      - name: Drop the generated Swift API into the HazeWalletCore package
+        run: cp ios/Generated/haze_core.swift ios/HazeWalletCore/Sources/HazeWalletCore/HazeCoreFFI.swift
+
+      - name: Build HazeWalletCore (proves the FFI + wallet logic actually compiles)
+        working-directory: ios/HazeWalletCore
+        run: swift build
+
+      - name: Upload XCFramework + generated bindings
+        uses: actions/upload-artifact@v4
+        with:
+          name: HazeCoreFFI-xcframework
+          path: |
+            ios/HazeCoreFFI.xcframework
+            ios/Generated/haze_core.swift
