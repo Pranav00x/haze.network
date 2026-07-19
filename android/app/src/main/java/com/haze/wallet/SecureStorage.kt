@@ -85,9 +85,8 @@ class SecureStorage(context: Context) {
         private const val KEY_NAME = "claimed_name"
         private const val KEY_ACTIVITY = "activity_log"
         const val DEFAULT_NODE_URL = "https://haze-b3l9.onrender.com"
-        // No production explorer URL has shipped yet - left blank rather than
-        // guessed, so the Explorer button prompts a one-time setup instead of
-        // silently pointing somewhere wrong.
-        const val DEFAULT_EXPLORER_URL = ""
+        // The node serves its own embedded block explorer at its own root -
+        // same live address as DEFAULT_NODE_URL, no separate deployment.
+        const val DEFAULT_EXPLORER_URL = "https://haze-b3l9.onrender.com"
     }
 }

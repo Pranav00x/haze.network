@@ -2,7 +2,6 @@ package com.haze.wallet
 
 import android.net.Uri
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.browser.customtabs.CustomTabColorSchemeParams
 import androidx.browser.customtabs.CustomTabsIntent
@@ -21,8 +20,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.Lifecycle
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -35,7 +37,9 @@ import com.haze.wallet.ui.theme.HazeCard
 import com.haze.wallet.ui.theme.HazeScreenTitle
 import kotlinx.coroutines.launch
 
-class MainActivity : ComponentActivity() {
+// FragmentActivity (not plain ComponentActivity) - BiometricPrompt requires
+// one to host its dialog.
+class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val repo = WalletRepository(SecureStorage(applicationContext))
@@ -69,6 +73,26 @@ fun HazeApp(repo: WalletRepository) {
 
     if (!state.hasWallet) {
         OnboardingFlow(repo)
+        return
+    }
+
+    // Re-locks every time the app leaves the foreground (ON_STOP) - a
+    // wallet holding real funds shouldn't stay unlocked just because the
+    // process is still alive in the background. `unlocked` is plain
+    // `remember`, not rememberSaveable, so a killed-and-restored process
+    // starts locked too.
+    var unlocked by remember { mutableStateOf(false) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) unlocked = false
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    if (!unlocked) {
+        LockScreen(onUnlocked = { unlocked = true })
         return
     }
 
@@ -126,6 +150,53 @@ fun HazeApp(repo: WalletRepository) {
             composable("more") { MoreScreen(repo) }
         }
     }
+    }
+}
+
+@Composable
+private fun LockScreen(onUnlocked: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    fun tryUnlock() {
+        val activity = context as? FragmentActivity ?: return
+        busy = true
+        scope.launch {
+            val ok = BiometricLock.authenticate(activity, "Unlock Haze Wallet", "Confirm it's you before opening your wallet")
+            busy = false
+            if (ok) onUnlocked() else error = "Authentication cancelled - try again."
+        }
+    }
+
+    LaunchedEffect(Unit) { tryUnlock() }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        com.haze.wallet.ui.theme.HazeAmbientBlobs()
+        Column(
+            modifier = Modifier.fillMaxSize().padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Icon(Icons.Filled.Lock, contentDescription = null, modifier = Modifier.size(40.dp), tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(16.dp))
+            Text("Haze Wallet is locked", style = MaterialTheme.typography.headlineMedium)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Confirm your fingerprint, face, or device PIN to continue.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = LocalHazeColors.current.inkFaint,
+            )
+            error?.let {
+                Spacer(Modifier.height(12.dp))
+                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
+            Spacer(Modifier.height(24.dp))
+            Button(onClick = { tryUnlock() }, enabled = !busy, modifier = Modifier.fillMaxWidth(0.7f)) {
+                Text(if (busy) "Waiting…" else "Unlock")
+            }
+        }
     }
 }
 
@@ -402,6 +473,7 @@ private fun HistoryScreen(repo: WalletRepository) {
 private fun MoreScreen(repo: WalletRepository) {
     val state by repo.state.collectAsState()
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var nodeUrlField by remember { mutableStateOf(state.nodeUrl) }
     var explorerUrlField by remember { mutableStateOf(state.explorerUrl) }
     var stakeMinField by remember { mutableStateOf("1") }
@@ -482,7 +554,12 @@ private fun MoreScreen(repo: WalletRepository) {
         stakeMessage?.let { Text(it) }
         Spacer(Modifier.height(8.dp))
         TextButton(onClick = {
-            scope.launch { revealedKey = repo.revealStakeKey(stakeMinField.toLongOrNull() ?: 1) }
+            val activity = context as? FragmentActivity ?: return@TextButton
+            scope.launch {
+                if (BiometricLock.authenticate(activity, "Reveal validator key", "Confirm it's you before showing this key")) {
+                    revealedKey = repo.revealStakeKey(stakeMinField.toLongOrNull() ?: 1)
+                }
+            }
         }) { Text("Reveal my validator key (to run my own node)") }
         revealedKey?.let { Text(it) }
 
@@ -561,9 +638,15 @@ private fun MoreScreen(repo: WalletRepository) {
                 confirmButton = {
                     TextButton(onClick = {
                         showRotateConfirm = false
-                        val generated = repo.generateRotationCandidate()
-                        rotateMnemonic = generated.mnemonic
-                        rotateNewKeystoreBytes = generated.keystoreBytes
+                        val activity = context as? FragmentActivity
+                        scope.launch {
+                            val ok = activity == null || BiometricLock.authenticate(activity, "Rotate seed phrase", "Confirm it's you before generating a new recovery phrase")
+                            if (ok) {
+                                val generated = repo.generateRotationCandidate()
+                                rotateMnemonic = generated.mnemonic
+                                rotateNewKeystoreBytes = generated.keystoreBytes
+                            }
+                        }
                     }) { Text("Continue") }
                 },
                 dismissButton = {

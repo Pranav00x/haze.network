@@ -72,4 +72,9 @@ dependencies {
     // Chrome Custom Tabs, for opening the block explorer in a themed
     // in-app browser tab instead of a jarring hand-off to a separate app.
     implementation("androidx.browser:browser:1.8.0")
+
+    // App-lock (biometric/device PIN) gating access to the wallet and to
+    // seed-phrase reveals - BiometricPrompt requires a FragmentActivity host.
+    implementation("androidx.biometric:biometric:1.1.0")
+    implementation("androidx.fragment:fragment-ktx:1.8.2")
 }
