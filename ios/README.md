@@ -24,8 +24,8 @@ mostly-GUI setup.
 1. Run the `iOS` GitHub Actions workflow (or push a change under
    `src/ffi.rs`, `core/`, `crypto/`, `wallet/`, or `ios/` to trigger it),
    download the `HazeCoreFFI-xcframework` artifact, and unzip
-   `HazeCoreFFI.xcframework` into `ios/` (next to `HazeWalletCore/`) -
-   `HazeWalletCore/Package.swift` expects it at `../HazeCoreFFI.xcframework`
+   `haze_coreFFI.xcframework` into `ios/` (next to `HazeWalletCore/`) -
+   `HazeWalletCore/Package.swift` expects it at `../haze_coreFFI.xcframework`
    relative to the package root.
 2. In Xcode: File > New > Project > iOS > App. Name it "Haze Wallet",
    interface SwiftUI, minimum deployment target iOS 16.

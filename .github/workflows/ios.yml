@@ -68,11 +68,18 @@ jobs:
             --library target/aarch64-apple-ios/release/libhaze_core.dylib \
             --language swift \
             --out-dir ios/Generated
+          echo "--- generated files ---"
+          ls -la ios/Generated
+          echo "--- import line(s) in the generated Swift API ---"
+          grep -n "^import\|canImport" ios/Generated/haze_core.swift || true
 
       - name: Assemble the XCFramework
         run: |
           set -e
-          FRAMEWORK_DIR=ios/HazeCoreFFI.xcframework
+          # Named haze_coreFFI (matching uniffi's own <crate>FFI naming,
+          # not an invented name) - see the comment in Package.swift for
+          # why this exact name matters.
+          FRAMEWORK_DIR=ios/haze_coreFFI.xcframework
           rm -rf "$FRAMEWORK_DIR"
 
           # UniFFI's Swift bindgen emits a C header + modulemap alongside
@@ -102,5 +109,5 @@ jobs:
         with:
           name: HazeCoreFFI-xcframework
           path: |
-            ios/HazeCoreFFI.xcframework
+            ios/haze_coreFFI.xcframework
             ios/Generated/haze_core.swift
