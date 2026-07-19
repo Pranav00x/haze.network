@@ -284,9 +284,22 @@ private fun WalletHomeScreen(repo: WalletRepository, onNavigate: (String) -> Uni
 
     val hazeColors = com.haze.wallet.ui.theme.LocalHazeColors.current
 
+    // Keeps the node-status strip live, same "poll every few seconds"
+    // feel the block explorer and homepage stats widget already use -
+    // this screen is the one place a user can tell at a glance whether
+    // their node is actually reachable.
+    LaunchedEffect(Unit) {
+        while (true) {
+            repo.refreshNodeStatus()
+            kotlinx.coroutines.delay(8000)
+        }
+    }
+
     Column(modifier = Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState())) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            com.haze.wallet.ui.theme.HazePulseDot()
+            com.haze.wallet.ui.theme.HazePulseDot(
+                color = if (state.nodeOnline) MaterialTheme.colorScheme.tertiary else hazeColors.inkFaint,
+            )
             Spacer(Modifier.width(6.dp))
             Text(
                 state.claimedName?.let { "$it.haze" } ?: "Haze Wallet",
@@ -332,9 +345,84 @@ private fun WalletHomeScreen(repo: WalletRepository, onNavigate: (String) -> Uni
             Spacer(Modifier.height(12.dp))
             Text(it, style = MaterialTheme.typography.bodySmall, color = hazeColors.inkFaint)
         }
+
+        Spacer(Modifier.height(20.dp))
+        HazeCard(modifier = Modifier.fillMaxWidth(), padding = PaddingValues(vertical = 14.dp, horizontal = 4.dp)) {
+            Row {
+                StatCell(label = "HEIGHT", value = if (state.nodeOnline) "${state.nodeHeight}" else "—", modifier = Modifier.weight(1f))
+                StatDivider()
+                StatCell(label = "VALIDATORS", value = if (state.nodeOnline) "${state.nodeValidators}" else "—", modifier = Modifier.weight(1f))
+                StatDivider()
+                StatCell(label = "MEMPOOL", value = if (state.nodeOnline) "${state.nodeMempoolSize}" else "—", modifier = Modifier.weight(1f))
+            }
+        }
+
+        Spacer(Modifier.height(24.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("recent activity", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+            TextButton(onClick = { onNavigate("history") }) { Text("View all") }
+        }
+        if (state.activity.isEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Text("No activity yet.", style = MaterialTheme.typography.bodySmall, color = hazeColors.inkFaint)
+        } else {
+            Spacer(Modifier.height(4.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                state.activity.take(3).forEach { entry -> ActivityRow(entry) }
+            }
+        }
         Spacer(Modifier.height(20.dp))
         OutlinedButton(onClick = { scope.launch { repo.refreshBalance() } }, modifier = Modifier.fillMaxWidth()) {
             Text("Refresh balance")
+        }
+    }
+}
+
+@Composable
+private fun StatCell(label: String, value: String, modifier: Modifier = Modifier) {
+    val hazeColors = com.haze.wallet.ui.theme.LocalHazeColors.current
+    Column(modifier = modifier.padding(horizontal = 12.dp)) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = hazeColors.inkFaint)
+        Spacer(Modifier.height(4.dp))
+        Text(value, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+@Composable
+private fun StatDivider() {
+    val hazeColors = com.haze.wallet.ui.theme.LocalHazeColors.current
+    Box(modifier = Modifier.width(1.dp).height(28.dp).background(hazeColors.hairline))
+}
+
+/** Maps an activity title to a small icon glyph - Sent/Received/Claimed/
+ * validator actions all read differently at a glance, mirroring the
+ * liquid-glass mockup's per-row glyphs instead of a plain bullet list. */
+private fun activityIcon(title: String): androidx.compose.ui.graphics.vector.ImageVector = when {
+    title.startsWith("Received") -> Icons.Filled.CallReceived
+    title.startsWith("Sent") || title.startsWith("Self-pay") -> Icons.Filled.Send
+    title.startsWith("Claimed") || title.startsWith("Transferred") -> Icons.Filled.AlternateEmail
+    title.startsWith("Registered") || title.startsWith("Recovered") -> Icons.Filled.Shield
+    title.startsWith("Rotated") -> Icons.Filled.Autorenew
+    title.startsWith("Restored") -> Icons.Filled.RestartAlt
+    else -> Icons.Filled.History
+}
+
+@Composable
+private fun ActivityRow(entry: ActivityEntry) {
+    val hazeColors = com.haze.wallet.ui.theme.LocalHazeColors.current
+    HazeCard(modifier = Modifier.fillMaxWidth(), padding = PaddingValues(12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier.size(36.dp).background(hazeColors.fog2, androidx.compose.foundation.shape.RoundedCornerShape(12.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(activityIcon(entry.title), contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(entry.title, style = MaterialTheme.typography.titleSmall)
+                if (entry.detail.isNotBlank()) Text(entry.detail, style = MaterialTheme.typography.bodySmall, color = hazeColors.inkFaint)
+            }
         }
     }
 }
@@ -449,21 +537,17 @@ private fun ReceiveScreen(repo: WalletRepository) {
 @Composable
 private fun HistoryScreen(repo: WalletRepository) {
     val state by repo.state.collectAsState()
+    val hazeColors = com.haze.wallet.ui.theme.LocalHazeColors.current
     Column(modifier = Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState())) {
         HazeScreenTitle("Activity")
         Spacer(Modifier.height(8.dp))
-        Text("Everything this wallet has sent, received, or registered - newest first.")
+        Text("Everything this wallet has sent, received, or registered - newest first.", color = hazeColors.inkFaint)
         Spacer(Modifier.height(16.dp))
         if (state.activity.isEmpty()) {
-            Text("No activity yet.")
+            Text("No activity yet.", color = hazeColors.inkFaint)
         } else {
-            state.activity.forEach { entry ->
-                HazeCard(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), padding = PaddingValues(12.dp)) {
-                    Column {
-                        Text(entry.title, style = MaterialTheme.typography.titleSmall)
-                        if (entry.detail.isNotBlank()) Text(entry.detail, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                state.activity.forEach { entry -> ActivityRow(entry) }
             }
         }
     }

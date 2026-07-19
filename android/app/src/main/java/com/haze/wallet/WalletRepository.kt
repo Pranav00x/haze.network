@@ -21,6 +21,10 @@ data class WalletUiState(
     val activity: List<ActivityEntry> = emptyList(),
     val busy: Boolean = false,
     val message: String? = null,
+    val nodeOnline: Boolean = false,
+    val nodeHeight: Long = 0,
+    val nodeValidators: Long = 0,
+    val nodeMempoolSize: Long = 0,
 )
 
 /**
@@ -136,6 +140,24 @@ class WalletRepository(private val storage: SecureStorage) {
         val confirmed = walletBalance(reconciled)
         val pending = walletPendingBalance(reconciled)
         _state.update { it.copy(confirmedBalance = confirmed.toLong(), pendingBalance = pending.toLong()) }
+    }
+
+    /** GET /v1/status - live chain height/validator count/mempool size, for
+     * the "is the node actually reachable" strip on the wallet home screen. */
+    suspend fun refreshNodeStatus() = withContext(Dispatchers.IO) {
+        try {
+            val status = api.status()
+            _state.update {
+                it.copy(
+                    nodeOnline = true,
+                    nodeHeight = status.getLong("height"),
+                    nodeValidators = status.optLong("active_validators", 0).let { v -> if (v == 0L) 1L else v },
+                    nodeMempoolSize = status.getLong("mempool_size"),
+                )
+            }
+        } catch (e: Exception) {
+            _state.update { it.copy(nodeOnline = false) }
+        }
     }
 
     private fun currentFeeEstimate(): Long =
