@@ -90,3 +90,26 @@ jobs:
         with:
           name: haze-wallet-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
+
+      # Sends the freshly-built debug APK straight to a Telegram chat, so a
+      # successful build is immediately installable on a phone without
+      # digging through Actions artifacts. TELEGRAM_BOT_TOKEN is a repo
+      # secret (never printed - GitHub Actions masks it in logs
+      # automatically); the chat ID isn't sensitive the same way, so it's
+      # inline.
+      - name: Send build to Telegram
+        if: success()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: "-1004439022926"
+          # Passed via env, not interpolated directly into the script, so a
+          # commit message containing quotes/backticks can't break (or
+          # inject into) this shell command.
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          CAPTION="haze wallet build ✅ — ${GITHUB_REF_NAME} @ ${GITHUB_SHA:0:7}
+          ${COMMIT_MESSAGE}"
+          curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
+            -F "chat_id=${TELEGRAM_CHAT_ID}" \
+            -F "document=@android/app/build/outputs/apk/debug/app-debug.apk;filename=haze-wallet-debug.apk" \
+            -F "caption=${CAPTION}"
