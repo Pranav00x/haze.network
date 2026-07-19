@@ -98,8 +98,7 @@ fun HazeApp(repo: WalletRepository) {
         )
     }
 
-    Scaffold(
-        containerColor = androidx.compose.ui.graphics.Color.Transparent,
+    Box(
         modifier = Modifier.background(
             Brush.radialGradient(
                 colors = listOf(hazeColors.glow1.copy(alpha = if (hazeColors.isDark) 0.5f else 0.7f), androidx.compose.ui.graphics.Color.Transparent),
@@ -107,6 +106,10 @@ fun HazeApp(repo: WalletRepository) {
                 radius = 900f,
             ),
         ),
+    ) {
+    com.haze.wallet.ui.theme.HazeAmbientBlobs()
+    Scaffold(
+        containerColor = androidx.compose.ui.graphics.Color.Transparent,
         bottomBar = {
             val backStackEntry by navController.currentBackStackEntryAsState()
             val currentRoute = backStackEntry?.destination?.route
@@ -118,7 +121,7 @@ fun HazeApp(repo: WalletRepository) {
         }
     ) { padding ->
         NavHost(navController = navController, startDestination = "wallet", modifier = Modifier.padding(padding)) {
-            composable("wallet") { WalletHomeScreen(repo) }
+            composable("wallet") { WalletHomeScreen(repo, onNavigate = { route -> navController.navigate(route) { launchSingleTop = true } }) }
             composable("send") { SendScreen(repo) }
             composable("receive") { ReceiveScreen(repo) }
             composable("names") { NamesScreen(repo) }
@@ -126,6 +129,7 @@ fun HazeApp(repo: WalletRepository) {
             composable("history") { HistoryScreen(repo) }
             composable("more") { MoreScreen(repo) }
         }
+    }
     }
 }
 
@@ -206,7 +210,7 @@ private fun OnboardingFlow(repo: WalletRepository) {
 }
 
 @Composable
-private fun WalletHomeScreen(repo: WalletRepository) {
+private fun WalletHomeScreen(repo: WalletRepository, onNavigate: (String) -> Unit) {
     val state by repo.state.collectAsState()
     val scope = rememberCoroutineScope()
     var faucetMessage by remember { mutableStateOf<String?>(null) }
@@ -214,11 +218,15 @@ private fun WalletHomeScreen(repo: WalletRepository) {
     val hazeColors = com.haze.wallet.ui.theme.LocalHazeColors.current
 
     Column(modifier = Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState())) {
-        Text(
-            state.claimedName?.let { "$it.haze" } ?: "Haze Wallet",
-            style = MaterialTheme.typography.titleMedium,
-            color = if (state.claimedName != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            com.haze.wallet.ui.theme.HazePulseDot()
+            Spacer(Modifier.width(6.dp))
+            Text(
+                state.claimedName?.let { "$it.haze" } ?: "Haze Wallet",
+                style = MaterialTheme.typography.titleMedium,
+                color = if (state.claimedName != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
+            )
+        }
         Spacer(Modifier.height(16.dp))
         HazeCard(modifier = Modifier.fillMaxWidth(), padding = PaddingValues(20.dp)) {
             Row {
@@ -234,9 +242,11 @@ private fun WalletHomeScreen(repo: WalletRepository) {
                 }
             }
         }
-        Spacer(Modifier.height(24.dp))
-        Button(
-            onClick = {
+        Spacer(Modifier.height(20.dp))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+            com.haze.wallet.ui.theme.HazeQuickAction(label = "Send", icon = Icons.Filled.Send, primary = true) { onNavigate("send") }
+            com.haze.wallet.ui.theme.HazeQuickAction(label = "Receive", icon = Icons.Filled.CallReceived) { onNavigate("receive") }
+            com.haze.wallet.ui.theme.HazeQuickAction(label = "Faucet", icon = Icons.Filled.WaterDrop) {
                 scope.launch {
                     try {
                         repo.claimFaucet(500)
@@ -245,14 +255,13 @@ private fun WalletHomeScreen(repo: WalletRepository) {
                         faucetMessage = "Faucet unavailable: ${e.message}"
                     }
                 }
-            },
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text("Get devnet funds") }
-        faucetMessage?.let {
-            Spacer(Modifier.height(8.dp))
-            Text(it)
+            }
         }
-        Spacer(Modifier.height(16.dp))
+        faucetMessage?.let {
+            Spacer(Modifier.height(12.dp))
+            Text(it, style = MaterialTheme.typography.bodySmall, color = hazeColors.inkFaint)
+        }
+        Spacer(Modifier.height(20.dp))
         OutlinedButton(onClick = { scope.launch { repo.refreshBalance() } }, modifier = Modifier.fillMaxWidth()) {
             Text("Refresh balance")
         }

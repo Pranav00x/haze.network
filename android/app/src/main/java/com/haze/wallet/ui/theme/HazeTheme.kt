@@ -3,7 +3,9 @@
 package com.haze.wallet.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -16,6 +18,7 @@ import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.haze.wallet.R
 
@@ -165,7 +168,18 @@ fun HazeTheme(darkTheme: Boolean = isSystemInDarkTheme(), content: @Composable (
         isDark = darkTheme,
     )
 
+    // Button/OutlinedButton/TextButton/Chip all default to shapes.small - a
+    // single override here makes every button in the app a full pill,
+    // matching the liquid-glass mockup, without touching each call site.
+    val hazeShapes = Shapes(
+        extraSmall = RoundedCornerShape(10.dp),
+        small = RoundedCornerShape(50),
+        medium = RoundedCornerShape(18.dp),
+        large = RoundedCornerShape(22.dp),
+        extraLarge = RoundedCornerShape(28.dp),
+    )
+
     CompositionLocalProvider(LocalHazeColors provides extended) {
-        MaterialTheme(colorScheme = colorScheme, typography = hazeTypography, content = content)
+        MaterialTheme(colorScheme = colorScheme, typography = hazeTypography, shapes = hazeShapes, content = content)
     }
 }
