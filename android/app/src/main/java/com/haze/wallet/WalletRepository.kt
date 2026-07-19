@@ -187,6 +187,13 @@ class WalletRepository(private val storage: SecureStorage) {
         api.submitTransaction(plan.transactionJson)
         persistStore(commitSend(storeBytes, plan.spentCommitmentsHex, plan.dest, plan.change))
         pushActivity("Self-pay $amount", "consolidated own UTXOs")
+        // commitSend already updated the local store on disk, but the
+        // observable confirmed/pending balance in `state` only ever gets
+        // recomputed inside refreshBalance() - without this call the
+        // screen would keep showing the pre-send balance until the user
+        // manually pulled a refresh, even though the spend already went
+        // through.
+        refreshBalance()
     }
 
     // ---------------- two-party pay-to-name ----------------
@@ -224,17 +231,19 @@ class WalletRepository(private val storage: SecureStorage) {
         api.submitTransaction(finalized.transactionJson)
         persistStore(commitSlateSend(storeBytes, finalized.spentCommitmentsHex, finalized.change))
         pushActivity("Sent $amount to $name.haze", "")
+        refreshBalance()
         null
     }
 
     // ---------------- receiving a pasted slate (manual two-party) ----------------
 
-    suspend fun respondToPastedSlate(slateJson: String): String = withContext(Dispatchers.Default) {
-        val responded = respondToSlate(requireKeystore(), slateJson)
+    suspend fun respondToPastedSlate(slateJson: String): String {
+        val responded = withContext(Dispatchers.Default) { respondToSlate(requireKeystore(), slateJson) }
         persistKeystore(responded.updatedKeystoreBytes)
         persistStore(commitReceive(storeBytes, responded.receiverOutput))
         pushActivity("Received ${responded.receiverOutput.value}", "via pasted slate")
-        responded.responseSlateJson
+        refreshBalance()
+        return responded.responseSlateJson
     }
 
     // ---------------- names ----------------

@@ -71,8 +71,19 @@ fun HazeApp(repo: WalletRepository) {
     val hazeColors = LocalHazeColors.current
     val surfaceColor = MaterialTheme.colorScheme.surface
 
-    if (!state.hasWallet) {
-        OnboardingFlow(repo)
+    // Deliberately NOT gated directly on state.hasWallet: createWallet()
+    // marks the wallet ready (and persists it) as soon as the keystore
+    // exists, but the user still needs to see and confirm they've saved
+    // the recovery phrase first. Gating this screen straight off
+    // state.hasWallet meant the instant createWallet() flipped that flag,
+    // this composable would react and unmount OnboardingFlow before the
+    // "write it down" confirmation step ever got a chance to render - a
+    // real bug (not a style issue) where every wallet creation silently
+    // skipped its own seed-phrase confirmation. showOnboarding is local
+    // and only flips once OnboardingFlow itself says it's done.
+    var showOnboarding by remember { mutableStateOf(!state.hasWallet) }
+    if (showOnboarding) {
+        OnboardingFlow(repo, onDone = { showOnboarding = false })
         return
     }
 
@@ -201,7 +212,7 @@ private fun LockScreen(onUnlocked: () -> Unit) {
 }
 
 @Composable
-private fun OnboardingFlow(repo: WalletRepository) {
+private fun OnboardingFlow(repo: WalletRepository, onDone: () -> Unit) {
     var mode by remember { mutableStateOf("choose") } // choose | mnemonic | restore
     var generatedMnemonic by remember { mutableStateOf("") }
     var confirmed by remember { mutableStateOf(false) }
@@ -247,7 +258,7 @@ private fun OnboardingFlow(repo: WalletRepository) {
                 Spacer(Modifier.height(16.dp))
                 Button(
                     enabled = confirmed,
-                    onClick = { mode = "done" },
+                    onClick = { onDone() },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("Continue") }
             }
@@ -266,6 +277,7 @@ private fun OnboardingFlow(repo: WalletRepository) {
                     scope.launch {
                         try {
                             repo.restoreWallet(restorePhrase)
+                            onDone()
                         } catch (e: Exception) {
                             error = e.message ?: "restore failed"
                         }
