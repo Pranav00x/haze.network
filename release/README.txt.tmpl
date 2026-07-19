@@ -11,8 +11,8 @@ RUNNING THE NODE
 -----------------
 From a terminal, in the folder you extracted this archive into:
 
-    Windows:        haze.exe node --peers <seed-node-address>
-    macOS / Linux:  ./haze node --peers <seed-node-address>
+    Windows:        haze.exe node --peers wss://haze-b3l9.onrender.com/v1/p2p/ws
+    macOS / Linux:  ./haze node --peers wss://haze-b3l9.onrender.com/v1/p2p/ws
 
 This starts a node listening for peer connections on 127.0.0.1:8333 and
 serving a local HTTP API on 127.0.0.1:8332. See "CONNECTING TO OTHER PEERS"
@@ -50,10 +50,15 @@ node syncs.
 
 CONNECTING TO OTHER PEERS
 ---------------------------
-Public testnet seed node: see https://github.com/Pranav00x/haze for the
-current address to pass via --peers. Without a seed peer, this binary runs
-a fully standalone local chain instead (still useful for testing the
-wallet or exploring the API on your own).
+Public testnet seed node: wss://haze-b3l9.onrender.com/v1/p2p/ws - pass
+this via --peers to join the live network instead of starting your own
+standalone chain. This is a WebSocket address, not a plain addr:port -
+the seed node runs behind Render, which only proxies one HTTPS port, so
+P2P traffic rides over a WebSocket on that same port rather than the
+usual raw TCP (this binary's --peers accepts both wss://... and plain
+addr:port peers, and will keep working the same way if the seed node's
+address changes later - check https://github.com/Pranav00x/haze for the
+current one if this one stops responding).
 
 
 ABOUT VALIDATOR STAKING
