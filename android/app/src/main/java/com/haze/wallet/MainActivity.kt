@@ -81,8 +81,6 @@ fun HazeApp(repo: WalletRepository) {
             HazeNavItem("wallet", "Wallet", Icons.Filled.Home, route = "wallet"),
             HazeNavItem("send", "Send", Icons.Filled.Send, route = "send"),
             HazeNavItem("receive", "Receive", Icons.Filled.CallReceived, route = "receive"),
-            HazeNavItem("names", "Names", Icons.Filled.AlternateEmail, route = "names"),
-            HazeNavItem("market", "Market", Icons.Filled.Storefront, route = "market"),
             HazeNavItem("history", "History", Icons.Filled.History, route = "history"),
             HazeNavItem(
                 "explorer", "Explorer", Icons.Filled.Explore,
@@ -124,8 +122,6 @@ fun HazeApp(repo: WalletRepository) {
             composable("wallet") { WalletHomeScreen(repo, onNavigate = { route -> navController.navigate(route) { launchSingleTop = true } }) }
             composable("send") { SendScreen(repo) }
             composable("receive") { ReceiveScreen(repo) }
-            composable("names") { NamesScreen(repo) }
-            composable("market") { MarketplaceScreen(repo) }
             composable("history") { HistoryScreen(repo) }
             composable("more") { MoreScreen(repo) }
         }
@@ -229,16 +225,20 @@ private fun WalletHomeScreen(repo: WalletRepository, onNavigate: (String) -> Uni
         }
         Spacer(Modifier.height(16.dp))
         HazeCard(modifier = Modifier.fillMaxWidth(), padding = PaddingValues(20.dp)) {
-            Row {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("CONFIRMED", style = MaterialTheme.typography.labelSmall, color = hazeColors.inkFaint)
-                    Spacer(Modifier.height(4.dp))
-                    Text("${state.confirmedBalance}", style = MaterialTheme.typography.displaySmall)
-                }
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("PENDING", style = MaterialTheme.typography.labelSmall, color = hazeColors.inkFaint)
-                    Spacer(Modifier.height(4.dp))
-                    Text("${state.pendingBalance}", style = MaterialTheme.typography.displaySmall, color = hazeColors.inkFaint)
+            Column {
+                Text("BALANCE", style = MaterialTheme.typography.labelSmall, color = hazeColors.inkFaint)
+                Spacer(Modifier.height(6.dp))
+                Text("${state.confirmedBalance}", style = MaterialTheme.typography.displaySmall)
+                Spacer(Modifier.height(16.dp))
+                Row {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("confirmed", style = MaterialTheme.typography.labelMedium, color = hazeColors.inkFaint)
+                        Text("${state.confirmedBalance}", style = MaterialTheme.typography.titleSmall)
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("pending", style = MaterialTheme.typography.labelMedium, color = hazeColors.inkFaint)
+                        Text("${state.pendingBalance}", style = MaterialTheme.typography.titleSmall, color = hazeColors.inkFaint)
+                    }
                 }
             }
         }
@@ -343,7 +343,7 @@ private fun ReceiveScreen(repo: WalletRepository) {
         Spacer(Modifier.height(24.dp))
         Text("Your address", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(8.dp))
-        Text(state.claimedName?.let { "$it.haze" } ?: "Claim a name in the Names tab to receive payments by name.")
+        Text(state.claimedName?.let { "$it.haze" } ?: "Claim a name in the More tab to receive payments by name.")
 
         Spacer(Modifier.height(32.dp))
         Text("Receive a payment", style = MaterialTheme.typography.titleLarge)
@@ -371,341 +371,6 @@ private fun ReceiveScreen(repo: WalletRepository) {
             Spacer(Modifier.height(8.dp))
             Text("Send this back to the sender:")
             androidx.compose.foundation.text.selection.SelectionContainer { Text(it) }
-        }
-    }
-}
-
-@Composable
-private fun NamesScreen(repo: WalletRepository) {
-    val scope = rememberCoroutineScope()
-    var claimField by remember { mutableStateOf("") }
-    var claimMessage by remember { mutableStateOf<String?>(null) }
-    var lookupField by remember { mutableStateOf("") }
-    var lookupResult by remember { mutableStateOf<String?>(null) }
-    var transferName by remember { mutableStateOf("") }
-    var transferTo by remember { mutableStateOf("") }
-    var transferMessage by remember { mutableStateOf<String?>(null) }
-
-    Column(modifier = Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState())) {
-        HazeScreenTitle("Names")
-        Spacer(Modifier.height(24.dp))
-        Text("Claim a .haze name", style = MaterialTheme.typography.titleLarge)
-        Text("Permanent, first-come-first-served. Free to claim - sponsored by the network.")
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(value = claimField, onValueChange = { claimField = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
-        Spacer(Modifier.height(8.dp))
-        Button(onClick = {
-            scope.launch { claimMessage = repo.claimName(claimField.trim()) ?: "Claiming - waiting for it to be mined…" }
-        }, modifier = Modifier.fillMaxWidth()) { Text("Claim") }
-        claimMessage?.let { Text(it) }
-
-        Spacer(Modifier.height(32.dp))
-        Text("Look up a name", style = MaterialTheme.typography.titleLarge)
-        OutlinedTextField(value = lookupField, onValueChange = { lookupField = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
-        Spacer(Modifier.height(8.dp))
-        Button(onClick = {
-            scope.launch { lookupResult = repo.lookupName(lookupField.trim())?.toString() ?: "not registered" }
-        }, modifier = Modifier.fillMaxWidth()) { Text("Look up") }
-        lookupResult?.let { Text(it) }
-
-        Spacer(Modifier.height(32.dp))
-        Text("Transfer a name you own", style = MaterialTheme.typography.titleLarge)
-        OutlinedTextField(value = transferName, onValueChange = { transferName = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(value = transferTo, onValueChange = { transferTo = it }, label = { Text("New owner pubkey (hex)") }, modifier = Modifier.fillMaxWidth())
-        Spacer(Modifier.height(8.dp))
-        Button(onClick = {
-            scope.launch { transferMessage = repo.transferName(transferName.trim(), transferTo.trim()) ?: "Transferred." }
-        }, modifier = Modifier.fillMaxWidth()) { Text("Transfer") }
-        transferMessage?.let { Text(it) }
-    }
-}
-
-@Composable
-private fun MarketplaceScreen(repo: WalletRepository) {
-    var tab by remember { mutableStateOf(0) } // 0 = browse, 1 = my assets, 2 = mint
-
-    // Auto-respond to buyers' "want_transfer" for any of this wallet's own
-    // listings, but only while this screen is actually on screen - this app
-    // has no background service, same constraint as the web wallet's "the
-    // tab must be open" reasoning.
-    LaunchedEffect(Unit) {
-        while (true) {
-            try { repo.pollAndRespondAsSeller() } catch (e: Exception) { /* transient - retry next tick */ }
-            try { repo.pollAndRespondAsCreator() } catch (e: Exception) { /* transient - retry next tick */ }
-            kotlinx.coroutines.delay(4000)
-        }
-    }
-
-    Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
-        HazeScreenTitle("Marketplace")
-        Spacer(Modifier.height(16.dp))
-        TabRow(selectedTabIndex = tab) {
-            Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Browse") })
-            Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("My Assets") })
-            Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Mint") })
-            Tab(selected = tab == 3, onClick = { tab = 3 }, text = { Text("Collections") })
-        }
-        Spacer(Modifier.height(16.dp))
-        when (tab) {
-            0 -> MarketplaceBrowseTab(repo)
-            1 -> MarketplaceMyAssetsTab(repo)
-            2 -> MarketplaceMintTab(repo)
-            else -> MarketplaceCollectionsTab(repo)
-        }
-    }
-}
-
-@Composable
-private fun MarketplaceBrowseTab(repo: WalletRepository) {
-    val scope = rememberCoroutineScope()
-    var listings by remember { mutableStateOf<List<WalletRepository.MarketListing>>(emptyList()) }
-    var message by remember { mutableStateOf<String?>(null) }
-    var buyingAssetId by remember { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(Unit) {
-        try { listings = repo.browseListings() } catch (e: Exception) { message = e.message }
-    }
-
-    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        OutlinedButton(
-            onClick = { scope.launch { try { listings = repo.browseListings() } catch (e: Exception) { message = e.message } } },
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text("Refresh") }
-        Spacer(Modifier.height(8.dp))
-        message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        if (listings.isEmpty()) {
-            Spacer(Modifier.height(16.dp))
-            Text("No listings yet.")
-        }
-        listings.forEach { listing ->
-            HazeCard(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), padding = PaddingValues(12.dp)) {
-                Column {
-                    Text(listing.assetId, style = MaterialTheme.typography.titleSmall)
-                    Text("price: ${listing.price}", style = MaterialTheme.typography.bodySmall)
-                    Text("seller: ${listing.sellerPubkeyHex.take(16)}…", style = MaterialTheme.typography.bodySmall)
-                    Spacer(Modifier.height(8.dp))
-                    Button(
-                        enabled = buyingAssetId == null,
-                        onClick = {
-                            buyingAssetId = listing.assetId
-                            message = "Buying ${listing.assetId} - this can take up to ~40s while the seller's wallet responds…"
-                            scope.launch {
-                                val err = repo.buyListing(listing)
-                                buyingAssetId = null
-                                message = err ?: "Bought ${listing.assetId}."
-                                if (err == null) listings = try { repo.browseListings() } catch (e: Exception) { listings }
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text(if (buyingAssetId == listing.assetId) "Buying…" else "Buy") }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun MarketplaceMyAssetsTab(repo: WalletRepository) {
-    val scope = rememberCoroutineScope()
-    var assets by remember { mutableStateOf<List<WalletRepository.MarketAsset>>(emptyList()) }
-    var message by remember { mutableStateOf<String?>(null) }
-    var listPriceFields by remember { mutableStateOf(mapOf<String, String>()) }
-
-    LaunchedEffect(Unit) {
-        try { assets = repo.myAssets() } catch (e: Exception) { message = e.message }
-    }
-
-    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        OutlinedButton(
-            onClick = { scope.launch { try { assets = repo.myAssets() } catch (e: Exception) { message = e.message } } },
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text("Refresh") }
-        Spacer(Modifier.height(8.dp))
-        message?.let { Text(it) }
-        if (assets.isEmpty()) {
-            Spacer(Modifier.height(16.dp))
-            Text("You don't own any assets yet - mint one in the Mint tab.")
-        }
-        assets.forEach { asset ->
-            HazeCard(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), padding = PaddingValues(12.dp)) {
-                Column {
-                    Text(asset.assetId, style = MaterialTheme.typography.titleSmall)
-                    if (asset.metadata.isNotBlank()) Text(asset.metadata, style = MaterialTheme.typography.bodySmall)
-                    Spacer(Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(
-                            value = listPriceFields[asset.assetId] ?: "",
-                            onValueChange = { listPriceFields = listPriceFields + (asset.assetId to it) },
-                            label = { Text("Price") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.weight(1f),
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Button(onClick = {
-                            val price = (listPriceFields[asset.assetId] ?: "").toLongOrNull() ?: return@Button
-                            scope.launch { message = repo.listAssetForSale(asset.assetId, price) ?: "Listed ${asset.assetId} for $price." }
-                        }) { Text("List") }
-                    }
-                    Spacer(Modifier.height(4.dp))
-                    TextButton(onClick = {
-                        scope.launch { message = repo.cancelAssetListing(asset.assetId) ?: "Cancelled listing for ${asset.assetId}." }
-                    }) { Text("Cancel listing") }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun MarketplaceMintTab(repo: WalletRepository) {
-    val scope = rememberCoroutineScope()
-    var assetId by remember { mutableStateOf("") }
-    var metadata by remember { mutableStateOf("") }
-    var message by remember { mutableStateOf<String?>(null) }
-    var busy by remember { mutableStateOf(false) }
-
-    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        Text("Mint an NFT", style = MaterialTheme.typography.titleMedium)
-        Text("Costs a small burned fee (the marketplace fee floor). asset_id must be unique network-wide.")
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(value = assetId, onValueChange = { assetId = it }, label = { Text("Asset ID") }, modifier = Modifier.fillMaxWidth())
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
-            value = metadata, onValueChange = { metadata = it },
-            label = { Text("Metadata (free-form text, e.g. JSON)") },
-            modifier = Modifier.fillMaxWidth().height(120.dp),
-        )
-        Spacer(Modifier.height(8.dp))
-        Button(
-            enabled = !busy && assetId.isNotBlank(),
-            onClick = {
-                busy = true
-                scope.launch {
-                    val err = repo.mintAsset(assetId.trim(), metadata)
-                    busy = false
-                    message = err ?: "Minted ${assetId.trim()}."
-                    if (err == null) { assetId = ""; metadata = "" }
-                }
-            },
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text(if (busy) "Minting…" else "Mint") }
-        message?.let { Text(it) }
-    }
-}
-
-@Composable
-private fun MarketplaceCollectionsTab(repo: WalletRepository) {
-    val scope = rememberCoroutineScope()
-    var collections by remember { mutableStateOf<List<WalletRepository.MarketCollection>>(emptyList()) }
-    var message by remember { mutableStateOf<String?>(null) }
-    var mintingKey by remember { mutableStateOf<String?>(null) }
-
-    var showLaunch by remember { mutableStateOf(false) }
-    var collectionId by remember { mutableStateOf("") }
-    var name by remember { mutableStateOf("") }
-    var symbol by remember { mutableStateOf("") }
-    var metadata by remember { mutableStateOf("") }
-    var startTime by remember { mutableStateOf("") }
-    var endTime by remember { mutableStateOf("") }
-    var price by remember { mutableStateOf("") }
-    var perWalletLimit by remember { mutableStateOf("1") }
-    var royaltyBps by remember { mutableStateOf("0") }
-    var launchBusy by remember { mutableStateOf(false) }
-
-    fun refresh() {
-        scope.launch { try { collections = repo.browseCollections() } catch (e: Exception) { message = e.message } }
-    }
-    LaunchedEffect(Unit) { refresh() }
-
-    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        Row {
-            OutlinedButton(onClick = { refresh() }, modifier = Modifier.weight(1f)) { Text("Refresh") }
-            Spacer(Modifier.width(8.dp))
-            Button(onClick = { showLaunch = !showLaunch }, modifier = Modifier.weight(1f)) { Text(if (showLaunch) "Cancel" else "Launch a collection") }
-        }
-        Spacer(Modifier.height(8.dp))
-        message?.let { Text(it) }
-
-        if (showLaunch) {
-            Spacer(Modifier.height(8.dp))
-            HazeCard(modifier = Modifier.fillMaxWidth(), padding = PaddingValues(12.dp)) {
-                Column {
-                    Text("New collection (single Public phase)", style = MaterialTheme.typography.titleSmall)
-                    Text("Times are Unix seconds. Multi-phase/allowlisted drops can still be launched from the web wallet.", style = MaterialTheme.typography.bodySmall)
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(value = collectionId, onValueChange = { collectionId = it }, label = { Text("Collection ID") }, modifier = Modifier.fillMaxWidth())
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(value = symbol, onValueChange = { symbol = it }, label = { Text("Symbol") }, modifier = Modifier.fillMaxWidth())
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(value = metadata, onValueChange = { metadata = it }, label = { Text("Metadata") }, modifier = Modifier.fillMaxWidth())
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(value = startTime, onValueChange = { startTime = it }, label = { Text("Start time (unix seconds)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(value = endTime, onValueChange = { endTime = it }, label = { Text("End time (unix seconds)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(value = price, onValueChange = { price = it }, label = { Text("Mint price") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(value = perWalletLimit, onValueChange = { perWalletLimit = it }, label = { Text("Per-wallet limit") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(value = royaltyBps, onValueChange = { royaltyBps = it }, label = { Text("Resale royalty (basis points, 0-10000)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-                    Spacer(Modifier.height(8.dp))
-                    Button(
-                        enabled = !launchBusy && collectionId.isNotBlank() && name.isNotBlank() && symbol.isNotBlank(),
-                        onClick = {
-                            launchBusy = true
-                            scope.launch {
-                                val err = repo.launchCollection(
-                                    collectionId.trim(), name, symbol, metadata,
-                                    startTime.toLongOrNull() ?: 0L, endTime.toLongOrNull() ?: 0L,
-                                    price.toLongOrNull() ?: 0L, perWalletLimit.toIntOrNull() ?: 1, royaltyBps.toIntOrNull() ?: 0,
-                                )
-                                launchBusy = false
-                                message = err ?: "Launched ${collectionId.trim()}."
-                                if (err == null) { showLaunch = false; refresh() }
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text(if (launchBusy) "Launching…" else "Launch") }
-                }
-            }
-        }
-
-        Spacer(Modifier.height(16.dp))
-        if (collections.isEmpty()) Text("No collections launched yet.")
-        collections.forEach { collection ->
-            HazeCard(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), padding = PaddingValues(12.dp)) {
-                Column {
-                    Text("${collection.name} (${collection.symbol})", style = MaterialTheme.typography.titleSmall)
-                    Text(collection.collectionId, style = MaterialTheme.typography.bodySmall)
-                    if (collection.royaltyBps > 0) Text("resale royalty: ${collection.royaltyBps} bps", style = MaterialTheme.typography.bodySmall)
-                    Spacer(Modifier.height(8.dp))
-                    val nowSecs = System.currentTimeMillis() / 1000L
-                    collection.phases.forEachIndexed { idx, phase ->
-                        val active = nowSecs in phase.startTime until phase.endTime
-                        val key = "${collection.collectionId}:$idx"
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("${phase.name}${if (phase.hasAllowlist) " (allowlist)" else ""} — price ${phase.price}, limit ${phase.perWalletLimit}", style = MaterialTheme.typography.bodySmall)
-                                Text(if (active) "active now" else if (nowSecs < phase.startTime) "starts at ${phase.startTime}" else "ended at ${phase.endTime}", style = MaterialTheme.typography.labelSmall)
-                            }
-                            Button(
-                                enabled = active && mintingKey == null,
-                                onClick = {
-                                    mintingKey = key
-                                    scope.launch {
-                                        val err = repo.mintFromCollection(collection, idx)
-                                        mintingKey = null
-                                        message = err ?: "Minted from ${collection.collectionId}."
-                                    }
-                                },
-                            ) { Text(if (mintingKey == key) "Minting…" else "Mint") }
-                        }
-                    }
-                }
-            }
         }
     }
 }
@@ -745,9 +410,43 @@ private fun MoreScreen(repo: WalletRepository) {
     var sweepKeyField by remember { mutableStateOf("") }
     var sweepMessage by remember { mutableStateOf<String?>(null) }
 
+    var claimField by remember { mutableStateOf("") }
+    var claimMessage by remember { mutableStateOf<String?>(null) }
+    var showNameTransfer by remember { mutableStateOf(false) }
+    var transferName by remember { mutableStateOf("") }
+    var transferTo by remember { mutableStateOf("") }
+    var transferMessage by remember { mutableStateOf<String?>(null) }
+
     Column(modifier = Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState())) {
         HazeScreenTitle("More")
         Spacer(Modifier.height(24.dp))
+
+        Text(".haze name", style = MaterialTheme.typography.titleLarge)
+        if (state.claimedName != null) {
+            Text("You own ${state.claimedName}.haze - a one-time claim, nothing more to do here.", color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = { showNameTransfer = !showNameTransfer }) { Text(if (showNameTransfer) "Hide transfer" else "Transfer to someone else") }
+            if (showNameTransfer) {
+                OutlinedTextField(value = transferTo, onValueChange = { transferTo = it }, label = { Text("New owner pubkey (hex)") }, modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(8.dp))
+                Button(onClick = {
+                    transferName = state.claimedName ?: return@Button
+                    scope.launch { transferMessage = repo.transferName(transferName, transferTo.trim()) ?: "Transferred." }
+                }, modifier = Modifier.fillMaxWidth()) { Text("Transfer") }
+                transferMessage?.let { Text(it) }
+            }
+        } else {
+            Text("Permanent, first-come-first-served, free to claim - sponsored by the network. You'll only need to do this once.")
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(value = claimField, onValueChange = { claimField = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(8.dp))
+            Button(onClick = {
+                scope.launch { claimMessage = repo.claimName(claimField.trim()) ?: "Claiming - waiting for it to be mined…" }
+            }, modifier = Modifier.fillMaxWidth()) { Text("Claim") }
+            claimMessage?.let { Text(it) }
+        }
+
+        Spacer(Modifier.height(32.dp))
         Text("Node", style = MaterialTheme.typography.titleLarge)
         OutlinedTextField(value = nodeUrlField, onValueChange = { nodeUrlField = it }, label = { Text("Node URL") }, modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(8.dp))
