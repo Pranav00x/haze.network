@@ -3,11 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Haze — Confidential money, onchain</title>
-<meta name="description" content="The Haze protocol keeps amounts and balances confidential on a fully public, verifiable Mimblewimble blockchain — private money without a private chain.">
+<title>Haze — money that minds its own business</title>
+<meta name="description" content="Haze is a Mimblewimble blockchain where amounts stay hidden, spent coins leave no trail, and there is no account to link back to you — on a network anyone can verify.">
 <link rel="icon" type="image/svg+xml" href="assets/logo-icon.svg">
-<meta property="og:title" content="Haze — Confidential money, onchain">
-<meta property="og:description" content="Confidential assets on a public, verifiable Mimblewimble L1.">
+<meta property="og:title" content="Haze — money that minds its own business">
+<meta property="og:description" content="A confidential Mimblewimble L1. Hidden amounts, no accounts, a trail that deletes itself.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -15,26 +15,21 @@
   :root {
     color-scheme: light;
     --bg:        #ffffff;
-    --warm:      #fdf8f1;
     --ink:       #0d0d10;
     --ink-2:     #33333a;
     --ink-dim:   #6a6a72;
     --ink-faint: #a2a2aa;
     --line:      rgba(0,0,0,0.10);
     --line-2:    rgba(0,0,0,0.16);
-
     --amber:      #ef9a3d;
     --amber-soft: #f6bd72;
-    --amber-pale: #fbe6c8;
     --amber-deep: #d47a1e;
     --ok:         #2f9a5f;
-
     --font: "Manrope", ui-sans-serif, system-ui, sans-serif;
     --maxw: 1240px;
     --pad: clamp(18px, 4vw, 48px);
     --r: 30px;
   }
-
   * { box-sizing: border-box; }
   html { scroll-behavior: smooth; }
   @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
@@ -43,15 +38,14 @@
   a { color: inherit; text-decoration: none; }
   .wrap { max-width: var(--maxw); margin: 0 auto; padding-inline: var(--pad); }
 
-  /* ---------------- nav (floating liquid-glass pill) ---------------- */
+  /* nav — floating liquid-glass pill */
   header { position: fixed; top: 14px; left: 0; right: 0; z-index: 90; padding-inline: var(--pad); }
   .nav {
     position: relative; max-width: var(--maxw); margin: 0 auto;
     display: flex; align-items: center; justify-content: space-between; gap: 18px;
     padding: 9px 10px 9px 20px; border-radius: 100px;
     background: rgba(255,255,255,.5);
-    backdrop-filter: blur(22px) saturate(180%);
-    -webkit-backdrop-filter: blur(22px) saturate(180%);
+    backdrop-filter: blur(22px) saturate(180%); -webkit-backdrop-filter: blur(22px) saturate(180%);
     border: 1px solid rgba(255,255,255,.6);
     box-shadow: inset 0 1px 0 rgba(255,255,255,.9), 0 14px 40px -16px rgba(0,0,0,.28);
     transition: background .3s;
@@ -67,16 +61,16 @@
   nav.links a.jump:hover { background: rgba(0,0,0,.05); color: var(--ink); }
   .cta { font-size: 14.5px; font-weight: 700; color: #fff !important; background: var(--ink); padding: 11px 20px !important; border-radius: 100px; display: inline-flex; align-items: center; gap: 7px; transition: transform .2s, background .2s !important; }
   .cta:hover { background: #2a2a30 !important; transform: translateY(-1px); }
+  .btn:hover .ar, .cta:hover .ar { transform: translate(2px,-2px); }
   .menu-btn { display: none; background: none; border: 0; font-size: 24px; cursor: pointer; padding: 4px 8px; color: var(--ink); }
   @media (max-width: 780px) { nav.links .jump { display: none; } .menu-btn { display: inline-block; } }
 
-  /* ---------------- hero ---------------- */
+  /* hero */
   #hero { padding: 82px var(--pad) 0; }
   .hero-panel {
     max-width: var(--maxw); margin: 0 auto; border-radius: var(--r);
     min-height: min(84vh, 760px); position: relative; overflow: hidden;
-    display: flex; flex-direction: column; justify-content: flex-end;
-    padding: clamp(28px, 5vw, 64px);
+    display: flex; flex-direction: column; justify-content: flex-end; padding: clamp(28px, 5vw, 64px);
     background:
       radial-gradient(58% 74% at 8% 16%, rgba(239,154,61,.62), transparent 60%),
       radial-gradient(50% 66% at 92% 26%, rgba(246,189,114,.55), transparent 62%),
@@ -87,39 +81,34 @@
   .eyebrow { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 9px; font-size: 13.5px; font-weight: 600; color: var(--ink-2); background: rgba(255,255,255,.6); border: 1px solid rgba(255,255,255,.7); padding: 8px 15px; border-radius: 100px; margin-bottom: auto; width: fit-content; backdrop-filter: blur(6px); }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); animation: pulse 2.4s infinite; }
   @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(47,154,95,.45)} 70%{box-shadow:0 0 0 8px transparent} 100%{box-shadow:0 0 0 0 transparent} }
-  h1 { position: relative; z-index: 1; font-weight: 500; font-size: clamp(42px, 8.6vw, 118px); line-height: .98; letter-spacing: -.045em; margin: 28px 0 0; max-width: 14ch; color: #16130e; }
+  h1 { position: relative; z-index: 1; font-weight: 500; font-size: clamp(40px, 8vw, 112px); line-height: .98; letter-spacing: -.045em; margin: 28px 0 0; max-width: 15ch; color: #16130e; }
 
-  /* hero footer row (below panel) */
   .hero-foot { max-width: var(--maxw); margin: 40px auto 0; display: grid; grid-template-columns: 1fr; gap: 34px; align-items: end; }
   @media (min-width: 860px) { .hero-foot { grid-template-columns: 1.3fr .7fr; } }
-  .hero-sub { font-size: clamp(16px, 1.7vw, 20px); color: var(--ink-dim); max-width: 52ch; margin: 0 0 26px; line-height: 1.6; }
+  .hero-sub { font-size: clamp(16px, 1.7vw, 20px); color: var(--ink-dim); max-width: 54ch; margin: 0 0 26px; line-height: 1.6; }
   .hero-ctas { display: flex; flex-wrap: wrap; gap: 12px; }
   .btn { font-size: 15px; font-weight: 700; padding: 15px 28px; border-radius: 100px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; transition: transform .2s, background .2s, border-color .2s, box-shadow .2s; }
   .btn-primary { background: var(--ink); color: #fff; }
   .btn-primary:hover { background: #2a2a30; transform: translateY(-2px); box-shadow: 0 14px 34px rgba(0,0,0,.18); }
   .btn-ghost { border: 1px solid var(--line-2); color: var(--ink); }
   .btn-ghost:hover { border-color: var(--ink); transform: translateY(-2px); }
-  .btn:hover .ar, .cta:hover .ar { transform: translate(2px,-2px); }
   .metric { justify-self: start; }
   @media (min-width: 860px) { .metric { justify-self: end; text-align: right; } }
   .metric .ml { font-size: 13px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 8px; }
   .metric .mv { font-weight: 800; font-size: clamp(38px, 5.4vw, 64px); letter-spacing: -.04em; font-variant-numeric: tabular-nums; line-height: 1; }
-  .metric .mv small { font-weight: 600; font-size: .34em; color: var(--ink-dim); letter-spacing: 0; margin-left: 8px; }
 
-  /* ---------------- sections ---------------- */
+  /* sections */
   section.block { padding-block: clamp(72px, 11vw, 150px); }
   .kicker { font-size: 13px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--amber-deep); margin: 0 0 22px; }
   h2 { font-weight: 500; font-size: clamp(28px, 4.6vw, 56px); line-height: 1.04; letter-spacing: -.04em; margin: 0 0 22px; max-width: 22ch; text-wrap: balance; }
   .lead { font-size: clamp(15px, 1.5vw, 19px); color: var(--ink-dim); max-width: 60ch; line-height: 1.65; }
 
-  /* statement (HTTPS moment) */
   .statement { border-radius: var(--r); padding: clamp(40px, 6vw, 88px); background: linear-gradient(150deg, #fceedd, #fef8f0); position: relative; overflow: hidden; }
   .statement::before { content: ""; position: absolute; inset: -30% -10% auto auto; width: 460px; height: 460px; background: radial-gradient(circle, rgba(239,154,61,.42), transparent 66%); filter: blur(30px); }
-  .statement .s-big { position: relative; z-index: 1; font-weight: 500; font-size: clamp(26px, 4.2vw, 50px); line-height: 1.08; letter-spacing: -.035em; margin: 0; max-width: 20ch; color: #17120b; }
+  .statement .s-big { position: relative; z-index: 1; font-weight: 500; font-size: clamp(26px, 4.2vw, 50px); line-height: 1.08; letter-spacing: -.035em; margin: 0; max-width: 21ch; color: #17120b; }
   .statement .s-big em { font-style: normal; color: var(--amber-deep); }
   .statement p { position: relative; z-index: 1; color: var(--ink-2); font-size: clamp(15px,1.5vw,18px); max-width: 64ch; margin: 28px 0 0; line-height: 1.7; }
 
-  /* use-case cards */
   .cards { display: grid; grid-template-columns: 1fr; gap: 18px; margin-top: 50px; }
   @media (min-width: 700px) { .cards { grid-template-columns: 1fr 1fr; } }
   .card { border-radius: var(--r); padding: 36px; min-height: 250px; display: flex; flex-direction: column; border: 1px solid var(--line); background: var(--bg); transition: transform .25s, box-shadow .25s; }
@@ -132,7 +121,6 @@
   .card p { color: var(--ink-dim); font-size: 15px; line-height: 1.6; margin: 0; }
   .card code { background: rgba(0,0,0,.06); padding: 1px 6px; border-radius: 6px; font-size: .92em; }
 
-  /* split statement */
   .split { display: grid; grid-template-columns: 1fr; gap: 40px; align-items: center; }
   @media (min-width: 900px) { .split { grid-template-columns: 1fr 1fr; gap: 64px; } }
   .eqcard { border-radius: var(--r); padding: clamp(30px,4vw,52px); background: #0d0d10; color: #f4f1ea; }
@@ -147,17 +135,15 @@
   .fact strong { display: block; font-weight: 700; font-size: 16px; margin-bottom: 3px; }
   .fact span.d { color: var(--ink-dim); font-size: 14.5px; }
 
-  /* ecosystem */
   .eco { display: grid; grid-template-columns: 1fr; gap: 16px; margin-top: 50px; }
   @media (min-width: 620px) { .eco { grid-template-columns: 1fr 1fr; } }
   @media (min-width: 1000px) { .eco { grid-template-columns: repeat(4,1fr); } }
-  .eco-card { border-radius: var(--r); padding: 28px; border: 1px solid var(--line); background: var(--bg); transition: transform .25s, box-shadow .25s, border-color .25s; }
+  .eco-card { border-radius: var(--r); padding: 28px; border: 1px solid var(--line); background: var(--bg); transition: transform .25s, box-shadow .25s; }
   .eco-card:hover { transform: translateY(-4px); box-shadow: 0 20px 50px -28px rgba(0,0,0,.24); }
   .eco-card .et { font-size: 11.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--amber-deep); margin-bottom: 18px; }
   .eco-card h4 { font-weight: 700; font-size: 19px; letter-spacing: -.02em; margin: 0 0 8px; }
   .eco-card p { color: var(--ink-dim); font-size: 14px; line-height: 1.55; margin: 0; }
 
-  /* live stats */
   .stats { display: grid; grid-template-columns: repeat(2,1fr); gap: 0; margin-top: 46px; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
   @media (min-width: 720px) { .stats { grid-template-columns: repeat(4,1fr); } }
   .stat { padding: 32px 26px; border-right: 1px solid var(--line); border-top: 1px solid var(--line); }
@@ -168,7 +154,6 @@
   .stat .sv { font-weight: 800; font-size: clamp(28px,3.8vw,44px); letter-spacing: -.035em; font-variant-numeric: tabular-nums; line-height: 1; }
   .stat .sv.small { font-weight: 700; font-size: clamp(15px,1.9vw,21px); word-break: break-all; }
 
-  /* get started */
   #get .statement { text-align: center; }
   #get h2 { margin-inline: auto; }
   #get .lead { margin: 0 auto 30px; position: relative; z-index: 1; }
@@ -178,7 +163,6 @@
   .copy:hover { color: var(--ink); background: rgba(0,0,0,.06); }
   #get .hero-ctas { position: relative; z-index: 1; justify-content: center; }
 
-  /* footer */
   footer { border-top: 1px solid var(--line); padding-block: 46px 60px; }
   .foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 22px; align-items: flex-start; }
   .fbrand { display: flex; align-items: center; gap: 10px; } .fbrand img { width: 24px; height: 24px; border-radius: 6px; } .fbrand span { font-weight: 800; font-size: 19px; letter-spacing: -.02em; }
@@ -187,7 +171,6 @@
   .foot-links a:hover { color: var(--ink); background: rgba(0,0,0,.05); }
   .foot-note { font-size: 12.5px; color: var(--ink-faint); margin-top: 26px; max-width: 68ch; line-height: 1.7; }
 
-  /* reveal */
   .rv { opacity: 0; transform: translateY(22px); transition: opacity .8s cubic-bezier(.16,1,.3,1), transform .8s cubic-bezier(.16,1,.3,1); }
   .rv.in { opacity: 1; transform: none; }
   .rv[data-d="1"]{transition-delay:.07s} .rv[data-d="2"]{transition-delay:.14s} .rv[data-d="3"]{transition-delay:.21s} .rv[data-d="4"]{transition-delay:.28s}
@@ -200,9 +183,9 @@
   <div class="nav">
     <a class="brand" href="#top"><img src="assets/logo-icon.svg" alt=""><span>haze</span></a>
     <nav class="links">
-      <a class="jump" href="#uses">use cases</a>
-      <a class="jump" href="#private">how it works</a>
-      <a class="jump" href="#eco">ecosystem</a>
+      <a class="jump" href="#why">why</a>
+      <a class="jump" href="#how">how</a>
+      <a class="jump" href="#do">do</a>
       <a class="jump" href="https://github.com/Pranav00x/haze" target="_blank" rel="noopener">github</a>
       <a class="cta" href="https://wallet.hazeprotocol.xyz" target="_blank" rel="noopener">Open wallet <svg class="ar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M8 7h9v9"/></svg></a>
       <button class="menu-btn" id="menuBtn" aria-label="menu">≡</button>
@@ -215,15 +198,15 @@
   <!-- HERO -->
   <section id="hero">
     <div class="hero-panel">
-      <div class="eyebrow"><span class="dot"></span> Public testnet · live network</div>
-      <h1>Confidential money, onchain.</h1>
+      <div class="eyebrow"><span class="dot"></span> Public testnet · live right now</div>
+      <h1>Money that minds its own business.</h1>
     </div>
     <div class="hero-foot">
       <div>
-        <p class="hero-sub">The Haze protocol keeps amounts and balances confidential on a fully public, verifiable Mimblewimble blockchain. No accounts, no addresses — and the transaction graph cuts through to nothing.</p>
+        <p class="hero-sub">Haze is a Mimblewimble blockchain where the amount stays hidden, spent coins leave no trail, and there's no account to trace back to you — all on a network anyone can check for themselves. Confidential, not secret.</p>
         <div class="hero-ctas">
           <a class="btn btn-primary" href="https://wallet.hazeprotocol.xyz" target="_blank" rel="noopener">Open the wallet <svg class="ar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M8 7h9v9"/></svg></a>
-          <a class="btn btn-ghost" href="#private">See how it works</a>
+          <a class="btn btn-ghost" href="#how">See how it works</a>
         </div>
       </div>
       <div class="metric">
@@ -233,89 +216,88 @@
     </div>
   </section>
 
-  <!-- STATEMENT: the moment -->
-  <section class="block"><div class="wrap">
+  <!-- WHY -->
+  <section class="block" id="why"><div class="wrap">
     <div class="statement rv">
-      <p class="s-big">Haze is the <em>HTTPS moment</em> for money on public blockchains.</p>
-      <p>Just as HTTPS made it safe to bank and shop over an open internet, Haze makes it safe to hold and move money on an open chain — amounts and balances stay encrypted and unlinkable, while every block remains publicly verifiable by anyone. Privacy and openness, at the same time, with no trusted intermediary.</p>
+      <p class="s-big">On most chains, your balance becomes a <em>permanent public record</em> the moment you send.</p>
+      <p>Make a single payment and anyone can walk the rest of your history — what you hold, who you've paid, what you're worth — for as long as the chain exists, with no way to take it back. For actual money, that's not transparency; it's a standing leak. Haze was built the other way around: the network can prove your payment is valid without ever being told what's inside it.</p>
     </div>
   </div></section>
 
-  <!-- USE CASES -->
-  <section class="block" id="uses"><div class="wrap">
-    <p class="kicker rv">Built for the people who'd rather not publish their finances</p>
-    <h2 class="rv" data-d="1">Confidentiality isn't a feature here. It's the default.</h2>
-    <p class="lead rv" data-d="2">Everything below is live on the public testnet today — not a roadmap.</p>
-    <div class="cards">
-      <div class="card tint rv" data-d="1">
-        <div class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20 20 4M20 4h-8M20 4v8"/></svg></div>
-        <h3>Confidential transfers</h3>
-        <p>Send value where the amount is cryptographically hidden and the sender-to-receiver link is cut through before it ever lands on chain.</p>
-      </div>
-      <div class="card rv" data-d="2">
-        <div class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M16 12v1.5a2.5 2.5 0 0 0 5 0V12a9 9 0 1 0-4 7.5"/></svg></div>
-        <h3>Pay a name, not an address</h3>
-        <p>Claim a free, permanent <code>.haze</code> name and receive payments to it — no copy-pasting 64-character keys, no address reuse.</p>
-      </div>
-      <div class="card rv" data-d="1">
-        <div class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12a8 8 0 0 1 14-5.3M20 4v4h-4M20 12a8 8 0 0 1-14 5.3M4 20v-4h4"/></svg></div>
-        <h3>Rotate your entire seed</h3>
-        <p>Move every coin you own to a brand-new recovery phrase in a single on-chain sweep — a fresh identity with no link to the old one.</p>
-      </div>
-      <div class="card tint rv" data-d="2">
-        <div class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 4 6v6c0 5 3.5 7.5 8 9 4.5-1.5 8-4 8-9V6l-8-3Z"/></svg></div>
-        <h3>Secure the network</h3>
-        <p>Stake an output straight from the wallet and become a validator. Proof-of-stake with an on-chain, trustlessly-derived active set.</p>
-      </div>
-    </div>
-  </div></section>
-
-  <!-- SPLIT: how it stays private -->
-  <section class="block" id="private"><div class="wrap">
-    <p class="kicker rv">How it stays private</p>
-    <h2 class="rv" data-d="1">One equation checks the whole block. It never needs to know who.</h2>
+  <!-- HOW -->
+  <section class="block" id="how"><div class="wrap">
+    <p class="kicker rv">The idea</p>
+    <h2 class="rv" data-d="1">The network confirms your payment without learning a thing about it.</h2>
     <div class="split" style="margin-top:44px">
       <div class="rv" data-d="1">
-        <p class="lead">An output is a Pedersen commitment hiding the amount, a Bulletproof proving the math holds, and a sealed note only the owner can read. There are no balances to update and no addresses to route to.</p>
+        <p class="lead">There are three things a Haze block never records — and they happen to be the three things that would give you away.</p>
         <div class="facts">
-          <div class="fact"><span class="n">01</span><span><strong>Amounts are hidden</strong><span class="d">Commitments and range proofs verify a spend is valid without ever revealing what it's worth.</span></span></div>
-          <div class="fact"><span class="n">02</span><span><strong>The graph is erased</strong><span class="d">Spent inputs and outputs cut through — they cancel out before landing on chain.</span></span></div>
-          <div class="fact"><span class="n">03</span><span><strong>History stays small</strong><span class="d">Only kernels and the current UTXO set are kept; the chain forgets the rest.</span></span></div>
+          <div class="fact"><span class="n">01</span><span><strong>What you hold</strong><span class="d">Every balance is a commitment carrying a range proof. The proof shows the spend adds up; the amount itself never appears anywhere on chain.</span></span></div>
+          <div class="fact"><span class="n">02</span><span><strong>Who you paid</strong><span class="d">Spent inputs and their outputs cut through and cancel before the block is even written. The link between two people isn't hidden — it's deleted.</span></span></div>
+          <div class="fact"><span class="n">03</span><span><strong>Who you are</strong><span class="d">No accounts, no addresses. Owning a coin just means knowing the secret that unlocks it. Nothing stored on chain points back to a person.</span></span></div>
         </div>
       </div>
       <div class="eqcard rv" data-d="2">
-        <div class="eql">Block validity, in full</div>
+        <div class="eql">Everything a block is checked against</div>
         <div class="eq"><span class="in">inputs</span> <span class="op">−</span> <span class="out">outputs</span> <span class="op">+</span> fees <span class="op">=</span> <span class="zero">0</span></div>
-        <p class="eqn">That's the whole check. If the commitments balance, money is conserved — no need to know who, or how much. Everything else the ledger could have remembered simply isn't stored.</p>
+        <p class="eqn">That single line is the entire validity rule. When the coins in, the coins out, and the fees all cancel to zero, the money is conserved — and the network verified it without ever being handed an amount, a name, or an address.</p>
       </div>
     </div>
   </div></section>
 
-  <!-- STATEMENT: no compromise -->
+  <!-- DO -->
+  <section class="block" id="do"><div class="wrap">
+    <p class="kicker rv">What you can actually do</p>
+    <h2 class="rv" data-d="1">A working wallet, not a whitepaper.</h2>
+    <p class="lead rv" data-d="2">Everything here runs against the live testnet today — open it and try.</p>
+    <div class="cards">
+      <div class="card tint rv" data-d="1">
+        <div class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20 20 4M20 4h-8M20 4v8"/></svg></div>
+        <h3>Send without announcing it</h3>
+        <p>Pay anyone with the amount kept between the two of you, and the trail linking you severed the moment it settles.</p>
+      </div>
+      <div class="card rv" data-d="2">
+        <div class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M16 12v1.5a2.5 2.5 0 0 0 5 0V12a9 9 0 1 0-4 7.5"/></svg></div>
+        <h3>Get paid to a name</h3>
+        <p>Claim a free, permanent <code>.haze</code> name and receive to it — no pasting 64-character keys, no address you reuse and regret.</p>
+      </div>
+      <div class="card rv" data-d="1">
+        <div class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12a8 8 0 0 1 14-5.3M20 4v4h-4M20 12a8 8 0 0 1-14 5.3M4 20v-4h4"/></svg></div>
+        <h3>Trade in your whole wallet</h3>
+        <p>Sweep every coin you own onto a brand-new recovery phrase in one move, leaving nothing that ties the fresh wallet to the old one.</p>
+      </div>
+      <div class="card tint rv" data-d="2">
+        <div class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 4 6v6c0 5 3.5 7.5 8 9 4.5-1.5 8-4 8-9V6l-8-3Z"/></svg></div>
+        <h3>Help keep it running</h3>
+        <p>Stake an output straight from the wallet and start validating. The active set is worked out on chain, so no one has to be trusted to run it.</p>
+      </div>
+    </div>
+  </div></section>
+
+  <!-- STACK -->
   <section class="block"><div class="wrap">
     <div class="statement rv">
-      <p class="s-big">Confidentiality with <em>no architectural compromise.</em></p>
-      <p>Haze is its own Layer 1 — one Rust core with no native dependencies, compiling to WebAssembly, Android, iOS, and desktop so every wallet runs identical consensus logic. No trusted setup, no privileged sequencer, no closed chain. Just Ristretto255, Bulletproofs, and full public verifiability.</p>
+      <p class="s-big">One Rust engine, from a browser tab to <em>the phone in your pocket.</em></p>
+      <p>The core has no native dependencies, so the exact same consensus code compiles down to WebAssembly, Android, iOS, and desktop. Every wallet, on every device, is running identical rules — nothing to trust between them, nothing that behaves differently because of where it happens to run.</p>
     </div>
   </div></section>
 
   <!-- ECOSYSTEM -->
-  <section class="block" id="eco"><div class="wrap">
-    <p class="kicker rv">Built on Haze</p>
-    <h2 class="rv" data-d="1">A whole stack, from one core.</h2>
-    <p class="lead rv" data-d="2">Real, running software — not a promise.</p>
+  <section class="block"><div class="wrap">
+    <p class="kicker rv">Already built on it</p>
+    <h2 class="rv" data-d="1">Real, running software — not a promise.</h2>
     <div class="eco">
-      <a class="eco-card rv" data-d="1" href="https://wallet.hazeprotocol.xyz" target="_blank" rel="noopener"><div class="et">web + android</div><h4>Wallet</h4><p>Send, receive, claim names, stake, and rotate your seed — in the browser or on your phone.</p></a>
-      <div class="eco-card rv" data-d="2"><div class="et">explorer</div><h4>Block explorer</h4><p>Browse blocks, kernels, and the live chain tip — served straight from the node itself.</p></div>
-      <div class="eco-card rv" data-d="3"><div class="et">nft market</div><h4>Marketplace</h4><p>A trustless atomic-swap marketplace where a sale can't be scammed by either side.</p></div>
-      <a class="eco-card rv" data-d="4" href="https://github.com/Pranav00x/haze/tree/main/agent-sdk" target="_blank" rel="noopener"><div class="et">typescript</div><h4>Agent SDK</h4><p>Private, agent-to-agent payments for AI agents that need to pay without leaking their spend.</p></a>
+      <a class="eco-card rv" data-d="1" href="https://wallet.hazeprotocol.xyz" target="_blank" rel="noopener"><div class="et">web + android</div><h4>Wallet</h4><p>Send, receive, name, stake, and rotate your seed — in the browser or in your pocket.</p></a>
+      <div class="eco-card rv" data-d="2"><div class="et">explorer</div><h4>Block explorer</h4><p>Walk the blocks, the kernels, and the current tip — served by the node itself.</p></div>
+      <div class="eco-card rv" data-d="3"><div class="et">nft market</div><h4>Marketplace</h4><p>Buy and sell where the swap is atomic — neither side can take the money and vanish.</p></div>
+      <a class="eco-card rv" data-d="4" href="https://github.com/Pranav00x/haze/tree/main/agent-sdk" target="_blank" rel="noopener"><div class="et">typescript</div><h4>Agent SDK</h4><p>Payments for AI agents that need to settle up without leaking who they pay.</p></a>
     </div>
   </div></section>
 
   <!-- LIVE -->
   <section class="block"><div class="wrap">
-    <p class="kicker rv">Live network</p>
-    <h2 class="rv" data-d="1">Running right now. Straight from a node.</h2>
+    <p class="kicker rv">Not a mock-up</p>
+    <h2 class="rv" data-d="1">Every figure here is coming off a running node.</h2>
     <div class="stats rv" data-d="2">
       <div class="stat"><div class="sl">Block height</div><div class="sv" id="st-height">—</div></div>
       <div class="stat"><div class="sl">Active validators</div><div class="sv" id="st-val">—</div></div>
@@ -324,12 +306,12 @@
     </div>
   </div></section>
 
-  <!-- GET STARTED -->
+  <!-- GET -->
   <section class="block" id="get"><div class="wrap">
     <div class="statement rv">
-      <p class="kicker" style="color:var(--amber-deep)">Get started</p>
-      <h2 style="max-width:18ch">Join the testnet in one command.</h2>
-      <p class="lead">Grab a node binary from the releases, or point your own node at the public seed and start syncing.</p>
+      <p class="kicker" style="color:var(--amber-deep)">Run it yourself</p>
+      <h2 style="max-width:16ch">Join the network in one command.</h2>
+      <p class="lead">Pull a prebuilt node from the releases, or point your own at the public seed and watch it sync up to the tip.</p>
       <div class="code-line"><code id="joinCmd">haze node --peers wss://haze-b3l9.onrender.com/v1/p2p/ws</code><button class="copy" id="copyBtn">copy</button></div>
       <div class="hero-ctas">
         <a class="btn btn-primary" href="https://github.com/Pranav00x/haze/releases" target="_blank" rel="noopener">Download a node <svg class="ar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M8 7h9v9"/></svg></a>
@@ -357,7 +339,7 @@
 <script>
   const hdr = document.getElementById("hdr");
   addEventListener("scroll", () => hdr.classList.toggle("scrolled", scrollY > 20), { passive: true });
-  document.getElementById("menuBtn").addEventListener("click", () => document.getElementById("uses").scrollIntoView({ behavior: "smooth" }));
+  document.getElementById("menuBtn").addEventListener("click", () => document.getElementById("why").scrollIntoView({ behavior: "smooth" }));
 
   const io = new IntersectionObserver((es) => es.forEach(e => { if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); } }), { threshold: .12, rootMargin: "0px 0px -6% 0px" });
   document.querySelectorAll(".rv").forEach(el => io.observe(el));
