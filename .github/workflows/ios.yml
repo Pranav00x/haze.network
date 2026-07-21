@@ -11,30 +11,17 @@ name: iOS
 # SwiftUI app shell (Info.plist, asset catalog, signing team) still
 # needs to be wired up once in Xcode by a human, a GUI-only step with
 # no clean headless equivalent. See ios/README.md.
+#
+# Manual-trigger only (workflow_dispatch). The iOS bindings have a known
+# unresolved uniffi + SwiftPM XCFramework module-import issue (the
+# generated HazeCoreFFI.swift can't see RustBuffer/RustCallStatus from
+# the framework's C module); iOS is deprioritized for now. Running on
+# every core/** push just painted the repo CI-red on unrelated chain
+# changes, so it's been taken off auto-run until someone picks iOS back
+# up - flip the `on:` block back to push/pull_request then.
 
 on:
-  push:
-    branches: ["**"]
-    paths:
-      - "src/ffi.rs"
-      - "core/**"
-      - "crypto/**"
-      - "wallet/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "ios/**"
-      - ".github/workflows/ios.yml"
-  pull_request:
-    branches: ["main"]
-    paths:
-      - "src/ffi.rs"
-      - "core/**"
-      - "crypto/**"
-      - "wallet/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "ios/**"
-      - ".github/workflows/ios.yml"
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
