@@ -3,297 +3,196 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>haze — a ledger that forgets</title>
-<meta name="description" content="Haze is a Mimblewimble L1. No accounts, no address books, no smart contracts — spent transactions cut through and vanish, so the chain forgets who paid whom by design.">
+<title>Haze — Confidential money, onchain</title>
+<meta name="description" content="The Haze protocol keeps amounts and balances confidential on a fully public, verifiable Mimblewimble blockchain — private money without a private chain.">
 <link rel="icon" type="image/svg+xml" href="assets/logo-icon.svg">
-<meta property="og:title" content="haze — a ledger that forgets">
-<meta property="og:description" content="A Mimblewimble L1 built for privacy. Balances and transaction graphs are never public on-chain.">
-<meta property="og:type" content="website">
+<meta property="og:title" content="Haze — Confidential money, onchain">
+<meta property="og:description" content="Confidential assets on a public, verifiable Mimblewimble L1.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,340..600&family=JetBrains+Mono:wght@400;500;600&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root {
-    color-scheme: dark;
-    --bg:        #0a090d;
-    --fog-0:     #101018;
-    --fog-1:     #16151f;
-    --fog-2:     #201e2b;
-    --ink:       #f2efe8;
-    --ink-dim:   #a09eae;
-    --ink-faint: #66647a;
-    --line:      rgba(255,255,255,0.08);
-    --line-2:    rgba(255,255,255,0.14);
-    --amber:     #e7a85a;
-    --amber-hi:  #f4c483;
-    --mist:      #9c9ac7;
-    --ok:        #7ed9a3;
+    color-scheme: light;
+    --bg:        #ffffff;
+    --warm:      #fdf8f1;
+    --ink:       #0d0d10;
+    --ink-2:     #33333a;
+    --ink-dim:   #6a6a72;
+    --ink-faint: #a2a2aa;
+    --line:      rgba(0,0,0,0.10);
+    --line-2:    rgba(0,0,0,0.16);
 
-    --serif: "Fraunces", ui-serif, Georgia, serif;
-    --sans:  "Public Sans", ui-sans-serif, system-ui, sans-serif;
-    --mono:  "JetBrains Mono", ui-monospace, monospace;
+    --amber:      #ef9a3d;
+    --amber-soft: #f6bd72;
+    --amber-pale: #fbe6c8;
+    --amber-deep: #d47a1e;
+    --ok:         #2f9a5f;
 
-    --maxw: 1180px;
-    --pad: clamp(20px, 5vw, 64px);
+    --font: "Manrope", ui-sans-serif, system-ui, sans-serif;
+    --maxw: 1240px;
+    --pad: clamp(18px, 4vw, 48px);
+    --r: 30px;
   }
 
   * { box-sizing: border-box; }
   html { scroll-behavior: smooth; }
   @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
-
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--ink);
-    font-family: var(--sans);
-    line-height: 1.6;
-    -webkit-font-smoothing: antialiased;
-    overflow-x: hidden;
-  }
-  ::selection { background: var(--amber); color: #1a1206; }
-
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font); line-height: 1.55; -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+  ::selection { background: var(--amber); color: #fff; }
   a { color: inherit; text-decoration: none; }
   .wrap { max-width: var(--maxw); margin: 0 auto; padding-inline: var(--pad); }
 
-  /* scroll-progress hairline */
-  #progress {
-    position: fixed; top: 0; left: 0; height: 2px; width: 0%;
-    background: linear-gradient(90deg, var(--amber), var(--amber-hi));
-    z-index: 100; transition: width .1s linear;
-    box-shadow: 0 0 12px rgba(231,168,90,.6);
-  }
-
   /* ---------------- nav ---------------- */
-  header {
-    position: fixed; inset: 0 0 auto 0; z-index: 90;
-    transition: background .4s ease, backdrop-filter .4s ease, border-color .4s ease;
-    border-bottom: 1px solid transparent;
-  }
-  header.scrolled {
-    background: color-mix(in oklab, var(--bg) 72%, transparent);
-    backdrop-filter: blur(16px) saturate(140%);
-    -webkit-backdrop-filter: blur(16px) saturate(140%);
-    border-bottom-color: var(--line);
-  }
-  .nav {
-    max-width: var(--maxw); margin: 0 auto; padding: 16px var(--pad);
-    display: flex; align-items: center; justify-content: space-between; gap: 20px;
-  }
+  header { position: fixed; inset: 0 0 auto 0; z-index: 90; transition: background .35s, backdrop-filter .35s, border-color .35s; border-bottom: 1px solid transparent; }
+  header.scrolled { background: rgba(255,255,255,.78); backdrop-filter: blur(14px) saturate(150%); -webkit-backdrop-filter: blur(14px) saturate(150%); border-bottom-color: var(--line); }
+  .nav { max-width: var(--maxw); margin: 0 auto; padding: 18px var(--pad); display: flex; align-items: center; justify-content: space-between; gap: 20px; }
   .brand { display: flex; align-items: center; gap: 10px; }
-  .brand img { width: 26px; height: 26px; display: block; }
-  .brand span { font-family: var(--mono); font-weight: 600; font-size: 15px; letter-spacing: -.01em; }
-  nav.links { display: flex; align-items: center; gap: 4px; }
-  nav.links a {
-    font-family: var(--mono); font-size: 13px; color: var(--ink-dim);
-    padding: 8px 14px; border-radius: 100px; transition: color .2s, background .2s;
-  }
-  nav.links a:hover { color: var(--ink); background: rgba(255,255,255,.05); }
-  .cta-pill {
-    font-family: var(--mono); font-size: 13px; font-weight: 600;
-    color: #1a1206 !important; background: var(--amber);
-    padding: 9px 18px !important; border-radius: 100px;
-    transition: transform .2s, box-shadow .2s, background .2s !important;
-  }
-  .cta-pill:hover { background: var(--amber-hi) !important; transform: translateY(-1px); box-shadow: 0 8px 24px rgba(231,168,90,.32); }
-  .menu-btn { display: none; background: none; border: 0; color: var(--ink); font-family: var(--mono); font-size: 20px; cursor: pointer; padding: 6px; }
-
-  @media (max-width: 720px) {
-    nav.links .jump { display: none; }
-    .menu-btn { display: block; }
-  }
+  .brand img { width: 27px; height: 27px; display: block; border-radius: 7px; }
+  .brand span { font-weight: 800; font-size: 21px; letter-spacing: -.03em; }
+  nav.links { display: flex; align-items: center; gap: 6px; }
+  nav.links a.jump { font-size: 14.5px; color: var(--ink-2); padding: 9px 14px; border-radius: 100px; font-weight: 500; transition: background .2s, color .2s; }
+  nav.links a.jump:hover { background: rgba(0,0,0,.05); color: var(--ink); }
+  .cta { font-size: 14.5px; font-weight: 700; color: #fff !important; background: var(--ink); padding: 11px 20px !important; border-radius: 100px; display: inline-flex; align-items: center; gap: 7px; transition: transform .2s, background .2s !important; }
+  .cta:hover { background: #2a2a30 !important; transform: translateY(-1px); }
+  .menu-btn { display: none; background: none; border: 0; font-size: 24px; cursor: pointer; padding: 4px 8px; color: var(--ink); }
+  @media (max-width: 780px) { nav.links .jump { display: none; } .menu-btn { display: inline-block; } }
 
   /* ---------------- hero ---------------- */
-  #hero {
-    position: relative; min-height: 100svh;
-    display: flex; align-items: center;
-    overflow: hidden;
-  }
-  #fog { position: absolute; inset: 0; width: 100%; height: 100%; display: block; z-index: 0; }
-  .hero-scrim {
-    position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  #hero { padding: 82px var(--pad) 0; }
+  .hero-panel {
+    max-width: var(--maxw); margin: 0 auto; border-radius: var(--r);
+    min-height: min(84vh, 760px); position: relative; overflow: hidden;
+    display: flex; flex-direction: column; justify-content: flex-end;
+    padding: clamp(28px, 5vw, 64px);
     background:
-      radial-gradient(120% 90% at 15% 40%, rgba(10,9,13,.72), transparent 60%),
-      linear-gradient(180deg, rgba(10,9,13,.4) 0%, transparent 25%, transparent 60%, var(--bg) 100%);
+      radial-gradient(58% 74% at 8% 16%, rgba(239,154,61,.62), transparent 60%),
+      radial-gradient(50% 66% at 92% 26%, rgba(246,189,114,.55), transparent 62%),
+      radial-gradient(64% 70% at 30% 108%, rgba(212,122,30,.28), transparent 60%),
+      linear-gradient(155deg, #fce6cd 0%, #fdf5ea 46%, #fef9f2 100%);
   }
-  .hero-inner { position: relative; z-index: 2; width: 100%; padding-block: 120px 80px; }
+  .hero-panel::after { content: ""; position: absolute; inset: 0; background: radial-gradient(70% 60% at 62% 40%, rgba(255,255,255,.55), transparent 70%); pointer-events: none; }
+  .eyebrow { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 9px; font-size: 13.5px; font-weight: 600; color: var(--ink-2); background: rgba(255,255,255,.6); border: 1px solid rgba(255,255,255,.7); padding: 8px 15px; border-radius: 100px; margin-bottom: auto; width: fit-content; backdrop-filter: blur(6px); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); animation: pulse 2.4s infinite; }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(47,154,95,.45)} 70%{box-shadow:0 0 0 8px transparent} 100%{box-shadow:0 0 0 0 transparent} }
+  h1 { position: relative; z-index: 1; font-weight: 500; font-size: clamp(42px, 8.6vw, 118px); line-height: .98; letter-spacing: -.045em; margin: 28px 0 0; max-width: 14ch; color: #16130e; }
 
-  .eyebrow {
-    display: inline-flex; align-items: center; gap: 9px;
-    font-family: var(--mono); font-size: 12.5px; letter-spacing: .04em; color: var(--ink-dim);
-    padding: 7px 14px; border: 1px solid var(--line); border-radius: 100px;
-    background: color-mix(in oklab, var(--fog-1) 55%, transparent);
-    backdrop-filter: blur(6px); margin-bottom: 28px;
-  }
-  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 0 rgba(126,217,163,.5); animation: pulse 2.4s infinite; }
-  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(126,217,163,.45)} 70%{box-shadow:0 0 0 9px transparent} 100%{box-shadow:0 0 0 0 transparent} }
+  /* hero footer row (below panel) */
+  .hero-foot { max-width: var(--maxw); margin: 40px auto 0; display: grid; grid-template-columns: 1fr; gap: 34px; align-items: end; }
+  @media (min-width: 860px) { .hero-foot { grid-template-columns: 1.3fr .7fr; } }
+  .hero-sub { font-size: clamp(16px, 1.7vw, 20px); color: var(--ink-dim); max-width: 52ch; margin: 0 0 26px; line-height: 1.6; }
+  .hero-ctas { display: flex; flex-wrap: wrap; gap: 12px; }
+  .btn { font-size: 15px; font-weight: 700; padding: 15px 28px; border-radius: 100px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; transition: transform .2s, background .2s, border-color .2s, box-shadow .2s; }
+  .btn-primary { background: var(--ink); color: #fff; }
+  .btn-primary:hover { background: #2a2a30; transform: translateY(-2px); box-shadow: 0 14px 34px rgba(0,0,0,.18); }
+  .btn-ghost { border: 1px solid var(--line-2); color: var(--ink); }
+  .btn-ghost:hover { border-color: var(--ink); transform: translateY(-2px); }
+  .arr { transition: transform .2s; } .btn:hover .arr { transform: translate(2px,-2px); }
+  .metric { justify-self: start; }
+  @media (min-width: 860px) { .metric { justify-self: end; text-align: right; } }
+  .metric .ml { font-size: 13px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 8px; }
+  .metric .mv { font-weight: 800; font-size: clamp(38px, 5.4vw, 64px); letter-spacing: -.04em; font-variant-numeric: tabular-nums; line-height: 1; }
+  .metric .mv small { font-weight: 600; font-size: .34em; color: var(--ink-dim); letter-spacing: 0; margin-left: 8px; }
 
-  h1 {
-    font-family: var(--serif); font-weight: 380;
-    font-size: clamp(46px, 9vw, 116px);
-    line-height: 0.96; letter-spacing: -.035em;
-    margin: 0 0 26px; max-width: 15ch;
-    font-variation-settings: "opsz" 144;
-  }
-  h1 em { font-style: italic; font-weight: 420; color: var(--amber); font-variation-settings: "opsz" 144; }
-  .hero-sub {
-    font-size: clamp(16px, 2vw, 20px); color: var(--ink-dim);
-    max-width: 46ch; margin: 0 0 38px; line-height: 1.65;
-  }
-  .hero-ctas { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
-  .btn {
-    font-family: var(--mono); font-size: 14px; font-weight: 500;
-    padding: 14px 26px; border-radius: 100px; cursor: pointer;
-    display: inline-flex; align-items: center; gap: 8px;
-    transition: transform .2s ease, box-shadow .2s ease, background .2s, border-color .2s, color .2s;
-  }
-  .btn-primary { background: var(--amber); color: #1a1206; font-weight: 600; }
-  .btn-primary:hover { background: var(--amber-hi); transform: translateY(-2px); box-shadow: 0 12px 30px rgba(231,168,90,.3); }
-  .btn-ghost { border: 1px solid var(--line-2); color: var(--ink); background: transparent; }
-  .btn-ghost:hover { border-color: var(--ink-faint); background: rgba(255,255,255,.04); }
-  .btn .arr { transition: transform .2s; }
-  .btn:hover .arr { transform: translateX(3px); }
+  /* ---------------- sections ---------------- */
+  section.block { padding-block: clamp(72px, 11vw, 150px); }
+  .kicker { font-size: 13px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--amber-deep); margin: 0 0 22px; }
+  h2 { font-weight: 500; font-size: clamp(28px, 4.6vw, 56px); line-height: 1.04; letter-spacing: -.04em; margin: 0 0 22px; max-width: 22ch; text-wrap: balance; }
+  .lead { font-size: clamp(15px, 1.5vw, 19px); color: var(--ink-dim); max-width: 60ch; line-height: 1.65; }
 
-  .scroll-hint {
-    position: absolute; bottom: 26px; left: 50%; transform: translateX(-50%); z-index: 2;
-    font-family: var(--mono); font-size: 11px; letter-spacing: .18em; text-transform: uppercase;
-    color: var(--ink-faint); display: flex; flex-direction: column; align-items: center; gap: 10px;
-  }
-  .scroll-hint .bar { width: 1px; height: 34px; background: linear-gradient(var(--ink-faint), transparent); animation: drop 2.2s infinite; }
-  @keyframes drop { 0%{opacity:0; transform:scaleY(.3); transform-origin:top} 40%{opacity:1} 100%{opacity:0; transform:scaleY(1); transform-origin:top} }
+  /* statement (HTTPS moment) */
+  .statement { border-radius: var(--r); padding: clamp(40px, 6vw, 88px); background: linear-gradient(150deg, #fceedd, #fef8f0); position: relative; overflow: hidden; }
+  .statement::before { content: ""; position: absolute; inset: -30% -10% auto auto; width: 460px; height: 460px; background: radial-gradient(circle, rgba(239,154,61,.42), transparent 66%); filter: blur(30px); }
+  .statement .s-big { position: relative; z-index: 1; font-weight: 500; font-size: clamp(26px, 4.2vw, 50px); line-height: 1.08; letter-spacing: -.035em; margin: 0; max-width: 20ch; color: #17120b; }
+  .statement .s-big em { font-style: normal; color: var(--amber-deep); }
+  .statement p { position: relative; z-index: 1; color: var(--ink-2); font-size: clamp(15px,1.5vw,18px); max-width: 64ch; margin: 28px 0 0; line-height: 1.7; }
 
-  /* ---------------- section scaffolding ---------------- */
-  section.block { padding-block: clamp(80px, 12vw, 160px); position: relative; }
-  .kicker {
-    font-family: var(--mono); font-size: 12px; letter-spacing: .16em; text-transform: uppercase;
-    color: var(--amber); margin: 0 0 18px; display: flex; align-items: center; gap: 12px;
-  }
-  .kicker::before { content: ""; width: 26px; height: 1px; background: var(--amber); opacity: .5; }
-  h2 {
-    font-family: var(--serif); font-weight: 380; font-variation-settings: "opsz" 90;
-    font-size: clamp(30px, 5vw, 58px); line-height: 1.02; letter-spacing: -.03em;
-    margin: 0 0 24px; max-width: 20ch; text-wrap: balance;
-  }
-  .lead { font-size: clamp(15px, 1.6vw, 18px); color: var(--ink-dim); max-width: 58ch; line-height: 1.75; }
+  /* use-case cards */
+  .cards { display: grid; grid-template-columns: 1fr; gap: 18px; margin-top: 50px; }
+  @media (min-width: 700px) { .cards { grid-template-columns: 1fr 1fr; } }
+  .card { border-radius: var(--r); padding: 36px; min-height: 250px; display: flex; flex-direction: column; border: 1px solid var(--line); background: var(--bg); transition: transform .25s, box-shadow .25s; }
+  .card:hover { transform: translateY(-4px); box-shadow: 0 24px 60px -30px rgba(0,0,0,.25); }
+  .card.tint { background: linear-gradient(155deg, #fcecd8, #fef7ef); border-color: transparent; }
+  .card .ci { width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center; margin-bottom: auto; background: var(--ink); color: #fff; }
+  .card.tint .ci { background: linear-gradient(150deg, var(--amber), var(--amber-deep)); }
+  .card .ci svg { width: 23px; height: 23px; }
+  .card h3 { font-weight: 700; font-size: 22px; letter-spacing: -.025em; margin: 28px 0 10px; }
+  .card p { color: var(--ink-dim); font-size: 15px; line-height: 1.6; margin: 0; }
+  .card code { background: rgba(0,0,0,.06); padding: 1px 6px; border-radius: 6px; font-size: .92em; }
 
-  /* state model + equation */
-  .state-grid { display: grid; grid-template-columns: 1fr; gap: 56px; align-items: center; }
-  @media (min-width: 900px) { .state-grid { grid-template-columns: 1.05fr .95fr; gap: 72px; } }
-  .equation {
-    border: 1px solid var(--line); border-radius: 22px; padding: clamp(28px, 4vw, 48px);
-    background: linear-gradient(160deg, var(--fog-1), color-mix(in oklab, var(--fog-0) 80%, transparent));
-    position: relative; overflow: hidden;
-  }
-  .equation::after {
-    content: ""; position: absolute; inset: -40% -20% auto auto; width: 340px; height: 340px;
-    background: radial-gradient(circle, color-mix(in oklab, var(--amber) 22%, transparent), transparent 68%);
-    filter: blur(40px); pointer-events: none;
-  }
-  .equation .eq-label { font-family: var(--mono); font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 20px; }
-  .equation .eq {
-    font-family: var(--mono); font-size: clamp(19px, 2.6vw, 30px); font-weight: 500;
-    letter-spacing: -.01em; line-height: 1.5; position: relative; z-index: 1;
-  }
-  .equation .eq .in { color: var(--mist); }
-  .equation .eq .out { color: var(--amber); }
-  .equation .eq .zero { color: var(--ok); }
-  .equation .eq .op { color: var(--ink-faint); }
-  .equation .note { font-size: 13.5px; color: var(--ink-dim); margin-top: 22px; line-height: 1.7; position: relative; z-index: 1; }
-
-  .cutthrough-facts { display: grid; gap: 2px; margin-top: 30px; }
+  /* split statement */
+  .split { display: grid; grid-template-columns: 1fr; gap: 40px; align-items: center; }
+  @media (min-width: 900px) { .split { grid-template-columns: 1fr 1fr; gap: 64px; } }
+  .eqcard { border-radius: var(--r); padding: clamp(30px,4vw,52px); background: #0d0d10; color: #f4f1ea; }
+  .eqcard .eql { font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: rgba(255,255,255,.4); margin-bottom: 22px; }
+  .eq { font-size: clamp(20px, 2.7vw, 34px); font-weight: 600; letter-spacing: -.02em; line-height: 1.4; }
+  .eq .in { color: #b9b6e8; } .eq .out { color: var(--amber-soft); } .eq .zero { color: #86e3ac; } .eq .op { color: rgba(255,255,255,.4); }
+  .eqcard .eqn { color: rgba(255,255,255,.6); font-size: 14.5px; margin-top: 22px; line-height: 1.7; }
+  .facts { margin-top: 6px; }
   .fact { display: flex; gap: 16px; padding: 18px 0; border-top: 1px solid var(--line); }
   .fact:last-child { border-bottom: 1px solid var(--line); }
-  .fact .n { font-family: var(--mono); font-size: 12px; color: var(--amber); padding-top: 2px; }
-  .fact .t strong { display: block; font-weight: 600; margin-bottom: 3px; font-size: 15.5px; }
-  .fact .t span { color: var(--ink-dim); font-size: 14px; }
+  .fact .n { font-weight: 700; font-size: 13px; color: var(--amber-deep); padding-top: 3px; }
+  .fact strong { display: block; font-weight: 700; font-size: 16px; margin-bottom: 3px; }
+  .fact span.d { color: var(--ink-dim); font-size: 14.5px; }
 
-  /* mechanics grid */
-  .mech { display: grid; grid-template-columns: 1fr; gap: 1px; margin-top: 52px; background: var(--line); border: 1px solid var(--line); border-radius: 24px; overflow: hidden; }
-  @media (min-width: 640px) { .mech { grid-template-columns: 1fr 1fr; } }
-  @media (min-width: 980px) { .mech { grid-template-columns: 1fr 1fr 1fr; } }
-  .cell { background: var(--fog-0); padding: clamp(24px, 3vw, 36px); position: relative; transition: background .3s; }
-  .cell:hover { background: var(--fog-1); }
-  .cell .num { font-family: var(--mono); font-size: 12px; color: var(--ink-faint); margin-bottom: 20px; }
-  .cell h3 { font-family: var(--sans); font-weight: 600; font-size: 18px; margin: 0 0 10px; letter-spacing: -.01em; }
-  .cell p { color: var(--ink-dim); font-size: 14px; line-height: 1.65; margin: 0; }
-  .cell .glyph { position: absolute; top: 26px; right: 28px; width: 8px; height: 8px; border-radius: 50%; background: var(--amber); opacity: .0; transition: opacity .3s; }
-  .cell:hover .glyph { opacity: .8; }
+  /* ecosystem */
+  .eco { display: grid; grid-template-columns: 1fr; gap: 16px; margin-top: 50px; }
+  @media (min-width: 620px) { .eco { grid-template-columns: 1fr 1fr; } }
+  @media (min-width: 1000px) { .eco { grid-template-columns: repeat(4,1fr); } }
+  .eco-card { border-radius: var(--r); padding: 28px; border: 1px solid var(--line); background: var(--bg); transition: transform .25s, box-shadow .25s, border-color .25s; }
+  .eco-card:hover { transform: translateY(-4px); box-shadow: 0 20px 50px -28px rgba(0,0,0,.24); }
+  .eco-card .et { font-size: 11.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--amber-deep); margin-bottom: 18px; }
+  .eco-card h4 { font-weight: 700; font-size: 19px; letter-spacing: -.02em; margin: 0 0 8px; }
+  .eco-card p { color: var(--ink-dim); font-size: 14px; line-height: 1.55; margin: 0; }
 
-  /* under the hood */
-  .hood { display: grid; grid-template-columns: 1fr; gap: 20px; margin-top: 48px; }
-  @media (min-width: 820px) { .hood { grid-template-columns: repeat(3, 1fr); } }
-  .hood-card { border: 1px solid var(--line); border-radius: 20px; padding: 30px; background: var(--fog-0); }
-  .hood-card .hc-label { font-family: var(--mono); font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--amber); margin-bottom: 14px; }
-  .hood-card p { color: var(--ink-dim); font-size: 14px; line-height: 1.7; margin: 0; }
-  .pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
-  .pill { font-family: var(--mono); font-size: 11.5px; color: var(--ink-dim); border: 1px solid var(--line); padding: 5px 11px; border-radius: 100px; }
+  /* live stats */
+  .stats { display: grid; grid-template-columns: repeat(2,1fr); gap: 0; margin-top: 46px; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+  @media (min-width: 720px) { .stats { grid-template-columns: repeat(4,1fr); } }
+  .stat { padding: 32px 26px; border-right: 1px solid var(--line); border-top: 1px solid var(--line); }
+  .stat:nth-child(-n+2) { border-top: 0; }
+  @media (min-width: 720px) { .stat:nth-child(-n+4) { border-top: 0; } .stat:nth-child(4n) { border-right: 0; } }
+  @media (max-width: 719px) { .stat:nth-child(2n) { border-right: 0; } }
+  .stat .sl { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 14px; }
+  .stat .sv { font-weight: 800; font-size: clamp(28px,3.8vw,44px); letter-spacing: -.035em; font-variant-numeric: tabular-nums; line-height: 1; }
+  .stat .sv.small { font-weight: 700; font-size: clamp(15px,1.9vw,21px); word-break: break-all; }
 
-  /* live network */
-  #live { background: linear-gradient(180deg, transparent, var(--fog-0) 40%, var(--fog-0) 60%, transparent); }
-  .live-inner { border: 1px solid var(--line); border-radius: 28px; padding: clamp(32px, 5vw, 64px); background: color-mix(in oklab, var(--fog-1) 70%, transparent); position: relative; overflow: hidden; }
-  .live-inner::before { content: ""; position: absolute; inset: auto auto -50% -10%; width: 420px; height: 420px; background: radial-gradient(circle, color-mix(in oklab, var(--mist) 18%, transparent), transparent 70%); filter: blur(50px); }
-  .live-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; position: relative; z-index: 1; }
-  .live-head .kicker { margin: 0; }
-  .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; margin-top: 34px; position: relative; z-index: 1; background: var(--line); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; }
-  @media (min-width: 720px) { .stats { grid-template-columns: repeat(4, 1fr); } }
-  .stat { background: var(--fog-0); padding: 26px 22px; }
-  .stat .sl { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 12px; }
-  .stat .sv { font-family: var(--serif); font-weight: 400; font-size: clamp(28px, 4vw, 44px); letter-spacing: -.02em; font-variant-numeric: tabular-nums; line-height: 1; }
-  .stat .sv.mono { font-family: var(--mono); font-size: clamp(15px, 2vw, 20px); font-weight: 500; }
-
-  /* closing CTA */
-  #get { text-align: center; }
+  /* get started */
+  #get .statement { text-align: center; }
   #get h2 { margin-inline: auto; }
-  #get .lead { margin-inline: auto; margin-bottom: 34px; }
-  .code-line {
-    display: inline-flex; align-items: center; gap: 14px; margin-top: 8px;
-    font-family: var(--mono); font-size: 13.5px; color: var(--ink-dim);
-    background: var(--fog-0); border: 1px solid var(--line); border-radius: 100px; padding: 12px 20px;
-  }
-  .code-line code { color: var(--amber); }
-  .copy { background: none; border: 0; color: var(--ink-faint); cursor: pointer; font-family: var(--mono); font-size: 12px; padding: 2px 6px; border-radius: 6px; transition: color .2s, background .2s; }
-  .copy:hover { color: var(--ink); background: rgba(255,255,255,.06); }
+  #get .lead { margin: 0 auto 30px; position: relative; z-index: 1; }
+  .code-line { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 14px; margin: 4px auto 30px; font-family: ui-monospace, monospace; font-size: 13.5px; color: var(--ink-2); background: rgba(255,255,255,.7); border: 1px solid var(--line); border-radius: 100px; padding: 12px 20px; max-width: 100%; overflow-x: auto; }
+  .code-line code { color: var(--amber-deep); white-space: nowrap; font-weight: 600; }
+  .copy { background: none; border: 0; color: var(--ink-faint); cursor: pointer; font-size: 12px; font-weight: 600; padding: 2px 6px; border-radius: 6px; transition: color .2s, background .2s; }
+  .copy:hover { color: var(--ink); background: rgba(0,0,0,.06); }
+  #get .hero-ctas { position: relative; z-index: 1; justify-content: center; }
 
   /* footer */
-  footer { border-top: 1px solid var(--line); padding-block: 44px 60px; margin-top: 40px; }
-  .foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 24px; align-items: flex-start; }
-  .foot .fbrand { display: flex; align-items: center; gap: 10px; }
-  .foot .fbrand img { width: 22px; height: 22px; }
-  .foot .fbrand span { font-family: var(--mono); font-weight: 600; }
-  .foot-links { display: flex; flex-wrap: wrap; gap: 8px; }
-  .foot-links a { font-family: var(--mono); font-size: 13px; color: var(--ink-dim); padding: 6px 12px; border-radius: 100px; transition: color .2s, background .2s; }
-  .foot-links a:hover { color: var(--ink); background: rgba(255,255,255,.05); }
-  .foot-note { font-family: var(--mono); font-size: 12px; color: var(--ink-faint); margin-top: 26px; max-width: 64ch; line-height: 1.7; }
+  footer { border-top: 1px solid var(--line); padding-block: 46px 60px; }
+  .foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 22px; align-items: flex-start; }
+  .fbrand { display: flex; align-items: center; gap: 10px; } .fbrand img { width: 24px; height: 24px; border-radius: 6px; } .fbrand span { font-weight: 800; font-size: 19px; letter-spacing: -.02em; }
+  .foot-links { display: flex; flex-wrap: wrap; gap: 6px; }
+  .foot-links a { font-size: 14px; color: var(--ink-dim); padding: 6px 12px; border-radius: 100px; transition: color .2s, background .2s; }
+  .foot-links a:hover { color: var(--ink); background: rgba(0,0,0,.05); }
+  .foot-note { font-size: 12.5px; color: var(--ink-faint); margin-top: 26px; max-width: 68ch; line-height: 1.7; }
 
-  /* reveal animation */
-  .reveal { opacity: 0; transform: translateY(26px); transition: opacity .9s cubic-bezier(.16,1,.3,1), transform .9s cubic-bezier(.16,1,.3,1); }
-  .reveal.in { opacity: 1; transform: none; }
-  .reveal[data-d="1"] { transition-delay: .08s; }
-  .reveal[data-d="2"] { transition-delay: .16s; }
-  .reveal[data-d="3"] { transition-delay: .24s; }
-  .reveal[data-d="4"] { transition-delay: .32s; }
-  .reveal[data-d="5"] { transition-delay: .40s; }
-  @media (prefers-reduced-motion: reduce) {
-    .reveal { opacity: 1; transform: none; transition: none; }
-    .dot, .scroll-hint .bar { animation: none; }
-  }
+  /* reveal */
+  .rv { opacity: 0; transform: translateY(22px); transition: opacity .8s cubic-bezier(.16,1,.3,1), transform .8s cubic-bezier(.16,1,.3,1); }
+  .rv.in { opacity: 1; transform: none; }
+  .rv[data-d="1"]{transition-delay:.07s} .rv[data-d="2"]{transition-delay:.14s} .rv[data-d="3"]{transition-delay:.21s} .rv[data-d="4"]{transition-delay:.28s}
+  @media (prefers-reduced-motion: reduce) { .rv { opacity:1; transform:none; transition:none } .dot { animation:none } }
 </style>
 </head>
 <body>
 
-<div id="progress"></div>
-
 <header id="hdr">
   <div class="nav">
-    <a class="brand" href="#top" aria-label="Haze home">
-      <img src="assets/logo-icon.svg" alt="">
-      <span>haze</span>
-    </a>
+    <a class="brand" href="#top"><img src="assets/logo-icon.svg" alt=""><span>haze</span></a>
     <nav class="links">
-      <a class="jump" href="#state">protocol</a>
-      <a class="jump" href="#mechanics">network</a>
-      <a class="jump" href="#hood">tech</a>
+      <a class="jump" href="#uses">use cases</a>
+      <a class="jump" href="#private">how it works</a>
+      <a class="jump" href="#eco">ecosystem</a>
       <a class="jump" href="https://github.com/Pranav00x/haze" target="_blank" rel="noopener">github</a>
-      <a class="cta-pill" href="https://wallet.hazeprotocol.xyz" target="_blank" rel="noopener">open wallet</a>
+      <a class="cta" href="https://wallet.hazeprotocol.xyz" target="_blank" rel="noopener">Open wallet ↗</a>
       <button class="menu-btn" id="menuBtn" aria-label="menu">≡</button>
     </nav>
   </div>
@@ -303,308 +202,182 @@
 
   <!-- HERO -->
   <section id="hero">
-    <canvas id="fog"></canvas>
-    <div class="hero-scrim"></div>
-    <div class="hero-inner wrap">
-      <div class="eyebrow"><span class="dot"></span> public testnet · live network</div>
-      <h1>A ledger that <em>forgets</em> who paid whom.</h1>
-      <p class="hero-sub">Haze is a Mimblewimble L1. No accounts, no address books, no smart contracts. Spent outputs cut through and disappear — so balances and transaction graphs are never public on chain, by design.</p>
-      <div class="hero-ctas">
-        <a class="btn btn-primary" href="https://wallet.hazeprotocol.xyz" target="_blank" rel="noopener">Open the wallet <span class="arr">→</span></a>
-        <a class="btn btn-ghost" href="#state">See how it works</a>
-      </div>
+    <div class="hero-panel">
+      <div class="eyebrow"><span class="dot"></span> Public testnet · live network</div>
+      <h1>Confidential money, onchain.</h1>
     </div>
-    <div class="scroll-hint"><span>scroll</span><span class="bar"></span></div>
-  </section>
-
-  <!-- STATE MODEL -->
-  <section class="block" id="state">
-    <div class="wrap">
-      <div class="state-grid">
-        <div>
-          <p class="kicker reveal">state model</p>
-          <h2 class="reveal" data-d="1">No accounts. No balances. No transaction graph.</h2>
-          <p class="lead reveal" data-d="2">An output is a Pedersen commitment hiding the amount, a Bulletproof proving the math holds, and a sealed note only the owner can read. There are no addresses to route to and no balances to update — validating a block is one clean equation.</p>
-          <div class="cutthrough-facts reveal" data-d="3">
-            <div class="fact"><span class="n">01</span><span class="t"><strong>Amounts are hidden</strong><span>Commitments and range proofs verify a spend is valid without ever revealing what it's worth.</span></span></div>
-            <div class="fact"><span class="n">02</span><span class="t"><strong>The graph is erased</strong><span>Spent inputs and their outputs cut through — they cancel out before they ever land on chain.</span></span></div>
-            <div class="fact"><span class="n">03</span><span class="t"><strong>History stays small</strong><span>Only kernels and the current UTXO set are kept; the chain forgets the rest.</span></span></div>
-          </div>
+    <div class="hero-foot">
+      <div>
+        <p class="hero-sub">The Haze protocol keeps amounts and balances confidential on a fully public, verifiable Mimblewimble blockchain. No accounts, no addresses — and the transaction graph cuts through to nothing.</p>
+        <div class="hero-ctas">
+          <a class="btn btn-primary" href="https://wallet.hazeprotocol.xyz" target="_blank" rel="noopener">Open the wallet <span class="arr">↗</span></a>
+          <a class="btn btn-ghost" href="#private">See how it works</a>
         </div>
-        <div class="equation reveal" data-d="2">
-          <div class="eq-label">block validity, in full</div>
-          <div class="eq"><span class="in">inputs</span> <span class="op">−</span> <span class="out">outputs</span> <span class="op">+</span> fees <span class="op">=</span> <span class="zero">0</span></div>
-          <p class="note">That's the whole check. If the commitments balance, the money is conserved — no need to know who, or how much. Everything else the ledger could have remembered simply isn't stored.</p>
-        </div>
+      </div>
+      <div class="metric">
+        <div class="ml">Blocks confirmed · testnet</div>
+        <div class="mv" id="m-height">—</div>
       </div>
     </div>
   </section>
 
-  <!-- MECHANICS -->
-  <section class="block" id="mechanics">
-    <div class="wrap">
-      <p class="kicker reveal">shipped, not planned</p>
-      <h2 class="reveal" data-d="1">What's actually running on the network.</h2>
-      <p class="lead reveal" data-d="2">Not a roadmap — every mechanic below is live on the public testnet today.</p>
-      <div class="mech">
-        <div class="cell reveal" data-d="1"><span class="glyph"></span><div class="num">01</div><h3>Gossip that hides the source</h3><p>Transactions route through Dandelion++ before broadcast, so which node first saw a payment can't be told apart.</p></div>
-        <div class="cell reveal" data-d="2"><span class="glyph"></span><div class="num">02</div><h3>Proposals that never stall</h3><p>If the elected proposer misses its slot, any active validator can step in and keep blocks moving.</p></div>
-        <div class="cell reveal" data-d="3"><span class="glyph"></span><div class="num">03</div><h3>A trustless validator set</h3><p>Stake registration lives on chain; every node derives the exact same active set independently.</p></div>
-        <div class="cell reveal" data-d="1"><span class="glyph"></span><div class="num">04</div><h3>Clean rollbacks</h3><p>A heavier fork arrives, the chain unwinds and replays state — no special-casing, no corruption.</p></div>
-        <div class="cell reveal" data-d="2"><span class="glyph"></span><div class="num">05</div><h3>Fees you can predict</h3><p>You pay for the bytes your transaction takes up. No gas auctions, no spikes when the network is busy.</p></div>
-        <div class="cell reveal" data-d="3"><span class="glyph"></span><div class="num">06</div><h3>Speaks TCP and WebSocket</h3><p>Nodes batch-sync aggressively, so bringing a fresh peer online and catching up to the tip is fast.</p></div>
+  <!-- STATEMENT: the moment -->
+  <section class="block"><div class="wrap">
+    <div class="statement rv">
+      <p class="s-big">Haze is the <em>HTTPS moment</em> for money on public blockchains.</p>
+      <p>Just as HTTPS made it safe to bank and shop over an open internet, Haze makes it safe to hold and move money on an open chain — amounts and balances stay encrypted and unlinkable, while every block remains publicly verifiable by anyone. Privacy and openness, at the same time, with no trusted intermediary.</p>
+    </div>
+  </div></section>
+
+  <!-- USE CASES -->
+  <section class="block" id="uses"><div class="wrap">
+    <p class="kicker rv">Built for the people who'd rather not publish their finances</p>
+    <h2 class="rv" data-d="1">Confidentiality isn't a feature here. It's the default.</h2>
+    <p class="lead rv" data-d="2">Everything below is live on the public testnet today — not a roadmap.</p>
+    <div class="cards">
+      <div class="card tint rv" data-d="1">
+        <div class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20 20 4M20 4h-8M20 4v8"/></svg></div>
+        <h3>Confidential transfers</h3>
+        <p>Send value where the amount is cryptographically hidden and the sender-to-receiver link is cut through before it ever lands on chain.</p>
+      </div>
+      <div class="card rv" data-d="2">
+        <div class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M16 12v1.5a2.5 2.5 0 0 0 5 0V12a9 9 0 1 0-4 7.5"/></svg></div>
+        <h3>Pay a name, not an address</h3>
+        <p>Claim a free, permanent <code>.haze</code> name and receive payments to it — no copy-pasting 64-character keys, no address reuse.</p>
+      </div>
+      <div class="card rv" data-d="1">
+        <div class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12a8 8 0 0 1 14-5.3M20 4v4h-4M20 12a8 8 0 0 1-14 5.3M4 20v-4h4"/></svg></div>
+        <h3>Rotate your entire seed</h3>
+        <p>Move every coin you own to a brand-new recovery phrase in a single on-chain sweep — a fresh identity with no link to the old one.</p>
+      </div>
+      <div class="card tint rv" data-d="2">
+        <div class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 4 6v6c0 5 3.5 7.5 8 9 4.5-1.5 8-4 8-9V6l-8-3Z"/></svg></div>
+        <h3>Secure the network</h3>
+        <p>Stake an output straight from the wallet and become a validator. Proof-of-stake with an on-chain, trustlessly-derived active set.</p>
       </div>
     </div>
-  </section>
+  </div></section>
+
+  <!-- SPLIT: how it stays private -->
+  <section class="block" id="private"><div class="wrap">
+    <p class="kicker rv">How it stays private</p>
+    <h2 class="rv" data-d="1">One equation checks the whole block. It never needs to know who.</h2>
+    <div class="split" style="margin-top:44px">
+      <div class="rv" data-d="1">
+        <p class="lead">An output is a Pedersen commitment hiding the amount, a Bulletproof proving the math holds, and a sealed note only the owner can read. There are no balances to update and no addresses to route to.</p>
+        <div class="facts">
+          <div class="fact"><span class="n">01</span><span><strong>Amounts are hidden</strong><span class="d">Commitments and range proofs verify a spend is valid without ever revealing what it's worth.</span></span></div>
+          <div class="fact"><span class="n">02</span><span><strong>The graph is erased</strong><span class="d">Spent inputs and outputs cut through — they cancel out before landing on chain.</span></span></div>
+          <div class="fact"><span class="n">03</span><span><strong>History stays small</strong><span class="d">Only kernels and the current UTXO set are kept; the chain forgets the rest.</span></span></div>
+        </div>
+      </div>
+      <div class="eqcard rv" data-d="2">
+        <div class="eql">Block validity, in full</div>
+        <div class="eq"><span class="in">inputs</span> <span class="op">−</span> <span class="out">outputs</span> <span class="op">+</span> fees <span class="op">=</span> <span class="zero">0</span></div>
+        <p class="eqn">That's the whole check. If the commitments balance, money is conserved — no need to know who, or how much. Everything else the ledger could have remembered simply isn't stored.</p>
+      </div>
+    </div>
+  </div></section>
+
+  <!-- STATEMENT: no compromise -->
+  <section class="block"><div class="wrap">
+    <div class="statement rv">
+      <p class="s-big">Confidentiality with <em>no architectural compromise.</em></p>
+      <p>Haze is its own Layer 1 — one Rust core with no native dependencies, compiling to WebAssembly, Android, iOS, and desktop so every wallet runs identical consensus logic. No trusted setup, no privileged sequencer, no closed chain. Just Ristretto255, Bulletproofs, and full public verifiability.</p>
+    </div>
+  </div></section>
+
+  <!-- ECOSYSTEM -->
+  <section class="block" id="eco"><div class="wrap">
+    <p class="kicker rv">Built on Haze</p>
+    <h2 class="rv" data-d="1">A whole stack, from one core.</h2>
+    <p class="lead rv" data-d="2">Real, running software — not a promise.</p>
+    <div class="eco">
+      <a class="eco-card rv" data-d="1" href="https://wallet.hazeprotocol.xyz" target="_blank" rel="noopener"><div class="et">web + android</div><h4>Wallet</h4><p>Send, receive, claim names, stake, and rotate your seed — in the browser or on your phone.</p></a>
+      <div class="eco-card rv" data-d="2"><div class="et">explorer</div><h4>Block explorer</h4><p>Browse blocks, kernels, and the live chain tip — served straight from the node itself.</p></div>
+      <div class="eco-card rv" data-d="3"><div class="et">nft market</div><h4>Marketplace</h4><p>A trustless atomic-swap marketplace where a sale can't be scammed by either side.</p></div>
+      <a class="eco-card rv" data-d="4" href="https://github.com/Pranav00x/haze/tree/main/agent-sdk" target="_blank" rel="noopener"><div class="et">typescript</div><h4>Agent SDK</h4><p>Private, agent-to-agent payments for AI agents that need to pay without leaking their spend.</p></a>
+    </div>
+  </div></section>
 
   <!-- LIVE -->
-  <section class="block" id="live">
-    <div class="wrap">
-      <div class="live-inner reveal">
-        <div class="live-head"><p class="kicker">live network</p></div>
-        <h2 style="max-width:24ch">The chain is running right now — these numbers are pulled straight from a node.</h2>
-        <div class="stats">
-          <div class="stat"><div class="sl">block height</div><div class="sv" id="st-height">—</div></div>
-          <div class="stat"><div class="sl">active validators</div><div class="sv" id="st-val">—</div></div>
-          <div class="stat"><div class="sl">mempool</div><div class="sv" id="st-mp">—</div></div>
-          <div class="stat"><div class="sl">tip</div><div class="sv mono" id="st-tip">—</div></div>
-        </div>
-      </div>
+  <section class="block"><div class="wrap">
+    <p class="kicker rv">Live network</p>
+    <h2 class="rv" data-d="1">Running right now. Straight from a node.</h2>
+    <div class="stats rv" data-d="2">
+      <div class="stat"><div class="sl">Block height</div><div class="sv" id="st-height">—</div></div>
+      <div class="stat"><div class="sl">Active validators</div><div class="sv" id="st-val">—</div></div>
+      <div class="stat"><div class="sl">Mempool</div><div class="sv" id="st-mp">—</div></div>
+      <div class="stat"><div class="sl">Chain tip</div><div class="sv small" id="st-tip">—</div></div>
     </div>
-  </section>
-
-  <!-- UNDER THE HOOD -->
-  <section class="block" id="hood">
-    <div class="wrap">
-      <p class="kicker reveal">under the hood</p>
-      <h2 class="reveal" data-d="1">One Rust codebase. Every target.</h2>
-      <p class="lead reveal" data-d="2">The core has no native dependencies — the same code compiles to WebAssembly, Android, iOS, and desktop, so every wallet runs the identical consensus logic.</p>
-      <div class="hood">
-        <div class="hood-card reveal" data-d="1"><div class="hc-label">crypto</div><p>Ristretto255, Bulletproofs, and Merlin transcripts. Lean by design — no pairing-based crypto anywhere in the stack.</p></div>
-        <div class="hood-card reveal" data-d="2"><div class="hc-label">supply</div><p>Hard capped at 21 billion HAZE. Most of it enters through block rewards that halve every four years.</p></div>
-        <div class="hood-card reveal" data-d="3"><div class="hc-label">build targets</div><p>CI builds and tests on every push, across:</p><div class="pills"><span class="pill">linux-x86_64</span><span class="pill">windows-msvc</span><span class="pill">macos-arm64</span><span class="pill">android</span><span class="pill">wasm32</span></div></div>
-      </div>
-    </div>
-  </section>
+  </div></section>
 
   <!-- GET STARTED -->
-  <section class="block" id="get">
-    <div class="wrap">
-      <p class="kicker reveal" style="justify-content:center">get started</p>
-      <h2 class="reveal" data-d="1">Join the testnet in one command.</h2>
-      <p class="lead reveal" data-d="2">Grab a node binary from the releases, or point your own node at the public seed and start syncing.</p>
-      <div class="reveal" data-d="3">
-        <div class="code-line"><code id="joinCmd">haze node --peers wss://haze-b3l9.onrender.com/v1/p2p/ws</code><button class="copy" id="copyBtn">copy</button></div>
-      </div>
-      <div class="hero-ctas reveal" data-d="4" style="justify-content:center; margin-top:34px">
-        <a class="btn btn-primary" href="https://github.com/Pranav00x/haze/releases" target="_blank" rel="noopener">Download a node <span class="arr">→</span></a>
+  <section class="block" id="get"><div class="wrap">
+    <div class="statement rv">
+      <p class="kicker" style="color:var(--amber-deep)">Get started</p>
+      <h2 style="max-width:18ch">Join the testnet in one command.</h2>
+      <p class="lead">Grab a node binary from the releases, or point your own node at the public seed and start syncing.</p>
+      <div class="code-line"><code id="joinCmd">haze node --peers wss://haze-b3l9.onrender.com/v1/p2p/ws</code><button class="copy" id="copyBtn">copy</button></div>
+      <div class="hero-ctas">
+        <a class="btn btn-primary" href="https://github.com/Pranav00x/haze/releases" target="_blank" rel="noopener">Download a node <span class="arr">↗</span></a>
         <a class="btn btn-ghost" href="Haze_Whitepaper.pdf" target="_blank" rel="noopener">Read the whitepaper</a>
       </div>
     </div>
-  </section>
+  </div></section>
 
 </main>
 
-<footer>
-  <div class="wrap">
-    <div class="foot">
-      <a class="fbrand" href="#top"><img src="assets/logo-icon.svg" alt=""><span>haze</span></a>
-      <div class="foot-links">
-        <a href="https://wallet.hazeprotocol.xyz" target="_blank" rel="noopener">wallet</a>
-        <a href="Haze_Whitepaper.pdf" target="_blank" rel="noopener">whitepaper</a>
-        <a href="https://github.com/Pranav00x/haze" target="_blank" rel="noopener">github</a>
-        <a href="https://github.com/Pranav00x/haze/releases" target="_blank" rel="noopener">releases</a>
-        <a href="mailto:pranav@hazeprotocol.xyz">contact</a>
-      </div>
+<footer><div class="wrap">
+  <div class="foot">
+    <a class="fbrand" href="#top"><img src="assets/logo-icon.svg" alt=""><span>haze</span></a>
+    <div class="foot-links">
+      <a href="https://wallet.hazeprotocol.xyz" target="_blank" rel="noopener">wallet</a>
+      <a href="Haze_Whitepaper.pdf" target="_blank" rel="noopener">whitepaper</a>
+      <a href="https://github.com/Pranav00x/haze" target="_blank" rel="noopener">github</a>
+      <a href="https://github.com/Pranav00x/haze/releases" target="_blank" rel="noopener">releases</a>
+      <a href="mailto:pranav@hazeprotocol.xyz">contact</a>
     </div>
-    <p class="foot-note">Public testnet software. HAZE has no monetary value, and the chain may still be reset if a serious bug is found — don't treat any balance here as real.</p>
   </div>
-</footer>
+  <p class="foot-note">Public testnet software. HAZE has no monetary value, and the chain may still be reset if a serious bug is found — don't treat any balance here as real.</p>
+</div></footer>
 
 <script>
-  // ---------- scroll progress + sticky nav ----------
   const hdr = document.getElementById("hdr");
-  const prog = document.getElementById("progress");
-  function onScroll() {
-    const y = window.scrollY;
-    hdr.classList.toggle("scrolled", y > 24);
-    const h = document.documentElement.scrollHeight - window.innerHeight;
-    prog.style.width = (h > 0 ? (y / h) * 100 : 0) + "%";
-  }
-  window.addEventListener("scroll", onScroll, { passive: true });
-  onScroll();
+  addEventListener("scroll", () => hdr.classList.toggle("scrolled", scrollY > 20), { passive: true });
+  document.getElementById("menuBtn").addEventListener("click", () => document.getElementById("uses").scrollIntoView({ behavior: "smooth" }));
 
-  document.getElementById("menuBtn").addEventListener("click", () => {
-    document.getElementById("state").scrollIntoView({ behavior: "smooth" });
-  });
+  const io = new IntersectionObserver((es) => es.forEach(e => { if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); } }), { threshold: .12, rootMargin: "0px 0px -6% 0px" });
+  document.querySelectorAll(".rv").forEach(el => io.observe(el));
 
-  // ---------- reveal on scroll ----------
-  const io = new IntersectionObserver((entries) => {
-    entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); } });
-  }, { threshold: 0.14, rootMargin: "0px 0px -8% 0px" });
-  document.querySelectorAll(".reveal").forEach(el => io.observe(el));
-
-  // ---------- copy button ----------
   document.getElementById("copyBtn").addEventListener("click", async () => {
-    const btn = document.getElementById("copyBtn");
-    try {
-      await navigator.clipboard.writeText(document.getElementById("joinCmd").textContent);
-      btn.textContent = "copied"; setTimeout(() => btn.textContent = "copy", 1400);
-    } catch (e) { btn.textContent = "select it"; setTimeout(() => btn.textContent = "copy", 1400); }
+    const b = document.getElementById("copyBtn");
+    try { await navigator.clipboard.writeText(document.getElementById("joinCmd").textContent); b.textContent = "copied"; }
+    catch (e) { b.textContent = "select it"; }
+    setTimeout(() => b.textContent = "copy", 1400);
   });
 
-  // ---------- live stats ----------
   const API = "https://haze-b3l9.onrender.com";
-  function animateTo(el, target) {
-    const start = parseInt((el.textContent || "0").replace(/\D/g, "")) || 0;
+  function countUp(el, target) {
     const t = Number(target); if (!Number.isFinite(t)) { el.textContent = target; return; }
-    const dur = 900, t0 = performance.now();
-    function step(now) {
-      const k = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - k, 4);
-      el.textContent = Math.round(start + (t - start) * e).toLocaleString();
-      if (k < 1) requestAnimationFrame(step);
-    }
-    requestAnimationFrame(step);
+    const start = parseInt((el.textContent||"0").replace(/\D/g,"")) || 0, t0 = performance.now(), dur = 900;
+    (function step(now){ const k = Math.min(1,(now-t0)/dur), e = 1-Math.pow(1-k,4); el.textContent = Math.round(start+(t-start)*e).toLocaleString(); if (k<1) requestAnimationFrame(step); })(performance.now());
   }
-  async function pollStats() {
+  async function poll() {
     try {
-      const r = await fetch(API + "/v1/status", { cache: "no-store" });
-      if (!r.ok) throw 0;
+      const r = await fetch(API + "/v1/status", { cache: "no-store" }); if (!r.ok) throw 0;
       const s = await r.json();
-      animateTo(document.getElementById("st-height"), s.height);
-      document.getElementById("st-val").textContent = (s.active_validators === 0 ? 1 : s.active_validators);
+      const val = s.active_validators === 0 ? 1 : s.active_validators, tip = (s.tip_hash||"").slice(0,10) + "…";
+      countUp(document.getElementById("m-height"), s.height);
+      countUp(document.getElementById("st-height"), s.height);
+      document.getElementById("st-val").textContent = val;
       document.getElementById("st-mp").textContent = s.mempool_size;
-      document.getElementById("st-tip").textContent = (s.tip_hash || "").slice(0, 10) + "…";
+      document.getElementById("st-tip").textContent = tip;
     } catch (e) {
-      ["st-height","st-val","st-mp","st-tip"].forEach(id => { if (document.getElementById(id).textContent === "—") document.getElementById(id).textContent = "offline"; });
+      ["m-height","st-height","st-val","st-mp","st-tip"].forEach(id => { const el = document.getElementById(id); if (el && el.textContent === "—") el.textContent = "offline"; });
     }
   }
-  pollStats(); setInterval(pollStats, 8000);
-
-  // ---------- hero: fog + cut-through particle field ----------
-  (function () {
-    const canvas = document.getElementById("fog");
-    const ctx = canvas.getContext("2d", { alpha: true });
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    let W = 0, H = 0, DPR = Math.min(2, window.devicePixelRatio || 1);
-    let particles = [], links = [], raf = null, running = true;
-
-    const AMBER = [231, 168, 90], MIST = [156, 154, 199];
-    function count() { return Math.max(24, Math.min(64, Math.round(window.innerWidth / 26))); }
-
-    function resize() {
-      W = canvas.clientWidth = canvas.offsetWidth;
-      H = canvas.clientHeight = canvas.offsetHeight;
-      canvas.width = Math.floor(W * DPR); canvas.height = Math.floor(H * DPR);
-      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-    }
-
-    function spawn(edge) {
-      const warm = Math.random() < 0.42;
-      const p = {
-        x: Math.random() * W, y: Math.random() * H,
-        vx: (Math.random() - 0.5) * 0.22, vy: (Math.random() - 0.5) * 0.22,
-        r: 1 + Math.random() * 2.4,
-        col: warm ? AMBER : MIST,
-        a: 0, aMax: warm ? 0.85 : 0.5,
-        life: 0, max: 500 + Math.random() * 900,
-        fade: 1,          // 1 = alive, decays once "cut through"
-        cut: false,
-      };
-      if (edge) { // drift in from a random edge
-        const s = Math.floor(Math.random() * 4);
-        if (s === 0) { p.x = -10; } else if (s === 1) { p.x = W + 10; }
-        else if (s === 2) { p.y = -10; } else { p.y = H + 10; }
-      }
-      return p;
-    }
-
-    function init() {
-      resize();
-      particles = [];
-      const n = reduce ? Math.round(count() * 0.6) : count();
-      for (let i = 0; i < n; i++) particles.push(spawn(false));
-    }
-
-    function frame() {
-      ctx.clearRect(0, 0, W, H);
-      links.length = 0;
-
-      // update
-      for (const p of particles) {
-        p.life++;
-        p.x += p.vx; p.y += p.vy;
-        // gentle wander
-        p.vx += (Math.random() - 0.5) * 0.006;
-        p.vy += (Math.random() - 0.5) * 0.006;
-        p.vx = Math.max(-0.4, Math.min(0.4, p.vx));
-        p.vy = Math.max(-0.4, Math.min(0.4, p.vy));
-        // fade in, then out near end of life
-        if (p.a < p.aMax && !p.cut) p.a = Math.min(p.aMax, p.a + 0.012);
-        if (p.cut) p.fade = Math.max(0, p.fade - 0.02);   // cut-through: dissolve
-        if (p.life > p.max) p.cut = true;
-      }
-
-      // find "transactions": near pairs link, then both cut through & vanish
-      if (!reduce) {
-        for (let i = 0; i < particles.length; i++) {
-          const a = particles[i]; if (a.cut) continue;
-          for (let j = i + 1; j < particles.length; j++) {
-            const b = particles[j]; if (b.cut) continue;
-            const dx = a.x - b.x, dy = a.y - b.y, d2 = dx * dx + dy * dy;
-            if (d2 < 118 * 118) {
-              links.push([a, b, 1 - Math.sqrt(d2) / 118]);
-              // occasionally, a real "spend": both cut through and dissolve
-              if (Math.random() < 0.0016) { a.cut = true; b.cut = true; }
-            }
-          }
-        }
-      }
-
-      // draw links (the fleeting transaction graph)
-      ctx.lineWidth = 1;
-      for (const [a, b, w] of links) {
-        const al = 0.16 * w * Math.min(a.fade, b.fade) * Math.min(a.a / a.aMax, b.a / b.aMax);
-        ctx.strokeStyle = `rgba(231,168,90,${al})`;
-        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-      }
-
-      // draw particles as soft glows
-      for (const p of particles) {
-        const alpha = p.a * p.fade;
-        if (alpha <= 0.001) continue;
-        const [r, g, bl] = p.col;
-        const grd = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r * 6);
-        grd.addColorStop(0, `rgba(${r},${g},${bl},${alpha})`);
-        grd.addColorStop(1, `rgba(${r},${g},${bl},0)`);
-        ctx.fillStyle = grd;
-        ctx.beginPath(); ctx.arc(p.x, p.y, p.r * 6, 0, Math.PI * 2); ctx.fill();
-        // bright core
-        ctx.fillStyle = `rgba(${r},${g},${bl},${alpha})`;
-        ctx.beginPath(); ctx.arc(p.x, p.y, p.r * 0.65, 0, Math.PI * 2); ctx.fill();
-      }
-
-      // recycle: dead particles respawn from an edge (net: gentle equilibrium)
-      for (let i = 0; i < particles.length; i++) {
-        const p = particles[i];
-        const off = p.x < -30 || p.x > W + 30 || p.y < -30 || p.y > H + 30;
-        if ((p.cut && p.fade <= 0) || off) particles[i] = spawn(true);
-      }
-
-      if (running) raf = requestAnimationFrame(frame);
-    }
-
-    let rt;
-    window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(init, 180); });
-    document.addEventListener("visibilitychange", () => {
-      running = !document.hidden;
-      if (running && !reduce) { cancelAnimationFrame(raf); raf = requestAnimationFrame(frame); }
-    });
-
-    init();
-    if (reduce) { frame(); } // one static paint
-    else { raf = requestAnimationFrame(frame); }
-  })();
+  poll(); setInterval(poll, 8000);
 </script>
 
 </body>
