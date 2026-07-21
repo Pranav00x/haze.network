@@ -117,14 +117,16 @@ fun HazeQuickAction(
     label: String,
     icon: ImageVector,
     primary: Boolean = false,
+    enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     val colors = LocalHazeColors.current
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Surface(
             shape = CircleShape,
-            color = if (primary) MaterialTheme.colorScheme.primary else colors.fog2,
+            color = (if (primary) MaterialTheme.colorScheme.primary else colors.fog2).copy(alpha = if (enabled) 1f else 0.4f),
             modifier = Modifier.size(52.dp),
+            enabled = enabled,
             onClick = onClick,
         ) {
             Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {

@@ -339,10 +339,12 @@ private fun WalletHomeScreen(repo: WalletRepository, onNavigate: (String) -> Uni
             }
         }
         Spacer(Modifier.height(20.dp))
+        var faucetBusy by remember { mutableStateOf(false) }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
             com.haze.wallet.ui.theme.HazeQuickAction(label = "Send", icon = Icons.Filled.Send, primary = true) { onNavigate("send") }
             com.haze.wallet.ui.theme.HazeQuickAction(label = "Receive", icon = Icons.Filled.CallReceived) { onNavigate("receive") }
-            com.haze.wallet.ui.theme.HazeQuickAction(label = "Faucet", icon = Icons.Filled.WaterDrop) {
+            com.haze.wallet.ui.theme.HazeQuickAction(label = "Faucet", icon = Icons.Filled.WaterDrop, enabled = !faucetBusy) {
+                faucetBusy = true
                 scope.launch {
                     try {
                         repo.claimFaucet(500)
@@ -350,6 +352,7 @@ private fun WalletHomeScreen(repo: WalletRepository, onNavigate: (String) -> Uni
                     } catch (e: Exception) {
                         faucetMessage = "Faucet unavailable: ${e.message}"
                     }
+                    faucetBusy = false
                 }
             }
         }
@@ -444,9 +447,11 @@ private fun SendScreen(repo: WalletRepository) {
     val scope = rememberCoroutineScope()
     var selfAmount by remember { mutableStateOf("") }
     var selfMessage by remember { mutableStateOf<String?>(null) }
+    var selfBusy by remember { mutableStateOf(false) }
     var toName by remember { mutableStateOf("") }
     var nameAmount by remember { mutableStateOf("") }
     var nameMessage by remember { mutableStateOf<String?>(null) }
+    var nameBusy by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState())) {
         HazeScreenTitle("Send")
@@ -461,16 +466,23 @@ private fun SendScreen(repo: WalletRepository) {
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(8.dp))
-        Button(onClick = {
-            scope.launch {
-                try {
-                    repo.selfPay(selfAmount.toLongOrNull() ?: 0)
-                    selfMessage = "Broadcast successfully. Balance will update once mined."
-                } catch (e: Exception) {
-                    selfMessage = e.message
+        Button(
+            enabled = !selfBusy && (selfAmount.toLongOrNull() ?: 0) > 0,
+            onClick = {
+                selfBusy = true
+                scope.launch {
+                    try {
+                        repo.selfPay(selfAmount.toLongOrNull() ?: 0)
+                        selfMessage = "Broadcast successfully. Balance will update once mined."
+                        selfAmount = ""
+                    } catch (e: Exception) {
+                        selfMessage = e.message
+                    }
+                    selfBusy = false
                 }
-            }
-        }, modifier = Modifier.fillMaxWidth()) { Text("Send") }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text(if (selfBusy) "Sending…" else "Send") }
         selfMessage?.let { Text(it) }
 
         Spacer(Modifier.height(32.dp))
@@ -490,13 +502,20 @@ private fun SendScreen(repo: WalletRepository) {
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(8.dp))
-        Button(onClick = {
-            scope.launch {
+        Button(
+            enabled = !nameBusy && toName.isNotBlank() && (nameAmount.toLongOrNull() ?: 0) > 0,
+            onClick = {
+                nameBusy = true
                 nameMessage = "Sending…"
-                val err = repo.sendToName(toName.trim(), nameAmount.toLongOrNull() ?: 0)
-                nameMessage = err ?: "Sent."
-            }
-        }, modifier = Modifier.fillMaxWidth()) { Text("Send") }
+                scope.launch {
+                    val err = repo.sendToName(toName.trim(), nameAmount.toLongOrNull() ?: 0)
+                    nameMessage = err ?: "Sent."
+                    if (err == null) { toName = ""; nameAmount = "" }
+                    nameBusy = false
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text(if (nameBusy) "Sending…" else "Send") }
         nameMessage?.let { Text(it) }
     }
 }
@@ -508,6 +527,7 @@ private fun ReceiveScreen(repo: WalletRepository) {
     var incomingSlate by remember { mutableStateOf("") }
     var responseOut by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    var respondBusy by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState())) {
         HazeScreenTitle("Receive")
@@ -527,16 +547,22 @@ private fun ReceiveScreen(repo: WalletRepository) {
             modifier = Modifier.fillMaxWidth().height(160.dp),
         )
         Spacer(Modifier.height(8.dp))
-        Button(onClick = {
-            scope.launch {
-                try {
-                    responseOut = repo.respondToPastedSlate(incomingSlate)
-                    error = null
-                } catch (e: Exception) {
-                    error = e.message
+        Button(
+            enabled = !respondBusy && incomingSlate.isNotBlank(),
+            onClick = {
+                respondBusy = true
+                scope.launch {
+                    try {
+                        responseOut = repo.respondToPastedSlate(incomingSlate)
+                        error = null
+                    } catch (e: Exception) {
+                        error = e.message
+                    }
+                    respondBusy = false
                 }
-            }
-        }, modifier = Modifier.fillMaxWidth()) { Text("Respond") }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text(if (respondBusy) "Responding…" else "Respond") }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         responseOut?.let {
             Spacer(Modifier.height(8.dp))
@@ -580,10 +606,14 @@ private fun MoreScreen(repo: WalletRepository) {
 
     var claimField by remember { mutableStateOf("") }
     var claimMessage by remember { mutableStateOf<String?>(null) }
+    var claimBusy by remember { mutableStateOf(false) }
     var showNameTransfer by remember { mutableStateOf(false) }
     var transferName by remember { mutableStateOf("") }
     var transferTo by remember { mutableStateOf("") }
     var transferMessage by remember { mutableStateOf<String?>(null) }
+    var transferBusy by remember { mutableStateOf(false) }
+    var stakeBusy by remember { mutableStateOf(false) }
+    var sweepBusy by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState())) {
         HazeScreenTitle("More")
@@ -597,10 +627,18 @@ private fun MoreScreen(repo: WalletRepository) {
             if (showNameTransfer) {
                 OutlinedTextField(value = transferTo, onValueChange = { transferTo = it }, label = { Text("New owner pubkey (hex)") }, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(8.dp))
-                Button(onClick = {
-                    transferName = state.claimedName ?: return@Button
-                    scope.launch { transferMessage = repo.transferName(transferName, transferTo.trim()) ?: "Transferred." }
-                }, modifier = Modifier.fillMaxWidth()) { Text("Transfer") }
+                Button(
+                    enabled = !transferBusy && transferTo.isNotBlank(),
+                    onClick = {
+                        transferName = state.claimedName ?: return@Button
+                        transferBusy = true
+                        scope.launch {
+                            transferMessage = repo.transferName(transferName, transferTo.trim()) ?: "Transferred."
+                            transferBusy = false
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(if (transferBusy) "Transferring…" else "Transfer") }
                 transferMessage?.let { Text(it) }
             }
         } else {
@@ -608,9 +646,17 @@ private fun MoreScreen(repo: WalletRepository) {
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(value = claimField, onValueChange = { claimField = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
             Spacer(Modifier.height(8.dp))
-            Button(onClick = {
-                scope.launch { claimMessage = repo.claimName(claimField.trim()) ?: "Claiming - waiting for it to be mined…" }
-            }, modifier = Modifier.fillMaxWidth()) { Text("Claim") }
+            Button(
+                enabled = !claimBusy && claimField.isNotBlank(),
+                onClick = {
+                    claimBusy = true
+                    scope.launch {
+                        claimMessage = repo.claimName(claimField.trim()) ?: "Claiming - waiting for it to be mined…"
+                        claimBusy = false
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(if (claimBusy) "Claiming…" else "Claim") }
             claimMessage?.let { Text(it) }
         }
 
@@ -644,9 +690,17 @@ private fun MoreScreen(repo: WalletRepository) {
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(8.dp))
-        Button(onClick = {
-            scope.launch { stakeMessage = repo.registerAsValidator(stakeMinField.toLongOrNull() ?: 1) ?: "Registered as a validator." }
-        }, modifier = Modifier.fillMaxWidth()) { Text("Register as validator") }
+        Button(
+            enabled = !stakeBusy,
+            onClick = {
+                stakeBusy = true
+                scope.launch {
+                    stakeMessage = repo.registerAsValidator(stakeMinField.toLongOrNull() ?: 1) ?: "Registered as a validator."
+                    stakeBusy = false
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text(if (stakeBusy) "Registering…" else "Register as validator") }
         stakeMessage?.let { Text(it) }
         Spacer(Modifier.height(8.dp))
         TextButton(onClick = {
@@ -665,9 +719,17 @@ private fun MoreScreen(repo: WalletRepository) {
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(value = sweepKeyField, onValueChange = { sweepKeyField = it }, label = { Text("Validator stake key (hex)") }, modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(8.dp))
-        Button(onClick = {
-            scope.launch { sweepMessage = repo.recoverValidatorRewards(sweepKeyField.trim()) ?: "Recovered rewards." }
-        }, modifier = Modifier.fillMaxWidth()) { Text("Recover rewards") }
+        Button(
+            enabled = !sweepBusy && sweepKeyField.isNotBlank(),
+            onClick = {
+                sweepBusy = true
+                scope.launch {
+                    sweepMessage = repo.recoverValidatorRewards(sweepKeyField.trim()) ?: "Recovered rewards."
+                    sweepBusy = false
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text(if (sweepBusy) "Recovering…" else "Recover rewards") }
         sweepMessage?.let { Text(it) }
 
         Spacer(Modifier.height(32.dp))
