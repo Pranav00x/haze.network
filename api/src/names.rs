@@ -3,6 +3,7 @@
 //! only actually committed once a block including it is applied - these
 //! handlers just accept/queue/broadcast, they don't mutate ChainState directly.
 use std::sync::{Arc, Mutex};
+use haze_chain::sync::LockExt;
 use serde::{Serialize, Deserialize};
 use warp::http::StatusCode;
 
@@ -43,7 +44,7 @@ pub async fn handle_register_name(
     // "queued" response for something the proposer will silently drop at
     // block-assembly time and that will never actually get mined.
     let already_taken = {
-        let c = chain.lock().unwrap();
+        let c = chain.lock_recover();
         c.name_registry.contains_key(&op.name)
     };
     if already_taken {
@@ -51,7 +52,7 @@ pub async fn handle_register_name(
     }
 
     let added = {
-        let mut mp = mempool.lock().unwrap();
+        let mut mp = mempool.lock_recover();
         mp.add_name_op(op.clone())
     };
 
@@ -102,7 +103,7 @@ pub async fn handle_sponsored_register_name(
     }
 
     let already_taken = {
-        let c = chain.lock().unwrap();
+        let c = chain.lock_recover();
         c.name_registry.contains_key(&req.name)
     };
     if already_taken {
@@ -110,14 +111,14 @@ pub async fn handle_sponsored_register_name(
     }
 
     {
-        let c = chain.lock().unwrap();
+        let c = chain.lock_recover();
         faucet.reconcile(&c);
     }
 
     // Pays Mempool::suggested_name_fee rather than hardcoding
     // NAME_REGISTRATION_FEE here, so a change to the underlying constant
     // doesn't need a matching update at every call site.
-    let suggested_fee = { mempool.lock().unwrap().suggested_name_fee() };
+    let suggested_fee = { mempool.lock_recover().suggested_name_fee() };
     let (fee_payment, spent, change_index) = match faucet.build_sponsored_fee_payment(suggested_fee) {
         Ok(built) => built,
         Err(_) => return Ok(error_reply(StatusCode::SERVICE_UNAVAILABLE, "sponsor reserve temporarily depleted - try again shortly")),
@@ -132,7 +133,7 @@ pub async fn handle_sponsored_register_name(
     };
 
     let added = {
-        let mut mp = mempool.lock().unwrap();
+        let mut mp = mempool.lock_recover();
         mp.add_name_op(op.clone())
     };
     if !added {
@@ -160,7 +161,7 @@ pub async fn handle_transfer_name(
     chain: Arc<Mutex<ChainState>>,
 ) -> Result<Box<dyn warp::Reply>, std::convert::Infallible> {
     let current = {
-        let c = chain.lock().unwrap();
+        let c = chain.lock_recover();
         c.name_registry.get(&op.name).cloned()
     };
     let Some(current) = current else {
@@ -173,7 +174,7 @@ pub async fn handle_transfer_name(
     }
 
     let added = {
-        let mut mp = mempool.lock().unwrap();
+        let mut mp = mempool.lock_recover();
         mp.add_transfer_op(op.clone())
     };
     if !added {
@@ -193,7 +194,7 @@ pub async fn handle_resolve_name(
     chain: Arc<Mutex<ChainState>>,
 ) -> Result<Box<dyn warp::Reply>, std::convert::Infallible> {
     let record = {
-        let c = chain.lock().unwrap();
+        let c = chain.lock_recover();
         c.name_registry.get(&name).cloned()
     };
     match record {
@@ -231,7 +232,7 @@ pub async fn handle_list_names(
         None => None,
     };
     let mut records: Vec<NameRecord> = {
-        let c = chain.lock().unwrap();
+        let c = chain.lock_recover();
         c.name_registry.values()
             .filter(|r| owner_filter.map(|o| r.owner_pubkey == o).unwrap_or(true))
             .cloned().collect()

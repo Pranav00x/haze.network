@@ -4,6 +4,7 @@
 //! wallet/marketplace client can fetch it and compute its own inclusion
 //! proof client-side. Mirrors api::marketplace.rs's handler shapes.
 use std::sync::{Arc, Mutex};
+use haze_chain::sync::LockExt;
 use serde::Serialize;
 use warp::http::StatusCode;
 
@@ -37,7 +38,7 @@ pub async fn handle_publish_allowlist(
     }
 
     let creator_ok = {
-        let c = chain.lock().unwrap();
+        let c = chain.lock_recover();
         entry.validate_against_registry(&c.collection_registry).is_ok()
     };
     if !creator_ok {

@@ -1,3 +1,4 @@
+pub mod sync;
 pub mod transaction;
 pub mod cut_through;
 pub mod block;

@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 use std::sync::Mutex;
+use crate::sync::LockExt;
 use serde::{Serialize, Deserialize};
 use curve25519_dalek_ng::scalar::Scalar;
 
@@ -107,16 +108,16 @@ impl AllowlistState {
     }
 
     pub fn publish(&self, entry: AllowlistEntry) {
-        let mut entries = self.entries.lock().unwrap();
+        let mut entries = self.entries.lock_recover();
         entries.insert((entry.collection_id.clone(), entry.phase_index), entry);
     }
 
     pub fn get(&self, collection_id: &str, phase_index: u32) -> Option<AllowlistEntry> {
-        self.entries.lock().unwrap().get(&(collection_id.to_string(), phase_index)).cloned()
+        self.entries.lock_recover().get(&(collection_id.to_string(), phase_index)).cloned()
     }
 
     pub fn list_all(&self) -> Vec<AllowlistEntry> {
-        self.entries.lock().unwrap().values().cloned().collect()
+        self.entries.lock_recover().values().cloned().collect()
     }
 }
 

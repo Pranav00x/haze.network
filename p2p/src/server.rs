@@ -1,6 +1,7 @@
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex as TokioMutex;
 use std::sync::{Arc, Mutex};
+use haze_chain::sync::LockExt;
 use std::collections::{HashMap, HashSet};
 use rand::Rng;
 use futures_util::StreamExt;
@@ -52,37 +53,37 @@ impl PeerManager {
     /// Registers a peer's writer (whichever transport) and returns the shared handle for it.
     pub fn add_peer(&self, addr: String, writer: PeerWriter) -> Arc<TokioMutex<PeerWriter>> {
         let handle = Arc::new(TokioMutex::new(writer));
-        let mut peers = self.peers.lock().unwrap();
+        let mut peers = self.peers.lock_recover();
         peers.insert(addr, Arc::clone(&handle));
         handle
     }
 
     pub fn remove_peer(&self, addr: &str) {
-        let mut peers = self.peers.lock().unwrap();
+        let mut peers = self.peers.lock_recover();
         peers.remove(addr);
     }
 
     pub fn is_connected(&self, addr: &str) -> bool {
-        self.peers.lock().unwrap().contains_key(addr)
+        self.peers.lock_recover().contains_key(addr)
     }
 
     pub fn connection_count(&self) -> usize {
-        self.peers.lock().unwrap().len()
+        self.peers.lock_recover().len()
     }
 
     /// Records a peer's real listen address in the address book.
     pub fn add_known_peer(&self, addr: String) {
-        self.known_peers.lock().unwrap().insert(addr);
+        self.known_peers.lock_recover().insert(addr);
     }
 
     /// A bounded snapshot of known peer addresses, suitable for sharing via PeersList.
     pub fn known_peers_snapshot(&self) -> Vec<String> {
-        self.known_peers.lock().unwrap().iter().take(MAX_PEERS_SHARED).cloned().collect()
+        self.known_peers.lock_recover().iter().take(MAX_PEERS_SHARED).cloned().collect()
     }
 
     pub async fn broadcast(&self, msg: &P2pMessage) {
         let peers = {
-            let p = self.peers.lock().unwrap();
+            let p = self.peers.lock_recover();
             p.values().cloned().collect::<Vec<_>>()
         };
 
@@ -94,7 +95,7 @@ impl PeerManager {
 
     pub async fn send_to_random_peer(&self, msg: &P2pMessage) -> bool {
         let peer = {
-            let p = self.peers.lock().unwrap();
+            let p = self.peers.lock_recover();
             if p.is_empty() {
                 return false;
             }
@@ -177,7 +178,7 @@ impl P2pServer {
         println!("P2P: Inbound WebSocket peer connected: {}", peer_label);
         let (ws_write, ws_read) = ws.split();
         let write_handle = self.peer_manager.add_peer(peer_label.clone(), PeerWriter::WsServer(ws_write));
-        let own_listen_addr = self.own_listen_addr.lock().unwrap().clone();
+        let own_listen_addr = self.own_listen_addr.lock_recover().clone();
         handle_peer_connection(
             PeerReader::WsServer(ws_read),
             write_handle,
@@ -198,7 +199,7 @@ impl P2pServer {
         println!("P2P Server listening on {}", addr);
 
         let own_listen_addr = addr.to_string();
-        *self.own_listen_addr.lock().unwrap() = own_listen_addr.clone();
+        *self.own_listen_addr.lock_recover() = own_listen_addr.clone();
 
         // Connect to seed peers outbound
         for peer in seed_peers {
@@ -293,7 +294,7 @@ fn connect_to_peer(
                 if transport::write_message(&mut writer, &P2pMessage::Handshake { listen_addr: own_listen_addr.clone() }).await.is_ok() {
                     // Also send our chain info so the peer can sync from us if they're behind
                     let (our_height, our_tip) = {
-                        let cs = c.lock().unwrap();
+                        let cs = c.lock_recover();
                         (cs.current_height, cs.last_block_hash)
                     };
                     let _ = transport::write_message(&mut writer, &P2pMessage::ChainInfo { height: our_height, tip_hash: our_tip }).await;
@@ -341,7 +342,7 @@ async fn connect_to_ws_peer(
 
             if transport::write_message(&mut writer, &P2pMessage::Handshake { listen_addr: own_listen_addr.clone() }).await.is_ok() {
                 let (our_height, our_tip) = {
-                    let cs = c.lock().unwrap();
+                    let cs = c.lock_recover();
                     (cs.current_height, cs.last_block_hash)
                 };
                 let _ = transport::write_message(&mut writer, &P2pMessage::ChainInfo { height: our_height, tip_hash: our_tip }).await;
@@ -398,7 +399,7 @@ async fn dispatch_dandelion_tx(
                 println!("Dandelion++: No peers available to stem routing. Fluffing immediately!");
                 router.mark_fluffed(tx_id);
                 if !already_in_mempool {
-                    let mut mp = mempool.lock().unwrap();
+                    let mut mp = mempool.lock_recover();
                     mp.add_transaction(tx.clone());
                 }
                 pm.broadcast(&P2pMessage::FluffTx(tx)).await;
@@ -410,7 +411,7 @@ async fn dispatch_dandelion_tx(
             let added = if already_in_mempool {
                 true
             } else {
-                let mut mp = mempool.lock().unwrap();
+                let mut mp = mempool.lock_recover();
                 mp.add_transaction(tx.clone())
             };
             if added {
@@ -494,7 +495,7 @@ async fn handle_peer_connection(
                             println!("P2P: Handshake received from {} (listening on {})", peer_addr, listen_addr);
                             pm.add_known_peer(listen_addr);
                             let (our_height, our_tip) = {
-                                let cs = chain.lock().unwrap();
+                                let cs = chain.lock_recover();
                                 (cs.current_height, cs.last_block_hash)
                             };
                             let mut w = write_half.lock().await;
@@ -519,7 +520,7 @@ async fn handle_peer_connection(
                                 router.mark_fluffed(tx_id);
 
                                 let added = {
-                                    let mut mp = mempool.lock().unwrap();
+                                    let mut mp = mempool.lock_recover();
                                     mp.add_transaction(tx.clone())
                                 };
                                 if added {
@@ -531,7 +532,7 @@ async fn handle_peer_connection(
                         P2pMessage::NewBlock(block) => {
                             println!("P2P: Received NewBlock #{} from {}", block.header.height, peer_addr);
                             let result = {
-                                let mut c = chain.lock().unwrap();
+                                let mut c = chain.lock_recover();
                                 c.apply_block(&block)
                             };
 
@@ -540,7 +541,7 @@ async fn handle_peer_connection(
                                 persist_apply_result(&storage, &result);
                                 // Clear spent mempool transactions and stale name ops
                                 {
-                                    let mut mp = mempool.lock().unwrap();
+                                    let mut mp = mempool.lock_recover();
                                     mp.clear_spent(&block.body);
                                     let registered_names: Vec<String> = block.name_ops.iter().map(|op| op.name.clone()).collect();
                                     let spent: Vec<Commitment> = block.name_ops.iter().flat_map(|op| op.fee_payment.inputs.iter().map(|i| i.commitment)).collect();
@@ -560,7 +561,7 @@ async fn handle_peer_connection(
                                     mp.clear_stale_launch_collection_ops(&launched_collections);
                                     let registered_validators: Vec<Commitment> = block.validator_ops.iter().map(|op| op.commitment).collect();
                                     mp.clear_stale_validator_ops(&registered_validators);
-                                    let asset_registry_snapshot = chain.lock().unwrap().asset_registry.clone();
+                                    let asset_registry_snapshot = chain.lock_recover().asset_registry.clone();
                                     marketplace.clear_stale(&touched_assets, &asset_registry_snapshot);
                                 }
                                 // Propagate block
@@ -570,7 +571,7 @@ async fn handle_peer_connection(
                         P2pMessage::NewValidatorOp(op) => {
                             let commitment = op.commitment;
                             let added = {
-                                let mut mp = mempool.lock().unwrap();
+                                let mut mp = mempool.lock_recover();
                                 mp.add_validator_op(op.clone())
                             };
                             if added {
@@ -581,7 +582,7 @@ async fn handle_peer_connection(
                         P2pMessage::NewNameOp(op) => {
                             let name = op.name.clone();
                             let added = {
-                                let mut mp = mempool.lock().unwrap();
+                                let mut mp = mempool.lock_recover();
                                 mp.add_name_op(op.clone())
                             };
                             if added {
@@ -592,7 +593,7 @@ async fn handle_peer_connection(
                         P2pMessage::NewTransferOp(op) => {
                             let name = op.name.clone();
                             let added = {
-                                let mut mp = mempool.lock().unwrap();
+                                let mut mp = mempool.lock_recover();
                                 mp.add_transfer_op(op.clone())
                             };
                             if added {
@@ -603,7 +604,7 @@ async fn handle_peer_connection(
                         P2pMessage::NewMintOp(op) => {
                             let asset_id = op.asset_id.clone();
                             let added = {
-                                let mut mp = mempool.lock().unwrap();
+                                let mut mp = mempool.lock_recover();
                                 mp.add_mint_op(op.clone())
                             };
                             if added {
@@ -614,7 +615,7 @@ async fn handle_peer_connection(
                         P2pMessage::NewTransferAssetOp(op) => {
                             let asset_id = op.asset_id.clone();
                             let added = {
-                                let mut mp = mempool.lock().unwrap();
+                                let mut mp = mempool.lock_recover();
                                 mp.add_transfer_asset_op(op.clone())
                             };
                             if added {
@@ -625,7 +626,7 @@ async fn handle_peer_connection(
                         P2pMessage::NewListing(listing) => {
                             let asset_id = listing.asset_id.clone();
                             let valid = listing.validate_standalone().is_ok() && {
-                                let c = chain.lock().unwrap();
+                                let c = chain.lock_recover();
                                 listing.validate_against_registry(&c.asset_registry).is_ok()
                             };
                             if valid {
@@ -644,7 +645,7 @@ async fn handle_peer_connection(
                         P2pMessage::NewLaunchCollectionOp(op) => {
                             let collection_id = op.collection_id.clone();
                             let added = {
-                                let mut mp = mempool.lock().unwrap();
+                                let mut mp = mempool.lock_recover();
                                 mp.add_launch_collection_op(op.clone())
                             };
                             if added {
@@ -656,7 +657,7 @@ async fn handle_peer_connection(
                             let collection_id = entry.collection_id.clone();
                             let phase_index = entry.phase_index;
                             let valid = entry.validate_standalone().is_ok() && {
-                                let c = chain.lock().unwrap();
+                                let c = chain.lock_recover();
                                 entry.validate_against_registry(&c.collection_registry).is_ok()
                             };
                             if valid {
@@ -666,7 +667,7 @@ async fn handle_peer_connection(
                             }
                         }
                         P2pMessage::ChainInfo { height, tip_hash } => {
-                            let our_height = { chain.lock().unwrap().current_height };
+                            let our_height = { chain.lock_recover().current_height };
                             println!("P2P: Peer {} reports chain height {} (tip {:?}, ours: {})", peer_addr, height, tip_hash, our_height);
                             let mut w = write_half.lock().await;
                             if height > our_height {
@@ -685,7 +686,7 @@ async fn handle_peer_connection(
                             // aggregate_validate for anything it can't re-check
                             // per-block (see the BlocksBatch handler below).
                             let (blocks, has_more) = {
-                                let cs = chain.lock().unwrap();
+                                let cs = chain.lock_recover();
                                 cs.get_blocks_from(from_height, SYNC_BATCH_SIZE)
                             };
                             println!("P2P: Sending {} blocks (from height {}) to {}", blocks.len(), from_height, peer_addr);
@@ -725,13 +726,13 @@ async fn handle_peer_connection(
                                 }
 
                                 let result = {
-                                    let mut c = chain.lock().unwrap();
+                                    let mut c = chain.lock_recover();
                                     c.apply_block(block)
                                 };
                                 if result.is_applied() {
                                     applied_count += 1;
                                     persist_apply_result(&storage, &result);
-                                    let mut mp = mempool.lock().unwrap();
+                                    let mut mp = mempool.lock_recover();
                                     mp.clear_spent(&block.body);
                                     let registered_names: Vec<String> = block.name_ops.iter().map(|op| op.name.clone()).collect();
                                     let spent: Vec<Commitment> = block.name_ops.iter().flat_map(|op| op.fee_payment.inputs.iter().map(|i| i.commitment)).collect();
@@ -751,19 +752,19 @@ async fn handle_peer_connection(
                                     mp.clear_stale_launch_collection_ops(&launched_collections);
                                     let registered_validators: Vec<Commitment> = block.validator_ops.iter().map(|op| op.commitment).collect();
                                     mp.clear_stale_validator_ops(&registered_validators);
-                                    let asset_registry_snapshot = chain.lock().unwrap().asset_registry.clone();
+                                    let asset_registry_snapshot = chain.lock_recover().asset_registry.clone();
                                     marketplace.clear_stale(&touched_assets, &asset_registry_snapshot);
                                 } else {
                                     // Full apply failed - check whether this looks
                                     // like a horizon-pruning artifact (the chain
                                     // otherwise still links up correctly) rather
                                     // than a genuinely broken/malicious block.
-                                    let links_ok = { block.header.prev_hash == chain.lock().unwrap().last_block_hash };
+                                    let links_ok = { block.header.prev_hash == chain.lock_recover().last_block_hash };
                                     if links_ok && block.header.chain_id == haze_chain::genesis::CHAIN_ID {
                                         println!("P2P: Block #{} failed per-block re-validation (likely horizon-pruned) - falling back to aggregate sync from {}.", block.header.height, peer_addr);
                                         aggregate_mode = true;
-                                        aggregate_kernels = chain.lock().unwrap().kernels.clone();
-                                        aggregate_registry_fees = haze_chain::chain::total_registry_fees_burned(&chain.lock().unwrap().blocks);
+                                        aggregate_kernels = chain.lock_recover().kernels.clone();
+                                        aggregate_registry_fees = haze_chain::chain::total_registry_fees_burned(&chain.lock_recover().blocks);
                                         extend_aggregate(&mut aggregate_kernels, &mut aggregate_registry_fees, block);
                                         aggregate_prev_hash = Some(block.header.hash());
                                         applied_count += 1;
@@ -779,7 +780,7 @@ async fn handle_peer_connection(
                                 let next_from = if aggregate_mode {
                                     blocks.last().map(|b| b.header.height + 1).unwrap_or(1)
                                 } else {
-                                    chain.lock().unwrap().current_height + 1
+                                    chain.lock_recover().current_height + 1
                                 };
                                 let mut w = write_half.lock().await;
                                 let _ = transport::write_message(&mut *w, &P2pMessage::GetBlocks { from_height: next_from }).await;
@@ -800,7 +801,7 @@ async fn handle_peer_connection(
                         }
                         P2pMessage::GetUtxoSnapshot => {
                             let (utxos, height, tip_hash) = {
-                                let cs = chain.lock().unwrap();
+                                let cs = chain.lock_recover();
                                 (cs.utxos.iter().cloned().collect(), cs.current_height, cs.last_block_hash)
                             };
                             let mut w = write_half.lock().await;
@@ -814,7 +815,7 @@ async fn handle_peer_connection(
                                 let valid = haze_chain::chain::aggregate_validate(&utxo_set, &aggregate_kernels, height, aggregate_registry_fees);
                                 if valid {
                                     println!("P2P: Aggregate validation passed for {} (height {}) - adopting its UTXO snapshot.", peer_addr, height);
-                                    let mut c = chain.lock().unwrap();
+                                    let mut c = chain.lock_recover();
                                     c.utxos = utxo_set;
                                     c.current_height = height;
                                     c.last_block_hash = tip_hash;

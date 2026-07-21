@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex};
+use crate::sync::LockExt;
 use std::time::Duration;
 use tokio::time::sleep;
 use curve25519_dalek_ng::scalar::Scalar;
@@ -63,7 +64,7 @@ impl Proposer {
 
     /// Sets the broadcaster used to announce newly proposed blocks.
     pub fn set_p2p_server(&self, p2p_server: Arc<dyn BlockBroadcaster>) {
-        let mut server = self.p2p_server.lock().unwrap();
+        let mut server = self.p2p_server.lock_recover();
         *server = Some(p2p_server);
     }
 
@@ -94,7 +95,7 @@ impl Proposer {
             sleep(Duration::from_millis(10_000)).await;
 
             let (next_height, prev_hash, my_validator) = {
-                let c = self.chain.lock().unwrap();
+                let c = self.chain.lock_recover();
                 let next_height = c.current_height + 1;
                 let prev_hash = c.last_block_hash;
 
@@ -128,7 +129,7 @@ impl Proposer {
                 // Track how long we've been waiting on this exact pending
                 // height - resets the instant the tip advances to a new one.
                 let stalled_for = {
-                    let mut s = self.stalled_since.lock().unwrap();
+                    let mut s = self.stalled_since.lock_recover();
                     let since = match *s {
                         Some((h, since)) if h == next_height => since,
                         _ => {
@@ -148,7 +149,7 @@ impl Proposer {
                 // common case (rank 0, chain not stalled) this behaves
                 // exactly as before.
                 let my_rank = {
-                    let c = self.chain.lock().unwrap();
+                    let c = self.chain.lock_recover();
                     c.proposer_priority_order(next_height, prev_hash)
                         .iter()
                         .position(|commitment| *commitment == validator.commitment)
@@ -168,7 +169,7 @@ impl Proposer {
                     }
                     // Check for pending transactions or create empty block if none
                     let tx_bundle = {
-                        let mut mp = self.mempool.lock().unwrap();
+                        let mut mp = self.mempool.lock_recover();
                         mp.aggregate()
                     };
 
@@ -184,17 +185,17 @@ impl Proposer {
                     // fail here would get the WHOLE block rejected by apply_linear_block,
                     // not just that one op.
                     let candidate_name_ops = {
-                        let mut mp = self.mempool.lock().unwrap();
+                        let mut mp = self.mempool.lock_recover();
                         mp.take_name_ops()
                     };
                     let mut spent_this_block: std::collections::HashSet<Commitment> =
                         tx.inputs.iter().map(|i| i.commitment).collect();
                     let mut name_registry_snapshot = {
-                        let c = self.chain.lock().unwrap();
+                        let c = self.chain.lock_recover();
                         c.name_registry.clone()
                     };
                     let utxos_snapshot = {
-                        let c = self.chain.lock().unwrap();
+                        let c = self.chain.lock_recover();
                         c.utxos.clone()
                     };
                     let mut name_ops = Vec::new();
@@ -221,11 +222,11 @@ impl Proposer {
                     // in this same block, and must carry a valid signature from that
                     // name's current owner.
                     let candidate_transfer_ops = {
-                        let mut mp = self.mempool.lock().unwrap();
+                        let mut mp = self.mempool.lock_recover();
                         mp.take_transfer_ops()
                     };
                     let original_registry = {
-                        let c = self.chain.lock().unwrap();
+                        let c = self.chain.lock_recover();
                         c.name_registry.clone()
                     };
                     let mut names_touched: std::collections::HashSet<String> = name_ops.iter().map(|op| op.name.clone()).collect();
@@ -266,11 +267,11 @@ impl Proposer {
                     // core::collections). No fee-payment/UTXO involvement to
                     // check (launches have none, by design).
                     let candidate_launch_ops = {
-                        let mut mp = self.mempool.lock().unwrap();
+                        let mut mp = self.mempool.lock_recover();
                         mp.take_launch_collection_ops()
                     };
                     let mut collection_registry_snapshot = {
-                        let c = self.chain.lock().unwrap();
+                        let c = self.chain.lock_recover();
                         c.collection_registry.clone()
                     };
                     let mut launch_collection_ops = Vec::new();
@@ -302,15 +303,15 @@ impl Proposer {
                     // so a bug here can only produce a wasted/rejected
                     // candidate block, never an invalid one that lands).
                     let candidate_mint_ops = {
-                        let mut mp = self.mempool.lock().unwrap();
+                        let mut mp = self.mempool.lock_recover();
                         mp.take_mint_ops()
                     };
                     let mut asset_registry_snapshot = {
-                        let c = self.chain.lock().unwrap();
+                        let c = self.chain.lock_recover();
                         c.asset_registry.clone()
                     };
                     let mut candidate_mint_counts = {
-                        let c = self.chain.lock().unwrap();
+                        let c = self.chain.lock_recover();
                         c.collection_mint_counts.clone()
                     };
                     // Kernels this candidate block would itself add from its
@@ -322,7 +323,7 @@ impl Proposer {
                     let body_kernel_excesses: std::collections::HashSet<Commitment> =
                         tx.kernels.iter().map(|k| k.excess).collect();
                     let historical_kernel_excesses_for_mints = {
-                        let c = self.chain.lock().unwrap();
+                        let c = self.chain.lock_recover();
                         c.kernel_excesses.clone()
                     };
                     let mut mint_ops = Vec::new();
@@ -379,11 +380,11 @@ impl Proposer {
                         mint_ops.push(op);
                     }
                     let candidate_transfer_asset_ops = {
-                        let mut mp = self.mempool.lock().unwrap();
+                        let mut mp = self.mempool.lock_recover();
                         mp.take_transfer_asset_ops()
                     };
                     let original_asset_registry = {
-                        let c = self.chain.lock().unwrap();
+                        let c = self.chain.lock_recover();
                         c.asset_registry.clone()
                     };
                     // Every kernel excess this candidate block would itself add,
@@ -401,7 +402,7 @@ impl Proposer {
                         candidate_kernel_excesses.extend(op.fee_payment.kernels.iter().map(|k| k.excess));
                     }
                     let historical_kernel_excesses = {
-                        let c = self.chain.lock().unwrap();
+                        let c = self.chain.lock_recover();
                         c.kernel_excesses.clone()
                     };
                     let mut assets_touched: std::collections::HashSet<String> = mint_ops.iter().map(|op| op.asset_id.clone()).collect();
@@ -460,12 +461,12 @@ impl Proposer {
                     // candidate clone, so a bad/duplicate/over-cap op here
                     // can only produce a wasted block, never an invalid one.
                     let candidate_validator_ops = {
-                        let mut mp = self.mempool.lock().unwrap();
+                        let mut mp = self.mempool.lock_recover();
                         mp.take_validator_ops()
                     };
                     let mut validator_ops = Vec::new();
                     let (mut candidate_validators, utxos_for_validator_ops) = {
-                        let c = self.chain.lock().unwrap();
+                        let c = self.chain.lock_recover();
                         (c.active_validators.clone(), c.utxos.clone())
                     };
                     for op in candidate_validator_ops {
@@ -549,7 +550,7 @@ impl Proposer {
 
                     // Apply locally
                     let apply_result = {
-                        let mut c = self.chain.lock().unwrap();
+                        let mut c = self.chain.lock_recover();
                         c.apply_block(&block)
                     };
 
@@ -564,7 +565,7 @@ impl Proposer {
 
                             // Broadcast block
                             let server_opt = {
-                                let s = self.p2p_server.lock().unwrap();
+                                let s = self.p2p_server.lock_recover();
                                 s.clone()
                             };
                             if let Some(p2p) = server_opt {

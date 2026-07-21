@@ -8,6 +8,7 @@
 //! HAZE_TREASURY_BLINDING (see wallet::planner::treasury_blinding_from_env)
 //! rather than committed to source.
 use std::sync::Mutex;
+use haze_chain::sync::LockExt;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::IpAddr;
 use std::time::{Duration, Instant};
@@ -164,7 +165,7 @@ impl FaucetState {
 
     pub(crate) fn reconcile(&self, chain: &ChainState) {
         let utxos: HashSet<Commitment> = chain.utxos.iter().cloned().collect();
-        self.store.lock().unwrap().reconcile(&utxos);
+        self.store.lock_recover().reconcile(&utxos);
     }
 
     /// True (and records this request) if `ip` is still under
@@ -173,7 +174,7 @@ impl FaucetState {
     /// on every check rather than resetting on a fixed boundary, so a burst
     /// right at a window edge can't double an effective limit.
     fn check_rate_limit(&self, ip: IpAddr) -> bool {
-        let mut limits = self.rate_limits.lock().unwrap();
+        let mut limits = self.rate_limits.lock_recover();
         let now = Instant::now();
         let entry = limits.entry(ip).or_default();
         while let Some(&oldest) = entry.front() {
@@ -206,8 +207,8 @@ impl FaucetState {
     /// *after* this call succeeds (e.g. a duplicate-registration race), at
     /// which point this spend never actually happens on-chain.
     pub fn build_sponsored_fee_payment(&self, fee: u64) -> Result<(Transaction, Vec<Commitment>, Option<u32>), PlanError> {
-        let mut keystore = self.keystore.lock().unwrap();
-        let mut store = self.store.lock().unwrap();
+        let mut keystore = self.keystore.lock_recover();
+        let mut store = self.store.lock_recover();
 
         let selected = planner::select_spendable_confirmed_only(&store, fee)?;
         let selected_total: u64 = selected.iter().map(|(_, _, v)| v).sum();
@@ -258,7 +259,7 @@ impl FaucetState {
     /// else ever reverts it (reconcile() only confirms real changes, it
     /// doesn't undo a spend that never happened on-chain).
     pub fn revert_fee_payment(&self, spent: &[Commitment], change_index: Option<u32>) {
-        let mut store = self.store.lock().unwrap();
+        let mut store = self.store.lock_recover();
         for c in spent {
             store.unmark_spent(c);
         }
@@ -333,11 +334,11 @@ pub async fn handle_faucet_request(
     }
 
     {
-        let c = chain.lock().unwrap();
+        let c = chain.lock_recover();
         faucet.reconcile(&c);
     }
 
-    let mut pending_guard = faucet.pending.lock().unwrap();
+    let mut pending_guard = faucet.pending.lock_recover();
     if let Some((_, created_at)) = pending_guard.as_ref() {
         if created_at.elapsed() < PENDING_TIMEOUT {
             return Ok(error_reply(StatusCode::CONFLICT, "faucet is completing another request, try again in a few seconds"));
@@ -346,8 +347,8 @@ pub async fn handle_faucet_request(
         // to replace it with this new request.
     }
 
-    let mut keystore = faucet.keystore.lock().unwrap();
-    let store = faucet.store.lock().unwrap();
+    let mut keystore = faucet.keystore.lock_recover();
+    let store = faucet.store.lock_recover();
 
     // Pays the mempool's fee floor (see core::mempool::MIN_FEE) from the
     // faucet's own reserve, on top of req.amount - the requester still gets
@@ -384,7 +385,7 @@ pub async fn handle_faucet_complete(
     mempool: std::sync::Arc<Mutex<Mempool>>,
 ) -> Result<Box<dyn warp::Reply>, std::convert::Infallible> {
     let pending = {
-        let mut pending_guard = faucet.pending.lock().unwrap();
+        let mut pending_guard = faucet.pending.lock_recover();
         match pending_guard.take() {
             Some((p, _)) => p,
             None => return Ok(error_reply(StatusCode::BAD_REQUEST, "no pending faucet request - call /v1/faucet first")),
@@ -406,7 +407,7 @@ pub async fn handle_faucet_complete(
     }
 
     let added = {
-        let mut mp = mempool.lock().unwrap();
+        let mut mp = mempool.lock_recover();
         mp.add_transaction(transaction)
     };
 
@@ -417,7 +418,7 @@ pub async fn handle_faucet_complete(
     // Applied optimistically (before mining), same convention as the web
     // wallet's own commit_send/commit_slate_send - avoids the reserve output
     // getting re-selected by a second request before this one confirms.
-    let mut store = faucet.store.lock().unwrap();
+    let mut store = faucet.store.lock_recover();
     for commitment in &pending.spent_commitments {
         store.mark_spent(commitment);
     }

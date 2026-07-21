@@ -29,6 +29,7 @@
 //!   permanently drain someone else's inbox before they see it.
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use haze_chain::sync::LockExt;
 use serde::{Deserialize, Serialize};
 use haze_crypto::pedersen::Commitment;
 use haze_crypto::schnorr::Signature;
@@ -120,7 +121,7 @@ pub async fn handle_post_inbox(
         return Ok(error_reply(warp::http::StatusCode::UNAUTHORIZED, "signature does not match from_pubkey_hex for this message"));
     }
 
-    let mut messages = inbox.messages.lock().unwrap();
+    let mut messages = inbox.messages.lock_recover();
     let queue = messages.entry(to_pubkey_hex).or_default();
     if queue.len() >= MAX_MESSAGES_PER_PUBKEY {
         return Ok(error_reply(warp::http::StatusCode::TOO_MANY_REQUESTS, "recipient inbox is full"));
@@ -153,7 +154,7 @@ pub async fn handle_get_inbox(
         return Ok(error_reply(warp::http::StatusCode::UNAUTHORIZED, "signature does not prove ownership of pubkey_hex"));
     }
 
-    let mut messages = inbox.messages.lock().unwrap();
+    let mut messages = inbox.messages.lock_recover();
     let drained = messages.remove(&pubkey_hex).unwrap_or_default();
     Ok(Box::new(warp::reply::json(&drained)))
 }

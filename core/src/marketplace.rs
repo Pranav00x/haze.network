@@ -9,6 +9,7 @@
 
 use std::collections::HashMap;
 use std::sync::Mutex;
+use crate::sync::LockExt;
 use serde::{Serialize, Deserialize};
 use curve25519_dalek_ng::scalar::Scalar;
 
@@ -97,7 +98,7 @@ impl MarketplaceState {
     }
 
     pub fn add_or_replace(&self, listing: Listing) {
-        let mut listings = self.listings.lock().unwrap();
+        let mut listings = self.listings.lock_recover();
         listings.insert(listing.asset_id.clone(), listing);
     }
 
@@ -108,7 +109,7 @@ impl MarketplaceState {
     /// cancel_signing_message before calling this - this method only
     /// checks the pubkey match, not any signature.
     pub fn cancel(&self, asset_id: &str, requester_pubkey: &Commitment) -> bool {
-        let mut listings = self.listings.lock().unwrap();
+        let mut listings = self.listings.lock_recover();
         if let Some(existing) = listings.get(asset_id) {
             if existing.seller_pubkey == *requester_pubkey {
                 listings.remove(asset_id);
@@ -119,11 +120,11 @@ impl MarketplaceState {
     }
 
     pub fn get(&self, asset_id: &str) -> Option<Listing> {
-        self.listings.lock().unwrap().get(asset_id).cloned()
+        self.listings.lock_recover().get(asset_id).cloned()
     }
 
     pub fn list_all(&self) -> Vec<Listing> {
-        self.listings.lock().unwrap().values().cloned().collect()
+        self.listings.lock_recover().values().cloned().collect()
     }
 
     /// Drops any listing for an asset a just-applied block touched (minted
@@ -134,7 +135,7 @@ impl MarketplaceState {
     /// didn't itself just apply (e.g. it was offline for a stretch and
     /// resyncs several blocks at once).
     pub fn clear_stale(&self, touched_assets: &[String], asset_registry: &HashMap<String, AssetRecord>) {
-        let mut listings = self.listings.lock().unwrap();
+        let mut listings = self.listings.lock_recover();
         for asset_id in touched_assets {
             listings.remove(asset_id);
         }

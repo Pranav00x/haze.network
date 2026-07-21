@@ -1,5 +1,6 @@
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
+use haze_chain::sync::LockExt;
 use serde::Serialize;
 
 use haze_chain::chain::ChainState;
@@ -147,10 +148,10 @@ pub async fn handle_status(
     mempool: Arc<Mutex<Mempool>>,
 ) -> Result<impl warp::Reply, Infallible> {
     let (height, tip_hash, active_validators) = {
-        let c = chain.lock().unwrap();
+        let c = chain.lock_recover();
         (c.current_height, c.last_block_hash, c.active_validators.len())
     };
-    let mempool_size = { mempool.lock().unwrap().len() };
+    let mempool_size = { mempool.lock_recover().len() };
 
     let status = StatusInfo {
         height,
@@ -189,7 +190,7 @@ pub struct FeeEstimate {
 pub async fn handle_fee_estimate(
     mempool: Arc<Mutex<Mempool>>,
 ) -> Result<impl warp::Reply, Infallible> {
-    let mp = mempool.lock().unwrap();
+    let mp = mempool.lock_recover();
     let estimate = FeeEstimate {
         suggested_fee: mp.suggested_fee(),
         min_fee: haze_chain::mempool::MIN_FEE,
@@ -239,13 +240,13 @@ pub async fn handle_scan_outputs(
 ) -> Result<impl warp::Reply, Infallible> {
     let mut entries: Vec<ScanOutputEntry> = Vec::new();
     let mut cursor = {
-        let c = chain.lock().unwrap();
+        let c = chain.lock_recover();
         c.last_block_hash
     };
 
     loop {
         let (chunk, next_cursor) = {
-            let c = chain.lock().unwrap();
+            let c = chain.lock_recover();
             let mut chunk: Vec<Block> = Vec::new();
             let mut hash = cursor;
             let mut reached_genesis = false;
@@ -300,7 +301,7 @@ pub async fn handle_blocks_list(
     let limit = query.limit.unwrap_or(20).clamp(1, 100);
 
     let (blocks, prune_metas) = {
-        let c = chain.lock().unwrap();
+        let c = chain.lock_recover();
         let from_height = c.current_height.saturating_sub(limit.saturating_sub(1) as u64);
         let (blocks, _has_more) = c.get_blocks_from(from_height, limit);
         let prune_metas: Vec<Option<BlockPruneMeta>> = blocks.iter()
@@ -321,7 +322,7 @@ pub async fn handle_block_detail(
     chain: Arc<Mutex<ChainState>>,
 ) -> Result<Box<dyn warp::Reply>, Infallible> {
     let block_and_meta = {
-        let c = chain.lock().unwrap();
+        let c = chain.lock_recover();
         let (blocks, _) = c.get_blocks_from(height, 1);
         blocks.into_iter().find(|b| b.header.height == height)
             .map(|b| {
@@ -343,7 +344,7 @@ pub async fn handle_validators(
     chain: Arc<Mutex<ChainState>>,
 ) -> Result<impl warp::Reply, Infallible> {
     let validators: Vec<ValidatorInfo> = {
-        let c = chain.lock().unwrap();
+        let c = chain.lock_recover();
         c.active_validators.iter().map(|v| ValidatorInfo {
             commitment: commitment_hex(&v.commitment),
             value: v.value,
@@ -371,7 +372,7 @@ pub async fn handle_transactions_list(
     const SCAN_BLOCKS: usize = 100;
 
     let blocks = {
-        let c = chain.lock().unwrap();
+        let c = chain.lock_recover();
         let from_height = c.current_height.saturating_sub(SCAN_BLOCKS.saturating_sub(1) as u64);
         let (blocks, _has_more) = c.get_blocks_from(from_height, SCAN_BLOCKS);
         blocks
@@ -419,7 +420,7 @@ pub async fn handle_search(
     // 1. Numeric input: treat as a block height.
     if let Ok(height) = q.parse::<u64>() {
         let found = {
-            let c = chain.lock().unwrap();
+            let c = chain.lock_recover();
             let (blocks, _) = c.get_blocks_from(height, 1);
             blocks.iter().any(|b| b.header.height == height)
         };
@@ -444,7 +445,7 @@ pub async fn handle_search(
             // A direct block-hash hit is a cheap single lookup, checked
             // before ever taking the expensive path below.
             let direct_hit = {
-                let c = chain.lock().unwrap();
+                let c = chain.lock_recover();
                 c.blocks.get(&bytes).cloned()
             };
             if let Some(block) = direct_hit {
@@ -458,7 +459,7 @@ pub async fn handle_search(
             // search below, which grows without bound as chain history
             // grows and this endpoint is unauthenticated/freely repeatable.
             let all_blocks: Vec<Block> = {
-                let c = chain.lock().unwrap();
+                let c = chain.lock_recover();
                 c.blocks.values().cloned().collect()
             };
 

@@ -4,6 +4,7 @@
 //! broadcast, they don't mutate ChainState directly. Mirrors api::assets.rs's
 //! handler shapes.
 use std::sync::{Arc, Mutex};
+use haze_chain::sync::LockExt;
 use serde::Deserialize;
 use warp::http::StatusCode;
 
@@ -42,7 +43,7 @@ pub async fn handle_launch_collection(
     // silently drop at block-assembly time (mirrors handle_mint_asset's
     // early asset_id-uniqueness check).
     let already_launched = {
-        let c = chain.lock().unwrap();
+        let c = chain.lock_recover();
         c.collection_registry.contains_key(&op.collection_id)
     };
     if already_launched {
@@ -50,7 +51,7 @@ pub async fn handle_launch_collection(
     }
 
     let added = {
-        let mut mp = mempool.lock().unwrap();
+        let mut mp = mempool.lock_recover();
         mp.add_launch_collection_op(op.clone())
     };
     if !added {
@@ -70,7 +71,7 @@ pub async fn handle_get_collection(
     chain: Arc<Mutex<ChainState>>,
 ) -> Result<Box<dyn warp::Reply>, std::convert::Infallible> {
     let record = {
-        let c = chain.lock().unwrap();
+        let c = chain.lock_recover();
         c.collection_registry.get(&collection_id).cloned()
     };
     match record {
@@ -91,7 +92,7 @@ pub async fn handle_list_collections(
 ) -> Result<Box<dyn warp::Reply>, std::convert::Infallible> {
     let limit = query.limit.unwrap_or(50).min(500);
     let mut records: Vec<CollectionRecord> = {
-        let c = chain.lock().unwrap();
+        let c = chain.lock_recover();
         c.collection_registry.values().cloned().collect()
     };
     records.sort_by(|a, b| b.launched_at_block.cmp(&a.launched_at_block).then(a.collection_id.cmp(&b.collection_id)));

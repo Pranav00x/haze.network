@@ -4,6 +4,7 @@
 //! them is applied - these handlers just accept/queue/broadcast, they don't
 //! mutate ChainState directly.
 use std::sync::{Arc, Mutex};
+use haze_chain::sync::LockExt;
 use serde::{Serialize, Deserialize};
 use warp::http::StatusCode;
 
@@ -42,7 +43,7 @@ pub async fn handle_mint_asset(
     // "queued" response for something the proposer will silently drop at
     // block-assembly time and that will never actually get mined.
     let already_minted = {
-        let c = chain.lock().unwrap();
+        let c = chain.lock_recover();
         c.asset_registry.contains_key(&op.asset_id)
     };
     if already_minted {
@@ -50,7 +51,7 @@ pub async fn handle_mint_asset(
     }
 
     let added = {
-        let mut mp = mempool.lock().unwrap();
+        let mut mp = mempool.lock_recover();
         mp.add_mint_op(op.clone())
     };
 
@@ -73,7 +74,7 @@ pub async fn handle_transfer_asset(
     chain: Arc<Mutex<ChainState>>,
 ) -> Result<Box<dyn warp::Reply>, std::convert::Infallible> {
     let current = {
-        let c = chain.lock().unwrap();
+        let c = chain.lock_recover();
         c.asset_registry.get(&op.asset_id).cloned()
     };
     let Some(current) = current else {
@@ -94,7 +95,7 @@ pub async fn handle_transfer_asset(
     // the sole real enforcement point.
     if let Some(required_excess) = op.required_kernel_excess {
         let satisfied = {
-            let c = chain.lock().unwrap();
+            let c = chain.lock_recover();
             c.kernel_excesses.contains(&required_excess)
         };
         if !satisfied {
@@ -110,7 +111,7 @@ pub async fn handle_transfer_asset(
     // wallets) has no sale price to take a cut of.
     if op.required_kernel_excess.is_some() {
         if let Some(collection_id) = &current.collection_id {
-            let c = chain.lock().unwrap();
+            let c = chain.lock_recover();
             if let Some(collection) = c.collection_registry.get(collection_id) {
                 if collection.royalty_bps > 0 {
                     match op.required_royalty_kernel_excess {
@@ -126,7 +127,7 @@ pub async fn handle_transfer_asset(
     }
 
     let added = {
-        let mut mp = mempool.lock().unwrap();
+        let mut mp = mempool.lock_recover();
         mp.add_transfer_asset_op(op.clone())
     };
     if !added {
@@ -146,7 +147,7 @@ pub async fn handle_resolve_asset(
     chain: Arc<Mutex<ChainState>>,
 ) -> Result<Box<dyn warp::Reply>, std::convert::Infallible> {
     let record = {
-        let c = chain.lock().unwrap();
+        let c = chain.lock_recover();
         c.asset_registry.get(&asset_id).cloned()
     };
     match record {
@@ -181,7 +182,7 @@ pub async fn handle_list_assets(
         None => None,
     };
     let mut records: Vec<AssetRecord> = {
-        let c = chain.lock().unwrap();
+        let c = chain.lock_recover();
         c.asset_registry.values()
             .filter(|r| owner_filter.map(|o| r.owner_pubkey == o).unwrap_or(true))
             .cloned().collect()

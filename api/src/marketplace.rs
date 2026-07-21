@@ -2,6 +2,7 @@
 //! are pure discovery metadata, not consensus state - these handlers talk
 //! directly to MarketplaceState, never to the mempool.
 use std::sync::{Arc, Mutex};
+use haze_chain::sync::LockExt;
 use serde::{Deserialize, Serialize};
 use warp::http::StatusCode;
 
@@ -37,7 +38,7 @@ pub async fn handle_create_listing(
     }
 
     let ownership_ok = {
-        let c = chain.lock().unwrap();
+        let c = chain.lock_recover();
         listing.validate_against_registry(&c.asset_registry).is_ok()
     };
     if !ownership_ok {

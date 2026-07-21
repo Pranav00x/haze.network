@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time::sleep;
 use haze_chain::transaction::Transaction;
+use haze_chain::sync::LockExt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TxState {
@@ -55,7 +56,7 @@ impl DandelionRouter {
     where
         F: FnOnce() + Send + 'static,
     {
-        let mut seen = self.seen_stems.lock().unwrap();
+        let mut seen = self.seen_stems.lock_recover();
         if seen.contains_key(&tx_id) {
             return; // Already tracked
         }
@@ -69,7 +70,7 @@ impl DandelionRouter {
             sleep(Duration::from_secs(timeout_secs)).await;
             
             let trigger_fluff = {
-                let mut seen_lock = seen_clone.lock().unwrap();
+                let mut seen_lock = seen_clone.lock_recover();
                 if let Some(fluffed) = seen_lock.get(&tx_id) {
                     if !*fluffed {
                         seen_lock.insert(tx_id, true);
@@ -90,7 +91,7 @@ impl DandelionRouter {
 
     /// Marks a transaction as fluffed (either because we gossiped it or saw it fluff on the network)
     pub fn mark_fluffed(&self, tx_id: [u8; 32]) {
-        let mut seen = self.seen_stems.lock().unwrap();
+        let mut seen = self.seen_stems.lock_recover();
         if !seen.contains_key(&tx_id) && seen.len() >= MAX_SEEN_STEMS {
             return;
         }
@@ -99,7 +100,7 @@ impl DandelionRouter {
 
     /// Checks if we've already marked this transaction as fluffed
     pub fn is_fluffed(&self, tx_id: [u8; 32]) -> bool {
-        let seen = self.seen_stems.lock().unwrap();
+        let seen = self.seen_stems.lock_recover();
         seen.get(&tx_id).copied().unwrap_or(false)
     }
 }

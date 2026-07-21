@@ -187,6 +187,7 @@ mod background {
     use super::{compact, CUT_THROUGH_HORIZON};
     use crate::chain::ChainState;
     use crate::storage::Storage;
+    use crate::sync::LockExt;
 
     /// How often to check whether it's worth running a compaction pass -
     /// same "poll on a timer, mirror the proposer's pattern" approach as
@@ -215,14 +216,14 @@ mod background {
             loop {
                 sleep(CHECK_INTERVAL).await;
 
-                let current_height = { self.chain.lock().unwrap().current_height };
-                let last_run = { *self.last_run_height.lock().unwrap() };
+                let current_height = { self.chain.lock_recover().current_height };
+                let last_run = { *self.last_run_height.lock_recover() };
                 if current_height < CUT_THROUGH_HORIZON || current_height - last_run < CUT_THROUGH_HORIZON / 10 {
                     continue; // not enough new prunable depth to bother yet
                 }
 
                 let report = {
-                    let mut chain = self.chain.lock().unwrap();
+                    let mut chain = self.chain.lock_recover();
                     compact(&mut chain, CUT_THROUGH_HORIZON)
                 };
 
@@ -232,13 +233,13 @@ mod background {
                         report.outputs_pruned, report.inputs_pruned, report.touched_blocks.len(),
                         report.validator_snapshots_pruned, report.transfer_snapshots_pruned,
                     );
-                    let chain = self.chain.lock().unwrap();
+                    let chain = self.chain.lock_recover();
                     if let Err(e) = self.storage.persist_compaction(&chain, &report.touched_blocks) {
                         println!("Warning: Failed to persist compaction: {}", e);
                     }
                 }
 
-                *self.last_run_height.lock().unwrap() = current_height;
+                *self.last_run_height.lock_recover() = current_height;
             }
         }
     }

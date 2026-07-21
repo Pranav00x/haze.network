@@ -1,5 +1,6 @@
 use warp::Filter;
 use std::sync::{Arc, Mutex};
+use haze_chain::sync::LockExt;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use serde::{Serialize, Deserialize};
@@ -33,7 +34,7 @@ impl ApiServer {
         port: u16,
     ) {
         let faucet_state = {
-            let snapshot = chain.lock().unwrap();
+            let snapshot = chain.lock_recover();
             Arc::new(FaucetState::new(&snapshot))
         };
 
@@ -497,7 +498,7 @@ async fn handle_submit_transaction(
 
     // Try to add to mempool
     let added = {
-        let mut mp = mempool.lock().unwrap();
+        let mut mp = mempool.lock_recover();
         mp.add_transaction(tx.clone())
     };
 
@@ -524,7 +525,7 @@ async fn handle_list_utxos(
     chain: Arc<Mutex<ChainState>>,
 ) -> Result<impl warp::Reply, Infallible> {
     let utxos: Vec<haze_crypto::pedersen::Commitment> = {
-        let c = chain.lock().unwrap();
+        let c = chain.lock_recover();
         c.utxos.iter().cloned().collect()
     };
     Ok(warp::reply::json(&utxos))
@@ -548,7 +549,7 @@ async fn handle_register_validator(
         proof: req.proof,
     };
     let queued = {
-        let mut mp = mempool.lock().unwrap();
+        let mut mp = mempool.lock_recover();
         mp.add_validator_op(op.clone())
     };
 
