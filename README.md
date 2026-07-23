@@ -97,6 +97,38 @@ Validity, checked in `core::transaction::validate_with_reward`:
 - every output: `RangeProof.verify(C, π)`
 - every kernel: `σ.verify(fee_LE, excess)`
 
+```mermaid
+classDiagram
+    class Output {
+        +Commitment C
+        +RangeProof π
+        +Option~Note~ ξ
+    }
+    class Kernel {
+        +Commitment excess
+        +u64 fee
+        +Signature σ
+    }
+    class Transaction {
+        +Vec~Output~ inputs
+        +Vec~Output~ outputs
+        +Vec~Kernel~ kernels
+    }
+    class Block {
+        +BlockHeader header
+        +Transaction body
+        +Vec~RegisterNameOp~ name_ops
+        +Vec~MintAssetOp~ asset_ops
+        +Vec~LaunchCollectionOp~ launch_ops
+    }
+    note for Output "C = v·H + r·G"
+    note for Kernel "excess = Sum(r_in) - Sum(r_out)"
+    Transaction "1" --> "*" Output : consumes/creates
+    Transaction "1" --> "*" Kernel : proves
+    Block "1" --> "1" Transaction : body
+    Note --o Output : optional, recoverable
+```
+
 ## Cut-through
 
 Per-block and mempool-wide: any `(input, output)` pair on matching commitments cancels, regardless of arrival order. Horizon compaction (`core::compaction`, default 1000-block window) prunes spent in/out pairs below the horizon without invalidating tip-relative kernel-sum verification.
@@ -112,6 +144,21 @@ proposer(h) = active_validators[ H(h ‖ prev_hash) mod |active_validators| ]
 ```
 
 A validator is a revealed `(commitment, value, blinding)` for an already-mined, currently-unspent output. There's no separate stake-lock UTXO type — spending that exact output retroactively deregisters the validator (`core::chain.rs`, `active_validators.retain` on input match). No slashing.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Unspent: output mined
+    Unspent --> Active: RegisterValidatorOp<br/>reveals (commitment, value, blinding)
+    Active --> Active: not selected this height
+    Active --> Proposer: H(h ‖ prev_hash) mod n<br/>picks this commitment
+    Proposer --> Active: block produced, height advances
+    Active --> Deregistered: the backing output is spent
+    Deregistered --> [*]
+    note right of Deregistered
+        No slashing — leaving is free,
+        just costs future proposer weight
+    end note
+```
 
 ## Registries
 
@@ -134,7 +181,37 @@ Transport-agnostic by construction (`p2p::transport::{PeerReader, PeerWriter}`):
 
 Payment gossip is Dandelion++ (20% fluff probability per hop, 15s fallback-fluff timer). A locally-originated tx enters the stem phase exactly like a relayed hop (`p2p::server::dispatch_dandelion_tx`) — flat-broadcasting a local tx would make the originating node trivially distinguishable from a relay, defeating the entire point.
 
+```mermaid
+graph LR
+    Origin(["Originating node<br/>(indistinguishable from a relay)"]) -->|stem, 80%/hop| H1["Peer"]
+    H1 -->|stem, 80%/hop| H2["Peer"]
+    H2 -->|stem, 80%/hop| H3["Peer"]
+    H3 -->|"fluff, 20%/hop<br/>or 15s timer fires"| Broadcast{{"Flat broadcast<br/>to the whole network"}}
+    Broadcast --> P1["Peer"]
+    Broadcast --> P2["Peer"]
+    Broadcast --> P3["Peer"]
+```
+
 Sync: `Handshake → ChainInfo → GetBlocks(from_height) → BlocksBatch`, 256 blocks/round. Reorg via `rollback_block` + height-keyed `validator_snapshots`. `active_validators` isn't part of block history (mutated only by live `RegisterValidator`) — synced separately via `GetValidators`/`ValidatorsList` after block sync completes.
+
+```mermaid
+sequenceDiagram
+    participant Us as New/catching-up node
+    participant Peer as Existing peer
+
+    Us->>Peer: Handshake { listen_addr }
+    Peer->>Us: Handshake { listen_addr }
+    Us->>Peer: ChainInfo request
+    Peer->>Us: ChainInfo { height, tip_hash }
+    loop until caught up, 256 blocks/round
+        Us->>Peer: GetBlocks { from_height }
+        Peer->>Us: BlocksBatch { blocks, has_more }
+        Us->>Us: apply_block per block (validate + extend)
+    end
+    Us->>Peer: GetValidators
+    Peer->>Us: ValidatorsList
+    Note over Us: fully synced — active_validators<br/>isn't derivable from block history alone
+```
 
 ## Crypto stack
 
