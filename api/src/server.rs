@@ -20,6 +20,7 @@ use super::marketplace;
 use super::collections;
 use super::allowlist;
 use super::inbox::{self, InboxState};
+use super::ratelimit::{self, RateLimiter};
 
 pub struct ApiServer;
 
@@ -411,6 +412,9 @@ impl ApiServer {
             .and(inbox_filter_2)
             .and_then(inbox::handle_get_inbox);
 
+        let rate_limiter = std::sync::Arc::new(RateLimiter::new());
+        let rate_limit_guard = ratelimit::guard(rate_limiter);
+
         let routes = tx_route
             .or(stake_route)
             .or(utxos_route)
@@ -456,6 +460,11 @@ impl ApiServer {
                     .allow_methods(vec!["GET", "POST"])
                     .allow_headers(vec!["content-type"]),
             );
+
+        // Gates every route behind a per-IP request budget (see
+        // api::ratelimit) - MAX_BODY_SIZE above only ever bounded how big a
+        // single request could be, not how many a single caller could send.
+        let routes = rate_limit_guard.and(routes).recover(ratelimit::handle_rejection);
 
         // Binds all interfaces, not just loopback - required for this to be
         // reachable at all once deployed behind a cloud provider's proxy

@@ -7,3 +7,4 @@ pub mod marketplace;
 pub mod collections;
 pub mod allowlist;
 pub mod inbox;
+pub mod ratelimit;

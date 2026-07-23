@@ -12,6 +12,34 @@ const DEFAULT_DATA_DIR: &str = "haze_data";
 const META_HEIGHT_KEY: &[u8] = b"height";
 const META_TIP_KEY: &[u8] = b"tip";
 
+/// Anything that can go wrong persisting a delta to disk - either the sled
+/// tree operation itself, or serializing the value being written. Callers
+/// already treat a persist failure as non-fatal (log and keep running on the
+/// in-memory state), so this exists purely to let that logging path report a
+/// real cause instead of the process panicking on a serialize error.
+#[derive(Debug)]
+pub enum StorageError {
+    Sled(sled::Error),
+    Serialize(bincode::Error),
+}
+
+impl std::fmt::Display for StorageError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StorageError::Sled(e) => write!(f, "storage error: {}", e),
+            StorageError::Serialize(e) => write!(f, "serialize error: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for StorageError {}
+impl From<sled::Error> for StorageError {
+    fn from(e: sled::Error) -> Self { StorageError::Sled(e) }
+}
+impl From<bincode::Error> for StorageError {
+    fn from(e: bincode::Error) -> Self { StorageError::Serialize(e) }
+}
+
 pub struct Storage {
     blocks: Tree,
     utxos: Tree,
@@ -256,27 +284,27 @@ impl Storage {
     }
 
     /// Persists a single successfully-applied block delta: only the keys that changed.
-    pub fn persist_applied(&self, delta: &AppliedDelta) -> sled::Result<()> {
+    pub fn persist_applied(&self, delta: &AppliedDelta) -> Result<(), StorageError> {
         let block_hash = delta.tip_hash;
-        self.blocks.insert(&block_hash[..], bincode::serialize(&delta.block).unwrap())?;
+        self.blocks.insert(&block_hash[..], bincode::serialize(&delta.block)?)?;
 
         let mut utxo_batch = Batch::default();
         for commitment in &delta.spent_commitments {
             utxo_batch.remove(commitment_key(commitment).as_slice());
         }
         for output in &delta.new_outputs {
-            utxo_batch.insert(commitment_key(&output.commitment), bincode::serialize(output).unwrap());
+            utxo_batch.insert(commitment_key(&output.commitment), bincode::serialize(output)?);
         }
         self.utxos.apply_batch(utxo_batch)?;
 
         let mut kernel_batch = Batch::default();
         for kernel in &delta.new_kernels {
-            kernel_batch.insert(commitment_key(&kernel.excess), bincode::serialize(kernel).unwrap());
+            kernel_batch.insert(commitment_key(&kernel.excess), bincode::serialize(kernel)?);
         }
         self.kernels.apply_batch(kernel_batch)?;
 
         let (snap_height, snap_validators) = &delta.validator_snapshot;
-        self.validator_snapshots.insert(&snap_height.to_be_bytes(), bincode::serialize(snap_validators).unwrap())?;
+        self.validator_snapshots.insert(&snap_height.to_be_bytes(), bincode::serialize(snap_validators)?)?;
 
         self.meta.insert(META_HEIGHT_KEY, &delta.height.to_be_bytes())?;
         self.meta.insert(META_TIP_KEY, &delta.tip_hash[..])?;
@@ -285,7 +313,7 @@ impl Storage {
     }
 
     /// Persists a single rollback delta: only the keys that changed.
-    pub fn persist_rollback(&self, delta: &RollbackDelta) -> sled::Result<()> {
+    pub fn persist_rollback(&self, delta: &RollbackDelta) -> Result<(), StorageError> {
         let mut utxo_batch = Batch::default();
         for commitment in &delta.un_consumed_outputs {
             utxo_batch.remove(commitment_key(commitment).as_slice());
@@ -319,13 +347,13 @@ impl Storage {
     /// older than the horizon from disk too - otherwise a restart would
     /// reload them from `validator_snapshots` and silently undo that part
     /// of the in-memory pruning on every load_state.
-    pub fn persist_compaction(&self, chain: &ChainState, touched_blocks: &[[u8; 32]]) -> sled::Result<()> {
+    pub fn persist_compaction(&self, chain: &ChainState, touched_blocks: &[[u8; 32]]) -> Result<(), StorageError> {
         for hash in touched_blocks {
             if let Some(block) = chain.blocks.get(hash) {
-                self.blocks.insert(&hash[..], bincode::serialize(block).unwrap())?;
+                self.blocks.insert(&hash[..], bincode::serialize(block)?)?;
             }
             if let Some(meta) = chain.prune_meta.get(hash) {
-                self.prune_meta.insert(&hash[..], bincode::serialize(meta).unwrap())?;
+                self.prune_meta.insert(&hash[..], bincode::serialize(meta)?)?;
             }
         }
 
