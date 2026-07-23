@@ -171,6 +171,26 @@ Non-confidential, first-write-wins, separate namespaces:
 
 Both are committed into `BlockHeader` via a flat sorted-hash root (sort by key, concat, hash — not a Merkle tree, no membership proofs yet). Ownership is keyed by the wallet's stable `identity_key`, shared across both registries. Both deliberately skip Dandelion (see Network) — ownership is public by construction, there's no anonymity set to protect.
 
+## Trustless swaps
+
+No escrow contract — there isn't one to write, this chain has no smart contracts. Instead `TransferAssetOp` (and `MintAssetOp`, for collection-drop mints) carries an optional `required_kernel_excess: Commitment`, bound into the signed message. A seller can sign a transfer that's only valid *once a specific payment kernel exists on-chain* — so they can hand over a valid signature before being paid, and `apply_linear_block` simply won't apply it until that exact kernel excess shows up. Nobody ever custodies the asset or the payment on the other party's behalf.
+
+```mermaid
+sequenceDiagram
+    participant Buyer
+    participant Seller
+    participant Chain as "apply_linear_block"
+
+    Seller->>Seller: sign TransferAssetOp<br/>{ new_owner: Buyer, required_kernel_excess: K }
+    Seller-->>Buyer: hand over the signed (but inert) transfer
+    Note over Buyer,Seller: Buyer has a valid signature,<br/>but it does nothing yet
+    Buyer->>Chain: broadcast payment tx with kernel excess K
+    Buyer->>Chain: submit the signed TransferAssetOp
+    Chain->>Chain: kernel K exists? --check--> yes
+    Chain->>Chain: apply transfer + payment, same block
+    Note over Chain: If K never lands, the transfer<br/>never applies - no refund needed, nothing moved
+```
+
 ## Network
 
 Transport-agnostic by construction (`p2p::transport::{PeerReader, PeerWriter}`):
@@ -227,6 +247,21 @@ Targets exercised in CI / the release matrix:
 - `x86_64-apple-darwin`, `aarch64-apple-darwin`
 - `aarch64-linux-android`, `armv7-linux-androideabi`, `{i686,x86_64}-linux-android`
 - `wasm32-unknown-unknown`
+
+```mermaid
+graph LR
+    SRC["core + crypto + wallet<br/>one source tree, zero native deps"]
+    SRC --> LINUX["x86_64-unknown<br/>-linux-gnu"]
+    SRC --> WIN["x86_64-pc<br/>-windows-msvc"]
+    SRC --> MACX["x86_64 / aarch64<br/>-apple-darwin"]
+    SRC --> AND["aarch64 / armv7 / i686 / x86_64<br/>-linux-android"]
+    SRC --> WASM["wasm32-unknown<br/>-unknown"]
+    LINUX --> BinL["haze node binary"]
+    WIN --> BinW["haze node binary"]
+    MACX --> BinM["haze node / desktop wallet"]
+    AND -->|uniffi| Kotlin["Android wallet"]
+    WASM -->|wasm-bindgen| JS["haze-wallet-web"]
+```
 
 ## Threat model / known gaps
 
