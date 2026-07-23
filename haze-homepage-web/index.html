@@ -10,7 +10,7 @@
 <meta property="og:description" content="A confidential Mimblewimble L1. Hidden amounts, no accounts, a trail that deletes itself.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Fraunces:opsz,wght@9..144,440;9..144,560&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root {
     color-scheme: light;
@@ -171,6 +171,64 @@
   .foot-links a:hover { color: var(--ink); background: rgba(0,0,0,.05); }
   .foot-note { font-size: 12.5px; color: var(--ink-faint); margin-top: 26px; max-width: 68ch; line-height: 1.7; }
 
+  /* ---------------- product shots ----------------
+     Recreated with the wallet/explorer's own design tokens (see
+     haze-wallet-web/index.html and api/src/explorer.rs's embedded
+     EXPLORER_HTML) - same oklch fog/amber palette, same Fraunces /
+     Public Sans / IBM Plex Mono triad, same component shapes - not a
+     fresh mockup style. */
+  #product { padding-block: clamp(50px, 8vw, 100px) clamp(60px, 9vw, 130px); }
+  .shots { display: grid; grid-template-columns: 1fr; gap: 34px; margin-top: 10px; }
+  @media (min-width: 920px) { .shots { grid-template-columns: 1.18fr .82fr; gap: 28px; align-items: start; } }
+
+  .frame {
+    --pfog-0: oklch(0.15 0.014 292); --pfog-1: oklch(0.19 0.016 292); --pfog-2: oklch(0.235 0.017 292); --pfog-3: oklch(0.30 0.018 292);
+    --pmist: oklch(0.68 0.05 285); --pink: oklch(0.93 0.012 90); --pink-dim: oklch(0.93 0.012 90 / 0.62); --pink-faint: oklch(0.93 0.012 90 / 0.36);
+    --pamber: oklch(0.78 0.15 70); --pok: oklch(0.75 0.14 155);
+    border-radius: 22px; overflow: hidden; background: #17151c;
+    box-shadow: 0 40px 90px -30px rgba(20,12,0,.35), 0 1px 0 rgba(255,255,255,.5) inset, 0 0 0 1px rgba(0,0,0,.06);
+    transform: translateY(0);
+  }
+  .frame .chrome { display: flex; align-items: center; gap: 8px; padding: 12px 16px; background: var(--pfog-1); border-bottom: 1px solid rgba(255,255,255,.06); }
+  .chrome .dots { display: flex; gap: 6px; }
+  .chrome .dots span { width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,.14); }
+  .chrome .url { margin-inline: auto; font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--pink-faint); background: rgba(0,0,0,.22); border-radius: 100px; padding: 4px 14px; }
+
+  .frame .screen { background: var(--pfog-0); color: var(--pink); font-family: "Public Sans", ui-sans-serif, sans-serif; padding: 22px 22px 26px; }
+  .p-topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+  .p-brand { display: flex; align-items: center; gap: 8px; font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--pink-dim); }
+  .p-brand .p-dotmark { width: 14px; height: 14px; border-radius: 50%; background: conic-gradient(from -90deg, var(--pamber) 0 50%, transparent 50% 100%); }
+  .p-navpills { display: flex; gap: 4px; }
+  .p-navpills span { font-family: "IBM Plex Mono", monospace; font-size: 10.5px; color: var(--pink-faint); padding: 5px 9px; border-radius: 100px; }
+  .p-navpills span.on { background: var(--pfog-2); color: var(--pamber); }
+
+  .p-card { background: var(--pfog-1); border: 1px solid rgba(255,255,255,.07); border-radius: 16px; padding: 18px 20px; margin-bottom: 14px; }
+  .p-label { font-family: "IBM Plex Mono", monospace; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--pink-faint); }
+  .p-statrow { display: flex; gap: 30px; margin-top: 8px; }
+  .p-stat .p-num { font-family: "Fraunces", serif; font-weight: 560; font-size: 28px; letter-spacing: -.02em; margin-top: 4px; }
+  .p-stat.dim .p-num { color: var(--pink-dim); }
+  .p-actions { display: flex; gap: 10px; margin-bottom: 14px; }
+  .p-actions .p-btn { flex: 1; text-align: center; font-size: 12.5px; font-weight: 600; padding: 10px 0; border-radius: 100px; }
+  .p-actions .p-btn.primary { background: var(--pamber); color: #241403; }
+  .p-actions .p-btn.ghost { border: 1px solid var(--pfog-3); color: var(--pink-dim); }
+  .p-row { display: flex; align-items: center; gap: 12px; padding: 11px 0; border-top: 1px solid rgba(255,255,255,.06); }
+  .p-row:first-child { border-top: 0; }
+  .p-dot-ico { width: 30px; height: 30px; border-radius: 9px; background: var(--pfog-2); display: grid; place-items: center; color: var(--pamber); font-family: "IBM Plex Mono", monospace; font-size: 13px; flex-shrink: 0; }
+  .p-row .p-rt { flex: 1; min-width: 0; }
+  .p-row .p-rt b { display: block; font-size: 13px; font-weight: 600; }
+  .p-row .p-rt span { font-size: 11.5px; color: var(--pink-faint); }
+  .p-row .p-amt { font-family: "IBM Plex Mono", monospace; font-size: 12.5px; }
+  .p-amt.pos { color: var(--pok); } .p-amt.neg { color: var(--pink-dim); }
+
+  .p-blockrow { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid rgba(255,255,255,.06); font-family: "IBM Plex Mono", monospace; font-size: 12px; }
+  .p-blockrow:first-child { border-top: 0; }
+  .p-blockrow .h { color: var(--pamber); width: 46px; flex-shrink: 0; }
+  .p-blockrow .hash { color: var(--pink-dim); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .p-blockrow .ago { color: var(--pink-faint); flex-shrink: 0; }
+
+  .shot-caption { display: flex; align-items: center; gap: 10px; margin-top: 16px; font-size: 13.5px; color: var(--ink-dim); font-weight: 500; }
+  .shot-caption .sc-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--amber-deep); flex-shrink: 0; }
+
   .rv { opacity: 0; transform: translateY(22px); transition: opacity .8s cubic-bezier(.16,1,.3,1), transform .8s cubic-bezier(.16,1,.3,1); }
   .rv.in { opacity: 1; transform: none; }
   .rv[data-d="1"]{transition-delay:.07s} .rv[data-d="2"]{transition-delay:.14s} .rv[data-d="3"]{transition-delay:.21s} .rv[data-d="4"]{transition-delay:.28s}
@@ -215,6 +273,61 @@
       </div>
     </div>
   </section>
+
+  <!-- PRODUCT -->
+  <section id="product"><div class="wrap">
+    <div class="shots">
+      <div class="frame rv">
+        <div class="chrome">
+          <div class="dots"><span></span><span></span><span></span></div>
+          <div class="url">wallet.hazeprotocol.xyz</div>
+        </div>
+        <div class="screen">
+          <div class="p-topbar">
+            <div class="p-brand"><span class="p-dotmark"></span> Haze Wallet</div>
+            <div class="p-navpills"><span class="on">Wallet</span><span>Send</span><span>Receive</span><span>Names</span><span>History</span></div>
+          </div>
+          <div class="p-card">
+            <div class="p-label">Balance</div>
+            <div class="p-statrow">
+              <div class="p-stat"><div class="p-label">Confirmed</div><div class="p-num">1,240.5</div></div>
+              <div class="p-stat dim"><div class="p-label">Pending</div><div class="p-num">12.0</div></div>
+            </div>
+          </div>
+          <div class="p-actions">
+            <div class="p-btn primary">Send</div>
+            <div class="p-btn ghost">Receive</div>
+            <div class="p-btn ghost">Get devnet funds</div>
+          </div>
+          <div class="p-card" style="padding-block:6px 4px">
+            <div class="p-row"><div class="p-dot-ico">↑</div><div class="p-rt"><b>Sent to @avi</b><span>2 minutes ago</span></div><div class="p-amt neg">−40.0</div></div>
+            <div class="p-row"><div class="p-dot-ico">↓</div><div class="p-rt"><b>Received</b><span>an hour ago</span></div><div class="p-amt pos">+180.0</div></div>
+            <div class="p-row"><div class="p-dot-ico">↑</div><div class="p-rt"><b>Sent to @market</b><span>yesterday</span></div><div class="p-amt neg">−6.25</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="frame rv">
+        <div class="chrome">
+          <div class="dots"><span></span><span></span><span></span></div>
+          <div class="url">explorer.hazeprotocol.xyz</div>
+        </div>
+        <div class="screen">
+          <div class="p-topbar">
+            <div class="p-brand"><span class="p-dotmark"></span> Block Explorer</div>
+            <div class="p-navpills"><span class="on">Blocks</span><span>Mempool</span><span>Peers</span></div>
+          </div>
+          <div class="p-card" style="padding-block:6px 4px">
+            <div class="p-blockrow"><span class="h">#48291</span><span class="hash">6f2a…9c14</span><span class="ago">4s ago</span></div>
+            <div class="p-blockrow"><span class="h">#48290</span><span class="hash">a103…7be2</span><span class="ago">1m ago</span></div>
+            <div class="p-blockrow"><span class="h">#48289</span><span class="hash">e88d…0f31</span><span class="ago">1m ago</span></div>
+            <div class="p-blockrow"><span class="h">#48288</span><span class="hash">3c4b…aa02</span><span class="ago">2m ago</span></div>
+            <div class="p-blockrow"><span class="h">#48287</span><span class="hash">915f…6d7c</span><span class="ago">3m ago</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="shot-caption rv"><span class="sc-dot"></span> The real wallet and explorer — same interface running on the live testnet, no mock-ups.</div>
+  </div></section>
 
   <!-- WHY -->
   <section class="block" id="why"><div class="wrap">
