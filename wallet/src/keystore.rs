@@ -6,11 +6,17 @@ use rand::rngs::OsRng;
 use rand::RngCore;
 use serde::{Serialize, Deserialize};
 use sha2::{Sha512, Digest};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 const WALLET_DIR: &str = "wallet_data";
 const KEYSTORE_FILE: &str = "wallet_data/keystore.dat";
 
-#[derive(Serialize, Deserialize)]
+/// `seed` is this wallet's master secret - every key it ever derives traces
+/// back to it. ZeroizeOnDrop scrubs it from memory the moment the last
+/// Keystore holding it is dropped, instead of leaving it sitting in freed
+/// memory (and potentially in a swap file or crash dump) for however long
+/// until something else happens to overwrite that address.
+#[derive(Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct Keystore {
     seed: [u8; 32],
     next_index: u32,
@@ -79,6 +85,7 @@ impl Keystore {
         let mut entropy = [0u8; 16]; // 128 bits -> 12-word mnemonic
         OsRng.fill_bytes(&mut entropy);
         let mnemonic = bip39::Mnemonic::from_entropy(&entropy).expect("valid entropy length");
+        entropy.zeroize();
         let phrase = mnemonic.to_string();
         let keystore = Self::from_mnemonic(&phrase).expect("just-generated mnemonic must parse");
         (keystore, phrase)
@@ -98,9 +105,10 @@ impl Keystore {
     /// the same keys/outputs/identity.
     pub fn from_mnemonic(phrase: &str) -> Option<Self> {
         let mnemonic = bip39::Mnemonic::parse_normalized(phrase).ok()?;
-        let bip39_seed = mnemonic.to_seed("");
+        let mut bip39_seed = mnemonic.to_seed("");
         let mut seed = [0u8; 32];
         seed.copy_from_slice(&bip39_seed[0..32]);
+        bip39_seed.zeroize();
         Some(Keystore { seed, next_index: 0 })
     }
 
