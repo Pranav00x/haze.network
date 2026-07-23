@@ -83,6 +83,7 @@
   @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(47,154,95,.45)} 70%{box-shadow:0 0 0 8px transparent} 100%{box-shadow:0 0 0 0 transparent} }
   h1 { position: relative; z-index: 1; font-weight: 500; font-size: clamp(40px, 8vw, 112px); line-height: .98; letter-spacing: -.045em; margin: 28px 0 0; max-width: 15ch; color: #16130e; }
 
+  @media (max-width: 600px) { .hero-panel { min-height: 0; gap: 60px; } }
   .hero-foot { max-width: var(--maxw); margin: 40px auto 0; display: grid; grid-template-columns: 1fr; gap: 34px; align-items: end; }
   @media (min-width: 860px) { .hero-foot { grid-template-columns: 1.3fr .7fr; } }
   .hero-sub { font-size: clamp(16px, 1.7vw, 20px); color: var(--ink-dim); max-width: 54ch; margin: 0 0 26px; line-height: 1.6; }
