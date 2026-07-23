@@ -265,11 +265,42 @@ graph LR
 
 ## Threat model / known gaps
 
+- No external security audit of the consensus code yet — the highest-leverage item before real value touches this chain.
+- Effectively one node (`haze-b3l9.onrender.com`, no persistent disk) — not meaningfully decentralized yet; needs multiple independent validators on durable infra before "live" means anything.
 - Genesis validator/faucet/vesting secrets are real out-of-band scalars, not present in this repo — one deliberate exception: the devnet genesis stake/claim output uses `blinding=42`, intentionally public (see `genesis.rs` module doc).
 - Devnet. Resets happen without notice. Treat every balance as fake.
 - Fungible multi-asset support was scoped **out** after analysis: a per-asset Pedersen generator scheme (`C = v·H_asset + r·G`) preserves the balance-equation security, but range-proof verification still needs the verifier to know which generator applies per output — i.e. a public per-output asset tag. That's a real confidentiality regression versus HAZE-only, not fixable within this dependency stack without a from-scratch Confidential-Assets-grade construction (blinded generator + surjection proof). NFTs (this repo's asset registry) don't have this problem: ownership was already public.
 - Registry roots are flat hashes, not Merkle — no compact membership proofs for light clients yet.
 - Block/tx propagation to a non-proposing peer works (Dandelion + mixed TCP/WS transport, verified live), but there's still no SPV/light-client sync mode — every node holds full (or horizon-compacted) chain state.
+- `ChainState`'s `blocks`/`prune_meta` maps get their bodies pruned by cut-through/compaction, but the map entries themselves are never evicted — unbounded growth over the long run, not yet an issue at devnet scale.
+
+```mermaid
+quadrantChart
+    title Known gaps, plotted by impact if left unaddressed vs. how soon they need attention
+    x-axis Low urgency --> High urgency
+    y-axis Low impact --> High impact
+    quadrant-1 Fix before mainnet
+    quadrant-2 Plan for post-launch
+    quadrant-3 Accepted tradeoff / by design
+    quadrant-4 Quick win
+    No external audit: [0.85, 0.95]
+    Single node, no persistent disk: [0.8, 0.9]
+    No SPV / light-client mode: [0.35, 0.6]
+    Flat non-Merkle registry roots: [0.3, 0.45]
+    Unbounded blocks/prune_meta growth: [0.25, 0.4]
+    No fungible confidential assets: [0.1, 0.35]
+    Genesis secrets kept out-of-band: [0.15, 0.15]
+    Devnet resets without notice: [0.1, 0.1]
+```
+
+Mitigated this session, for contrast — these started as the same kind of "known gap" and are now closed:
+
+| gap | fix |
+|---|---|
+| Storage layer panicked on a serialize failure | `core::storage::StorageError`, propagated instead of `.unwrap()` |
+| No per-IP request throttling on the public API | `api::ratelimit` — sliding-window cap in front of every route |
+| No fuzzing of untrusted-byte parsing | `p2p/tests/deserialize_fuzz.rs` — random/mutated/truncated `P2pMessage` bytes |
+| Wallet master seed never left memory on drop | `Keystore` now derives `ZeroizeOnDrop` |
 
 ## Verify
 
