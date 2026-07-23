@@ -314,3 +314,7 @@ cargo ndk -t arm64-v8a build --release --lib --no-default-features --features na
 ## License
 
 MIT
+
+## Contact
+
+pranav@hazeprotocol.xyz
