@@ -1,12 +1,81 @@
 # haze
 
+[![CI](https://github.com/Pranav00x/haze/actions/workflows/ci.yml/badge.svg)](https://github.com/Pranav00x/haze/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![rust](https://img.shields.io/badge/rust-2024_edition-orange)](Cargo.toml)
+[![block height](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fhaze-b3l9.onrender.com%2Fv1%2Fstatus&query=%24.height&label=block%20height&color=success)](https://haze-b3l9.onrender.com/v1/status)
+[![active validators](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fhaze-b3l9.onrender.com%2Fv1%2Fstatus&query=%24.active_validators&label=validators&color=success)](https://haze-b3l9.onrender.com/v1/status)
+[![mempool](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fhaze-b3l9.onrender.com%2Fv1%2Fstatus&query=%24.mempool_size&label=mempool&color=blue)](https://haze-b3l9.onrender.com/v1/status)
+
 ### 👀 something's coming.
 
 A privacy-first L1 built on Mimblewimble — no smart contracts, no accounts, no on-chain history for who paid who. NFTs, drops, and a trustless marketplace already run natively on it.
 
-**Testnet drops soon.** Watch this space.
+**Testnet drops soon.** Watch this space. The badges above are live — they query the running node's `/v1/status` directly, not a fixed number in this file.
 
 ---
+
+## Architecture
+
+```mermaid
+graph TD
+    subgraph PURE["Pure logic — zero native deps, compiles to wasm32 + every mobile ABI unmodified"]
+        CRYPTO["crypto<br/>ristretto · bulletproofs · merlin"]
+        CORE["core<br/>chain · block · transaction · mempool<br/>cut_through · registry · assets · collections"]
+        WALLET["wallet<br/>keystore · planner · slate · note"]
+    end
+    subgraph NATIVE["Native only — feature = native"]
+        P2P["p2p<br/>tcp / ws transport · dandelion++"]
+        API["api<br/>warp HTTP+WS · explorer · faucet"]
+        BIN["haze bin<br/>ffi.rs (uniffi) · wasm.rs (wasm-bindgen)"]
+    end
+
+    CRYPTO --> CORE
+    CRYPTO --> WALLET
+    CORE --> P2P
+    CORE --> API
+    WALLET --> API
+    CORE --> BIN
+    WALLET --> BIN
+    P2P --> BIN
+
+    API -->|HTTP / WS| WalletWeb["haze-wallet-web"]
+    API -->|HTTP| Marketplace["nft-marketplace"]
+    BIN -->|uniffi bindings| Mobile["Android · iOS"]
+    BIN -->|wasm-bindgen| WalletWeb
+```
+
+## Block production
+
+Deterministic single-proposer-per-height PoS — no leader election round trip, no BFT voting, the whole network computes the same answer independently:
+
+```mermaid
+sequenceDiagram
+    participant Mem as Mempool
+    participant P as "proposer(h)"
+    participant Net as "Network (Dandelion++)"
+    participant Peer as "Every other node"
+
+    Note over P: proposer(h) = active_validators[H(h ‖ prev_hash) mod n]
+    Mem->>P: pending txs + name/asset/collection ops
+    P->>P: cut-through matching (input, output) pairs
+    P->>P: assemble block, sign kernel, derive height reward
+    P->>Net: broadcast NewBlock
+    Net->>Peer: gossip (fluff — blocks skip the stem phase)
+    Peer->>Peer: Σ C_in − Σ C_out − fee·H + reward·H ≟ Σ excess
+    Peer->>Peer: verify every range proof + kernel signature
+    Peer->>Peer: apply_block — extends the heaviest valid fork
+```
+
+## Cut-through, visually
+
+```mermaid
+graph LR
+    O["Output created<br/>(v·H + r·G)"] --> S{"Later spent<br/>as an Input?"}
+    S -->|"same commitment,<br/>same block or mempool"| X["Cancel — pair<br/>removed entirely"]
+    S -->|"still unspent"| U["Stays in the<br/>live UTXO set"]
+    X -.->|"no trace of the link<br/>between payer and payee"| Ghost["nothing to compact-<br/>through later"]
+```
 
 A Mimblewimble L1, devnet stage. This is a technical reference, not a pitch — it assumes you already know what a Pedersen commitment and a Fiat–Shamir transcript are.
 
