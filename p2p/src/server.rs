@@ -487,9 +487,31 @@ async fn handle_peer_connection(
     // chain.last_block_hash can't be used for this once mode is entered.
     let mut aggregate_prev_hash: Option<[u8; 32]> = None;
 
+    // Per-connection message-rate budget. MAX_MESSAGE_SIZE (transport.rs)
+    // already caps how big any single message can be, and MAX_PEERS caps
+    // how many connections exist at all, but neither stopped one already-
+    // connected peer from just sending messages as fast as the wire allows.
+    // A generous window: legitimate high-throughput behavior (a busy relay
+    // forwarding lots of StemTx/FluffTx, or a 256-block BlocksBatch, which
+    // is one message regardless of batch size) stays well under this: it's
+    // sized to catch an actual flood, not to throttle real traffic.
+    const MAX_MESSAGES_PER_WINDOW: usize = 600;
+    const MESSAGE_WINDOW: std::time::Duration = std::time::Duration::from_secs(10);
+    let mut message_times: std::collections::VecDeque<std::time::Instant> = std::collections::VecDeque::new();
+
     loop {
         match transport::read_message(&mut reader).await {
             Some(msg) => {
+                    let now = std::time::Instant::now();
+                    while message_times.front().is_some_and(|t| now.duration_since(*t) > MESSAGE_WINDOW) {
+                        message_times.pop_front();
+                    }
+                    message_times.push_back(now);
+                    if message_times.len() > MAX_MESSAGES_PER_WINDOW {
+                        println!("P2P: {} exceeded {} messages/{}s, disconnecting.", peer_addr, MAX_MESSAGES_PER_WINDOW, MESSAGE_WINDOW.as_secs());
+                        break;
+                    }
+
                     match msg {
                         P2pMessage::Handshake { listen_addr } => {
                             println!("P2P: Handshake received from {} (listening on {})", peer_addr, listen_addr);
