@@ -27,8 +27,16 @@ const SYNC_BATCH_SIZE: usize = 256;
 /// inbound TCP/WS connection attempt (see start()'s accept loop and
 /// handle_inbound_ws) so an attacker can't flood a node with unlimited raw
 /// connections to exhaust file descriptors/memory - there was previously no
-/// cap on the inbound side at all.
-const MAX_PEERS: usize = 8;
+/// cap on the inbound side at all. Raised from the original 8: that was
+/// fine for a handful of validators, but an artificially low ceiling here
+/// directly caps how decentralized the network can actually get - every
+/// node needs enough simultaneous slots for a much larger, more spread-out
+/// validator set to stay well-connected to each other. 50 matches
+/// MAX_PEERS_SHARED below (no point admitting more than one PeersList round
+/// can ever advertise anyway), and each connection now costs an attacker
+/// per-message-rate budget (see handle_peer_connection) rather than being
+/// free, so the flood-protection reasoning above still holds at this size.
+const MAX_PEERS: usize = 50;
 
 /// Maximum number of addresses returned in a single PeersList response.
 const MAX_PEERS_SHARED: usize = 50;

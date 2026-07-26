@@ -30,8 +30,9 @@ pub trait BlockBroadcaster: Send + Sync {
 /// waiting on a possibly-offline higher-priority validator forever (see
 /// ChainState::proposer_priority_order - this is what actually makes use of
 /// the freedom that fix gives, since consensus alone doesn't change which
-/// validator attempts to propose first in the common case).
-const FALLBACK_ROUND_TIMEOUT: Duration = Duration::from_secs(20);
+/// validator attempts to propose first in the common case). Scaled down
+/// alongside the slot-check interval below - kept at the same ~2x ratio.
+const FALLBACK_ROUND_TIMEOUT: Duration = Duration::from_secs(4);
 
 pub struct Proposer {
     mempool: Arc<Mutex<Mempool>>,
@@ -80,19 +81,20 @@ impl Proposer {
         println!("Staking proposer started. Monitoring slots...");
 
         loop {
-            // Check slots every 10 seconds. A 1s interval only "worked"
-            // because devnet has effectively one validator with ~0 network
-            // latency - select_proposer itself needs no time (pure hash of
+            // Check slots every 2 seconds, targeting a ~1-2s block time.
+            // select_proposer itself needs no time (pure hash of
             // height+prev_hash), but the NEXT chosen proposer only has a
             // correct view once the previous block actually propagates to
-            // them. With real geographically-distributed validators, an
-            // interval shorter than gossip propagation + verification time
-            // causes proposers to act on stale tips more often - more forks,
-            // more orphaned blocks, less settled finality. 10s gives real
-            // multi-validator networks comfortable room while still being
-            // fast enough that "how do I show live progress" is a wallet
-            // polling-cadence problem, not a protocol one.
-            sleep(Duration::from_millis(10_000)).await;
+            // them - so this interval is a bet that gossip propagation +
+            // verification consistently lands well under 2s. NewBlock is
+            // flat-broadcast (not staged through Dandelion, which is
+            // payment-privacy-only - see p2p::server::dispatch_dandelion_tx),
+            // so that bet holds for a small-to-moderate validator set with
+            // normal internet latency. It gets worse, not better, as the
+            // validator set decentralizes further and spreads across more
+            // distant/slower links - if forks/orphan rate climbs in
+            // practice, raise this back up before anything else.
+            sleep(Duration::from_millis(2_000)).await;
 
             let (next_height, prev_hash, my_validator) = {
                 let c = self.chain.lock_recover();
