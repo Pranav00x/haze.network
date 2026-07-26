@@ -313,7 +313,7 @@
       <p class="kicker" style="color:var(--amber-deep)">Run it yourself</p>
       <h2 style="max-width:16ch">Join the network in one command.</h2>
       <p class="lead">Pull a prebuilt node from the releases, or point your own at the public seed and watch it sync up to the tip.</p>
-      <div class="code-line"><code id="joinCmd">haze node --peers wss://haze-b3l9.onrender.com/v1/p2p/ws</code><button class="copy" id="copyBtn">copy</button></div>
+      <div class="code-line"><code id="joinCmd">haze node --peers wss://haze-network.onrender.com/v1/p2p/ws</code><button class="copy" id="copyBtn">copy</button></div>
       <div class="hero-ctas">
         <a class="btn btn-primary" href="https://github.com/Pranav00x/haze/releases" target="_blank" rel="noopener">Download a node <svg class="ar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M8 7h9v9"/></svg></a>
         <a class="btn btn-ghost" href="Haze_Whitepaper.pdf" target="_blank" rel="noopener">Read the whitepaper</a>
@@ -352,7 +352,7 @@
     setTimeout(() => b.textContent = "copy", 1400);
   });
 
-  const API = "https://haze-b3l9.onrender.com";
+  const API = "https://haze-network.onrender.com";
   function countUp(el, target) {
     const t = Number(target); if (!Number.isFinite(t)) { el.textContent = target; return; }
     const start = parseInt((el.textContent||"0").replace(/\D/g,"")) || 0, t0 = performance.now(), dur = 900;
