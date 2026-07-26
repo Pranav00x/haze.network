@@ -3,9 +3,9 @@
 [![CI](https://github.com/Pranav00x/haze/actions/workflows/ci.yml/badge.svg)](https://github.com/Pranav00x/haze/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![rust](https://img.shields.io/badge/rust-2024_edition-orange)](Cargo.toml)
-[![block height](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fhaze-b3l9.onrender.com%2Fv1%2Fstatus&query=%24.height&label=block%20height&color=success)](https://haze-b3l9.onrender.com/v1/status)
-[![active validators](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fhaze-b3l9.onrender.com%2Fv1%2Fstatus&query=%24.active_validators&label=validators&color=success)](https://haze-b3l9.onrender.com/v1/status)
-[![mempool](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fhaze-b3l9.onrender.com%2Fv1%2Fstatus&query=%24.mempool_size&label=mempool&color=blue)](https://haze-b3l9.onrender.com/v1/status)
+[![block height](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fhaze-network.onrender.com%2Fv1%2Fstatus&query=%24.height&label=block%20height&color=success)](https://haze-network.onrender.com/v1/status)
+[![active validators](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fhaze-network.onrender.com%2Fv1%2Fstatus&query=%24.active_validators&label=validators&color=success)](https://haze-network.onrender.com/v1/status)
+[![mempool](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fhaze-network.onrender.com%2Fv1%2Fstatus&query=%24.mempool_size&label=mempool&color=blue)](https://haze-network.onrender.com/v1/status)
 
 ### 👀 something's coming.
 
@@ -266,7 +266,7 @@ graph LR
 ## Threat model / known gaps
 
 - No external security audit of the consensus code yet — the highest-leverage item before real value touches this chain.
-- Effectively one node (`haze-b3l9.onrender.com`, no persistent disk) — not meaningfully decentralized yet; needs multiple independent validators on durable infra before "live" means anything.
+- Effectively one node (`haze-network.onrender.com`, no persistent disk) — not meaningfully decentralized yet; needs multiple independent validators on durable infra before "live" means anything.
 - Genesis validator/faucet/vesting secrets are real out-of-band scalars, not present in this repo — one deliberate exception: the devnet genesis stake/claim output uses `blinding=42`, intentionally public (see `genesis.rs` module doc).
 - Devnet. Resets happen without notice. Treat every balance as fake.
 - Fungible multi-asset support was scoped **out** after analysis: a per-asset Pedersen generator scheme (`C = v·H_asset + r·G`) preserves the balance-equation security, but range-proof verification still needs the verifier to know which generator applies per output — i.e. a public per-output asset tag. That's a real confidentiality regression versus HAZE-only, not fixable within this dependency stack without a from-scratch Confidential-Assets-grade construction (blinded generator + surjection proof). NFTs (this repo's asset registry) don't have this problem: ownership was already public.
