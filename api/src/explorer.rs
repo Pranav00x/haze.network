@@ -874,19 +874,20 @@ const EXPLORER_HTML: &str = r#"<!DOCTYPE html>
       <h2><span class="dot"></span> Latest Transactions</h2>
       <div class="row-list" id="txs-body"></div>
     </section>
-    <section class="panel">
-      <h2><span class="dot"></span> Marketplace Listings</h2>
-      <div class="row-list" id="listings-body"></div>
-    </section>
   </main>
 
 <script>
 // ---------- Node API base resolution ----------
-// Standalone deployment (unlike the embedded explorer served by the node
-// itself) has no same-origin API to call, so the node URL is user-configurable:
-// ?api=<url> query param (persisted to localStorage) > previously saved value
-// > a localhost default for local development.
-const DEFAULT_API_BASE = "https://haze-b3l9.onrender.com";
+// This exact page is only ever served BY the node itself (see
+// api::explorer::handle_index) - so its own origin IS the node's API,
+// always correct regardless of which domain/host this gets deployed to,
+// with no hardcoded URL to go stale on the next redeploy. The hardcoded
+// fallback only matters for a raw file:// open (no real origin to use) or
+// some other non-http(s) context; ?api=<url> (persisted to localStorage)
+// still lets anyone point this same page at a different node entirely.
+const DEFAULT_API_BASE = (typeof window !== "undefined" && /^https?:$/.test(window.location.protocol))
+  ? window.location.origin
+  : "https://haze-network.onrender.com";
 const STORAGE_KEY = "hazeApiBase";
 
 document.getElementById("theme-toggle").addEventListener("click", () => {
@@ -1083,60 +1084,6 @@ async function refreshTransactions() {
   txs.forEach(t => body.appendChild(txRow(t)));
 }
 
-// Metadata is stored on-chain as raw bytes (see core::assets::AssetRecord)
-// - interpreted here as UTF-8 text, and if it happens to parse as JSON with
-// a title/description/image shape, rendered as a real preview instead of
-// raw text (see core::assets's own doc comment: consensus only enforces a
-// length cap, everything else is a UI-layer convention).
-function decodeAssetMetadata(bytes) {
-  try {
-    const text = new TextDecoder("utf-8", { fatal: false }).decode(new Uint8Array(bytes));
-    try {
-      const parsed = JSON.parse(text);
-      if (parsed && typeof parsed === "object") return { title: parsed.title, description: parsed.description, image: parsed.image, raw: text };
-    } catch (_) { /* not JSON - fall through to plain text */ }
-    return { raw: text };
-  } catch (_) {
-    return { raw: "" };
-  }
-}
-
-function listingRow(l, asset) {
-  const row = document.createElement("div");
-  row.className = "row";
-  const meta = asset ? decodeAssetMetadata(asset.metadata) : { raw: "" };
-  const preview = meta.image
-    ? `<img src="${meta.image}" alt="" style="width:36px;height:36px;object-fit:cover;border-radius:6px;vertical-align:middle;margin-right:8px;" onerror="this.style.display='none'">`
-    : "";
-  const title = meta.title || l.asset_id;
-  const description = (meta.description || meta.raw || "").slice(0, 80);
-  row.innerHTML = `
-    <span class="row-badge">${l.price}</span>
-    <span class="row-main">
-      <span class="row-hash">${preview}${title}</span>
-      <div class="row-sub">${description}</div>
-    </span>
-    <span class="row-meta">seller<br>${shortHash(bytesHex(l.seller_pubkey), 12)}</span>
-  `;
-  return row;
-}
-
-function bytesHex(byteArray) {
-  return byteArray.map(b => b.toString(16).padStart(2, "0")).join("");
-}
-
-async function refreshListings() {
-  const listings = await fetchJson("/v1/marketplace/listings?limit=20");
-  const body = document.getElementById("listings-body");
-  body.innerHTML = "";
-  if (listings.length === 0) {
-    body.innerHTML = `<div class="empty-state">No marketplace listings yet.</div>`;
-    return;
-  }
-  const assets = await Promise.all(listings.map(l => fetchJson(`/v1/assets/${encodeURIComponent(l.asset_id)}`).catch(() => null)));
-  listings.forEach((l, i) => body.appendChild(listingRow(l, assets[i])));
-}
-
 async function runSearch(query) {
   const panel = document.getElementById("search-result");
   const inner = document.getElementById("search-result-inner");
@@ -1179,13 +1126,12 @@ document.getElementById("search-form").addEventListener("submit", (e) => {
 
 async function refreshAll() {
   try {
-    await Promise.all([refreshStatus(), refreshBlocks(), refreshTransactions(), refreshBlocksTime(), refreshListings()]);
+    await Promise.all([refreshStatus(), refreshBlocks(), refreshTransactions(), refreshBlocksTime()]);
     nodeReachable = true;
   } catch (e) {
     nodeReachable = false;
     document.getElementById("blocks-body").innerHTML = `<div class="empty-state">${unreachableMessage()}</div>`;
     document.getElementById("txs-body").innerHTML = `<div class="empty-state">${unreachableMessage()}</div>`;
-    document.getElementById("listings-body").innerHTML = `<div class="empty-state">${unreachableMessage()}</div>`;
     ["stat-height", "stat-tip", "stat-validators", "stat-mempool", "stat-time"].forEach(id => {
       document.getElementById(id).textContent = "—";
     });
